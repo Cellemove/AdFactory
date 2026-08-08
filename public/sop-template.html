@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SOP Template — CelluMove Ad Factory</title>
+<style>
+  :root { --ink: #1a1a1a; --muted: #6b7280; --line: #d1d5db; --accent: #ec4899; --fill: #f9fafb; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink); line-height: 1.5; max-width: 800px; margin: 0 auto; padding: 32px 28px; font-size: 14px;
+  }
+  h1 { font-size: 24px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 15px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 28px 0 8px; }
+  .sub { color: var(--muted); margin: 0 0 20px; }
+  .bar { height: 4px; background: var(--accent); border-radius: 2px; margin: 0 0 20px; width: 60px; }
+  .field { margin: 0 0 14px; }
+  .field label { display: block; font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .hint { color: var(--muted); font-weight: 400; font-size: 12px; }
+  .blank { border: 1px solid var(--line); border-radius: 6px; background: var(--fill); padding: 8px 10px; min-height: 32px; }
+  .blank.lg { min-height: 150px; }
+  .blank.md { min-height: 70px; }
+  .options { font-size: 12px; color: var(--muted); margin-top: 3px; }
+  .options code { background: #eef0f3; border-radius: 3px; padding: 1px 5px; font-size: 11px; }
+  .sop { border: 1px solid var(--line); border-radius: 10px; padding: 18px 18px 6px; margin: 0 0 22px; page-break-inside: avoid; }
+  .sop-head { font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--accent); font-weight: 700; margin: 0 0 12px; }
+  .example { background: #fafafa; }
+  .example .blank { background: #fff; color: var(--ink); }
+  .steps { margin: 0; padding-left: 18px; }
+  .steps li { margin-bottom: 6px; }
+  .note { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 12px 14px; font-size: 13px; color: #7c2d12; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+  .toolbar { position: sticky; top: 0; background: #fff; padding: 8px 0 16px; }
+  button { font: inherit; background: var(--ink); color: #fff; border: 0; border-radius: 8px; padding: 8px 16px; cursor: pointer; }
+  @media print {
+    .no-print { display: none !important; }
+    body { padding: 0; max-width: none; }
+    .sop { border-color: #bbb; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar no-print">
+  <button onclick="window.print()">Print / Save as PDF</button>
+</div>
+
+<h1>Standard Operating Procedure</h1>
+<div class="bar"></div>
+<p class="sub">CelluMove Ad Factory — SOP authoring template. Fill this in, then <strong>Print → Save as PDF</strong> and upload it under <strong>Knowledge → SOPs → Import PDF</strong>. One file may hold several SOPs — just copy the block.</p>
+
+<div class="note">
+  An SOP is a reusable rule-set the AI agents read and obey. Keep the <strong>Body</strong> concrete and prescriptive —
+  it is injected verbatim into the matching agent's prompt. Put structured data (a taxonomy, a block list, a scoring rubric)
+  in <strong>Payload</strong> as JSON.
+</div>
+
+<h2>Fields to fill — per SOP</h2>
+
+<div class="sop">
+  <div class="sop-head">SOP #1</div>
+
+  <div class="field">
+    <label>Title</label>
+    <div class="blank"></div>
+  </div>
+
+  <div class="field">
+    <label>Type</label>
+    <div class="options">circle one — <code>verbatim_classification</code> <code>source_weighting</code> <code>hook_taxonomy</code> <code>hook_rules_market</code> <code>deep_dive_template</code> <code>reference_format</code> <code>compliance</code> <code>block_taxonomy</code> <code>naming</code> <code>other</code></div>
+  </div>
+
+  <div class="field">
+    <label>Role scope <span class="hint">— which agent reads it</span></label>
+    <div class="options">circle one — <code>all</code> <code>strategist</code> <code>copywriter</code> <code>researcher</code> <code>designer</code> <code>compliance</code></div>
+  </div>
+
+  <div class="field">
+    <label>Market scope <span class="hint">— 2-letter code if market-specific, else leave blank (global)</span></label>
+    <div class="blank"></div>
+  </div>
+
+  <div class="field">
+    <label>Body <span class="hint">— the procedure, as rules/steps. Read verbatim by the agent.</span></label>
+    <div class="blank lg"></div>
+  </div>
+
+  <div class="field">
+    <label>Payload <span class="hint">— optional. JSON only, for structured SOPs.</span></label>
+    <div class="blank md"></div>
+  </div>
+</div>
+
+<div class="sop">
+  <div class="sop-head">SOP #2 (optional — delete if unused)</div>
+  <div class="field"><label>Title</label><div class="blank"></div></div>
+  <div class="field"><label>Type</label><div class="options">circle one — <code>verbatim_classification</code> … <code>other</code></div></div>
+  <div class="field"><label>Role scope</label><div class="options">circle one — <code>all</code> <code>strategist</code> <code>copywriter</code> <code>researcher</code> <code>designer</code> <code>compliance</code></div></div>
+  <div class="field"><label>Market scope</label><div class="blank"></div></div>
+  <div class="field"><label>Body</label><div class="blank lg"></div></div>
+  <div class="field"><label>Payload</label><div class="blank md"></div></div>
+</div>
+
+<h2>Worked example — the quality bar</h2>
+
+<div class="sop example">
+  <div class="sop-head">Example SOP</div>
+
+  <div class="field">
+    <label>Title</label>
+    <div class="blank">Hook must echo the avatar's own words</div>
+  </div>
+
+  <div class="field">
+    <label>Type</label>
+    <div class="blank">other</div>
+  </div>
+
+  <div class="field">
+    <label>Role scope</label>
+    <div class="blank">copywriter</div>
+  </div>
+
+  <div class="field">
+    <label>Market scope</label>
+    <div class="blank">(blank — global)</div>
+  </div>
+
+  <div class="field">
+    <label>Body</label>
+    <div class="blank lg">
+      Every hook must reuse phrasing pulled from the avatar's real verbatims — never generic marketing language.
+      <ol class="steps" style="margin-top:8px;">
+        <li>Open with the wound (mirror / photo / closet moment), then pivot to the desire within the first 3–5 seconds.</li>
+        <li>Reach for the avatar's power words; ban the rejected clichés ("bounce back", "snap back", "get your body back", "transformation").</li>
+        <li>Match her sentence rhythm — flat declaratives, ellipsis on the hardest feeling, ALL-CAPS on the one weight-bearing word.</li>
+        <li>Never claim a cure. Compression supports; it does not fix, cure, or eliminate.</li>
+      </ol>
+    </div>
+  </div>
+
+  <div class="field">
+    <label>Payload</label>
+    <div class="blank md mono">{ "bannedPhrases": ["bounce back", "snap back", "get your body back", "transformation"] }</div>
+  </div>
+</div>
+
+<p class="sub" style="margin-top:24px;">
+  Tip: you can also write SOPs directly in the app (Knowledge → SOPs → + New SOP). This template is for drafting offline or
+  having someone author a batch, then importing the PDF in one go.
+</p>
+
+</body>
+</html>

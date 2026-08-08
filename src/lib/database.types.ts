@@ -1,0 +1,382 @@
+// Database types for Supabase JS client. Mirrors the (former) Prisma schema.
+// Table names are PascalCase to match the existing Postgres schema created by Prisma.
+//
+// Important: Row/Insert/Update are `type` aliases (not `interface`), because
+// supabase-js requires each table's Row to be assignable to `Record<string, unknown>`,
+// which interfaces do not satisfy by default.
+
+export type AngleRow = {
+  id: string;
+  slug: string;
+  name: string;
+  requiredKeyword: string;
+  mechanism: string;
+  bannedMechanism: string;
+  silhouette: string;
+  colorway: string;
+  order: number;
+  createdAt: string;
+};
+export type SubAvatarRow = {
+  id: string;
+  angleId: string;
+  slug: string;
+  name: string;
+  shortDesc: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type AvatarResearchRow = {
+  id: string;
+  subAvatarId: string;
+  painPoints: string;
+  desires: string;
+  objections: string;
+  dailyLanguage: string;
+  triggers: string;
+  identity: string;
+  socialProof: string;
+  buyingContext: string;
+  notes: string | null;
+  // JSON-stringified AvatarProfile (the structured deep dive). Null for legacy /
+  // flat-only rows; parse with parseAvatarProfile, which tolerates absence.
+  profile: string | null;
+  updatedAt: string;
+  createdAt: string;
+};
+export type WinningAdRow = {
+  id: string;
+  angleId: string;
+  adName: string;
+  funnel: string;
+  headline: string;
+  visualConcept: string;
+  hookType: string | null;
+  imagePath: string | null;
+  metrics: string | null;
+  notes: string | null;
+  // "static" | "video" — optional on the type to gracefully handle legacy rows
+  // that pre-date this column. Always coalesce with `?? "static"` at read sites.
+  adType?: string | null;
+  createdAt: string;
+};
+export type BigSwingRow = {
+  id: string;
+  slug: string;
+  name: string;
+  format: string;
+  hookMechanic: string | null;
+  funnel: string;
+  description: string;
+  headlineOptions: string;
+  visualSpec: string;
+  order: number;
+  createdAt: string;
+};
+export type BriefRow = {
+  id: string;
+  angleId: string;
+  subAvatarId: string | null;
+  lane: string;
+  funnel: string;
+  hook: string;
+  exactHeadline: string;
+  visualConcept: string;
+  targetCount: number;
+  parentWinnerId: string | null;
+  iterationVar: string | null;
+  hypothesis: string | null;
+  bigSwingId: string | null;
+  hookMechanic: string | null;
+  notes: string | null;
+  createdAt: string;
+};
+export type RunRow = {
+  id: string;
+  briefId: string;
+  angleId: string;
+  status: string;
+  model: string;
+  startedAt: string;
+  finishedAt: string | null;
+  error: string | null;
+};
+export type GenerationRow = {
+  id: string;
+  runId: string;
+  index: number;
+  promptJson: string;
+  promptText: string;
+  tool: string;
+  level: string;
+  hook: string;
+  headlineRendered: string;
+  complianceStatus: string;
+  complianceNotes: string;
+  verdict: string;
+  verdictNote: string | null;
+  imagePath: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type IterationRow = {
+  id: string;
+  iterationName: string;
+  parentWinnerId: string | null;
+  runId: string | null;
+  iterationNumber: number;
+  level: string;
+  editor: string;
+  originalAdName: string;
+  hookSlug: string;
+  notes: string | null;
+  createdAt: string;
+};
+export type PerformanceEntryRow = {
+  id: string;
+  winnerId: string | null;
+  adName: string;
+  spend: number;
+  impressions: number;
+  clicks: number;
+  ctr: number | null;
+  cpa: number | null;
+  roas: number | null;
+  purchases: number;
+  date: string;
+  source: string;
+  notes: string | null;
+  createdAt: string;
+};
+export type SwipeFileRow = {
+  id: string;
+  title: string;
+  brand: string | null;
+  category: string | null;
+  notes: string | null;
+  imagePath: string | null;
+  sourceUrl: string | null;
+  tags: string | null;
+  createdAt: string;
+};
+export type KnowledgeNoteRow = {
+  id: string;
+  title: string;
+  body: string;
+  pinned: boolean;
+  tags: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type CopyPrincipleRow = {
+  id: string;
+  slug: string;
+  category: string;
+  title: string;
+  body: string;
+  order: number;
+};
+export type ProductRow = {
+  id: string;
+  name: string;
+  imagePath: string | null;
+  description: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+export type SettingsRow = {
+  id: string;
+  brandWordmarkPath: string | null;
+  referenceImagePath: string | null;
+  defaultEditor: string;
+  defaultTargetCount: number;
+  allowedSkinTones: string;
+  updatedAt: string;
+  createdAt: string;
+};
+
+// Research = persisted sessions where the engine pulls drafts from grounded
+// search. Three types today: angle ideas, sub-avatar candidates, ad concepts.
+export type ResearchRow = {
+  id: string;
+  type: string;             // 'angle' | 'sub_avatar' | 'concept'
+  angleSlug: string | null;
+  focus: string | null;
+  drafts: string;           // JSON-stringified draft array — shape depends on `type`
+  status: string;           // 'pending' | 'saved' | 'discarded'
+  notes: string | null;
+  createdAt: string;
+};
+
+// ─── Layer-1 SOP foundation ──────────────────────────────────────────────────
+// Sop = a written Standard Operating Procedure the agents read. `body` is the
+// markdown an agent injects verbatim into its system prompt; `payload` holds
+// structured SOPs that are data, not prose (e.g. a hook taxonomy, a block list).
+export type SopRow = {
+  id: string;
+  slug: string;
+  // 'verbatim_classification' | 'source_weighting' | 'hook_taxonomy' |
+  // 'hook_rules_market' | 'deep_dive_template' | 'reference_format' |
+  // 'compliance' | 'block_taxonomy' | 'naming' | 'other'
+  type: string;
+  title: string;
+  body: string;              // markdown read verbatim by the agent
+  payload: string | null;    // JSON-stringified structured payload, when applicable
+  // which agent role loads this SOP: 'strategist' | 'copywriter' | 'researcher' |
+  // 'designer' | 'compliance' | 'all'
+  roleScope: string;
+  marketScope: string | null; // null = global; else a market code ('uk','de',…)
+  pinned: boolean;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// ReferenceFormat = a SCRIPT structure (Magic Formula, Regret Arc, …). Distinct
+// from the visual Big-Swing formats in formats.ts. `beats` is the timed skeleton
+// the Script Generator (Module 5) fills in.
+export type ReferenceFormatRow = {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  beats: string;             // JSON: [{label,time,note}]
+  bestForAngle: string | null;
+  optimalDurationSec: number | null;
+  exampleScripts: string | null; // JSON: string[] of winner scripts
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// MarketProfile = per-market tone + claims rules. Feeds Module 11 (compliance)
+// and Module 12 (localization), plus the copywriter's per-market grading pass.
+export type MarketProfileRow = {
+  id: string;
+  code: string;              // 'uk' | 'es' | 'de' | 'cz' | 'pl' | 'pt' | 'gr' | 'se' | 'nz' | 'au' | 'ca'
+  name: string;
+  tone: string;
+  vocabulary: string | null;       // JSON: { favor: string[], avoid: string[] }
+  hooksThatWork: string | null;    // JSON: string[]
+  hooksThatFlop: string | null;    // JSON: string[]
+  allowedClaims: string | null;    // JSON: string[]
+  forbiddenClaims: string | null;  // JSON: string[]
+  disclaimerClaims: string | null; // JSON: string[]
+  trustpilotScore: string | null;
+  culturalNotes: string | null;
+  order: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// EditorClaim = an editor claiming a completed pipeline run + the strategist's
+// review on it (Migration 004).
+export type EditorClaimRow = {
+  id: string;
+  runId: string;
+  label: string;
+  claimedByEmail: string;
+  claimedAt: string;
+  deliveryUrl: string | null;
+  reviewNote: string | null;
+  reviewStatus: string; // 'pending' | 'changes_requested' | 'approved'
+  reviewedByEmail: string | null;
+  updatedAt: string;
+};
+
+// BrollClip = one video clip indexed from the team's Google Drive b-roll folder
+// (Migration 007). Fed into the Designer / Creative-Briefs stages so b-roll
+// suggestions map to real files.
+export type BrollClipRow = {
+  id: string;
+  driveId: string;
+  name: string;
+  mimeType: string;
+  folderPath: string | null;
+  webViewLink: string | null;
+  thumbnailLink: string | null;
+  description: string | null;
+  durationMs: number | null;
+  sizeBytes: number | null;
+  indexedAt: string;
+};
+
+// AppUser = a login account for the internal team (Migration 005). Simple
+// username + scrypt password hash + role. No email involved.
+export type AppUserRow = {
+  id: string;
+  username: string;
+  passwordHash: string;
+  role: string; // 'creative_strategist' | 'editor'
+  createdAt: string;
+};
+
+// Verbatim = one captured piece of real customer voice (Module 1). Classified
+// by taxonomy category + weighted by source rank × engagement.
+export type VerbatimRow = {
+  id: string;
+  angleSlug: string | null;
+  subAvatarId: string | null;
+  category: string;          // taxonomy slug
+  text: string;
+  sourceType: string;        // reddit_thread | youtube_comment | ...
+  sourceUrl: string | null;
+  engagementScore: number;
+  sourceWeight: number;
+  market: string | null;
+  researchId: string | null;
+  createdAt: string;
+};
+
+// Usage = one row per Gemini call. We aggregate by feature/day on the Usage page.
+export type UsageRow = {
+  id: string;
+  feature: string;          // 'generation' | 'video_generation' | 'sub_avatar_research' |
+                            // 'angle_research' | 'concept_research' | 'extraction'
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  thinkingTokens: number;
+  estimatedCostUsd: number;
+  metadata: string | null;  // free-form JSON for grounding flag, run id, etc.
+  createdAt: string;
+};
+
+export type Database = {
+  public: {
+    Tables: {
+      Angle: { Row: AngleRow; Insert: Partial<AngleRow> & { slug: string; name: string; requiredKeyword: string; mechanism: string; bannedMechanism: string; silhouette: string; colorway: string }; Update: Partial<AngleRow>; Relationships: [] };
+      SubAvatar: { Row: SubAvatarRow; Insert: Partial<SubAvatarRow> & { angleId: string; slug: string; name: string }; Update: Partial<SubAvatarRow>; Relationships: [] };
+      AvatarResearch: { Row: AvatarResearchRow; Insert: Partial<AvatarResearchRow> & { subAvatarId: string; painPoints: string; desires: string; objections: string; dailyLanguage: string; triggers: string; identity: string; socialProof: string; buyingContext: string }; Update: Partial<AvatarResearchRow>; Relationships: [] };
+      WinningAd: { Row: WinningAdRow; Insert: Partial<WinningAdRow> & { angleId: string; adName: string; funnel: string; headline: string; visualConcept: string }; Update: Partial<WinningAdRow>; Relationships: [] };
+      BigSwing: { Row: BigSwingRow; Insert: Partial<BigSwingRow> & { slug: string; name: string; format: string; funnel: string; description: string; headlineOptions: string; visualSpec: string }; Update: Partial<BigSwingRow>; Relationships: [] };
+      Brief: { Row: BriefRow; Insert: Partial<BriefRow> & { angleId: string; lane: string; funnel: string; hook: string; exactHeadline: string; visualConcept: string }; Update: Partial<BriefRow>; Relationships: [] };
+      Run: { Row: RunRow; Insert: Partial<RunRow> & { briefId: string; angleId: string }; Update: Partial<RunRow>; Relationships: [] };
+      Generation: { Row: GenerationRow; Insert: Partial<GenerationRow> & { runId: string; index: number; promptJson: string; promptText: string; level: string; hook: string; headlineRendered: string; complianceNotes: string }; Update: Partial<GenerationRow>; Relationships: [] };
+      Iteration: { Row: IterationRow; Insert: Partial<IterationRow> & { iterationName: string; iterationNumber: number; level: string; editor: string; originalAdName: string; hookSlug: string }; Update: Partial<IterationRow>; Relationships: [] };
+      PerformanceEntry: { Row: PerformanceEntryRow; Insert: Partial<PerformanceEntryRow> & { adName: string; spend: number }; Update: Partial<PerformanceEntryRow>; Relationships: [] };
+      SwipeFile: { Row: SwipeFileRow; Insert: Partial<SwipeFileRow> & { title: string }; Update: Partial<SwipeFileRow>; Relationships: [] };
+      KnowledgeNote: { Row: KnowledgeNoteRow; Insert: Partial<KnowledgeNoteRow> & { title: string; body: string }; Update: Partial<KnowledgeNoteRow>; Relationships: [] };
+      CopyPrinciple: { Row: CopyPrincipleRow; Insert: Partial<CopyPrincipleRow> & { slug: string; category: string; title: string; body: string }; Update: Partial<CopyPrincipleRow>; Relationships: [] };
+      Product: { Row: ProductRow; Insert: Partial<ProductRow> & { name: string }; Update: Partial<ProductRow>; Relationships: [] };
+      Settings: { Row: SettingsRow; Insert: Partial<SettingsRow>; Update: Partial<SettingsRow>; Relationships: [] };
+      Research: { Row: ResearchRow; Insert: Partial<ResearchRow> & { type: string; drafts: string }; Update: Partial<ResearchRow>; Relationships: [] };
+      Usage: { Row: UsageRow; Insert: Partial<UsageRow> & { feature: string; model: string }; Update: Partial<UsageRow>; Relationships: [] };
+      Sop: { Row: SopRow; Insert: Partial<SopRow> & { slug: string; type: string; title: string; body: string; roleScope: string }; Update: Partial<SopRow>; Relationships: [] };
+      ReferenceFormat: { Row: ReferenceFormatRow; Insert: Partial<ReferenceFormatRow> & { slug: string; name: string; description: string; beats: string }; Update: Partial<ReferenceFormatRow>; Relationships: [] };
+      MarketProfile: { Row: MarketProfileRow; Insert: Partial<MarketProfileRow> & { code: string; name: string; tone: string }; Update: Partial<MarketProfileRow>; Relationships: [] };
+      Verbatim: { Row: VerbatimRow; Insert: Partial<VerbatimRow> & { category: string; text: string; sourceType: string }; Update: Partial<VerbatimRow>; Relationships: [] };
+      EditorClaim: { Row: EditorClaimRow; Insert: Partial<EditorClaimRow> & { runId: string; label: string; claimedByEmail: string }; Update: Partial<EditorClaimRow>; Relationships: [] };
+      AppUser: { Row: AppUserRow; Insert: Partial<AppUserRow> & { id: string; username: string; passwordHash: string }; Update: Partial<AppUserRow>; Relationships: [] };
+      BrollClip: { Row: BrollClipRow; Insert: Partial<BrollClipRow> & { id: string; driveId: string; name: string; mimeType: string }; Update: Partial<BrollClipRow>; Relationships: [] };
+    };
+    Views: Record<string, never>;
+    Functions: Record<string, never>;
+    Enums: Record<string, never>;
+    CompositeTypes: Record<string, never>;
+  };
+};
+
+export type Tables<T extends keyof Database["public"]["Tables"]> = Database["public"]["Tables"][T]["Row"];
+export type TablesInsert<T extends keyof Database["public"]["Tables"]> = Database["public"]["Tables"][T]["Insert"];
+export type TablesUpdate<T extends keyof Database["public"]["Tables"]> = Database["public"]["Tables"][T]["Update"];

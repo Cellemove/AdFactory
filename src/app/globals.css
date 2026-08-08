@@ -1,0 +1,114 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  @apply bg-ink-50 text-ink-900 antialiased;
+}
+
+::selection {
+  @apply bg-brand-pink/25;
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-ink-300 bg-white px-3 py-1.5 text-sm font-medium text-ink-800 shadow-sm transition duration-150 hover:border-ink-400 hover:bg-ink-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-1 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:active:translate-y-0;
+  }
+  .btn-primary {
+    @apply border-ink-900 bg-ink-900 text-white hover:border-ink-700 hover:bg-ink-700;
+  }
+  .btn-danger {
+    @apply border-red-600 bg-red-600 text-white hover:border-red-500 hover:bg-red-500 focus-visible:ring-red-600;
+  }
+  .btn-ghost {
+    @apply border-transparent bg-transparent shadow-none hover:border-transparent hover:bg-ink-100;
+  }
+  .card {
+    @apply rounded-lg border border-ink-200 bg-white p-4 shadow-card;
+  }
+  .card-interactive {
+    @apply transition duration-150 hover:-translate-y-0.5 hover:border-ink-300 hover:shadow-card-hover;
+  }
+  .input {
+    @apply block w-full rounded-md border border-ink-300 bg-white px-3 py-2 text-sm shadow-sm transition duration-150 placeholder:text-ink-400 hover:border-ink-400 focus:border-ink-900 focus:outline-none focus:ring-2 focus:ring-ink-900/10 disabled:cursor-not-allowed disabled:bg-ink-100 disabled:text-ink-500;
+  }
+  .label {
+    @apply mb-1 block text-xs font-medium uppercase tracking-wide text-ink-500;
+  }
+  .tag {
+    @apply inline-flex items-center rounded-full border border-ink-300 bg-ink-100 px-2 py-0.5 text-xs font-medium text-ink-700;
+  }
+  .tag-ok {
+    @apply border-emerald-300 bg-emerald-50 text-emerald-700;
+  }
+  .tag-warn {
+    @apply border-amber-300 bg-amber-50 text-amber-700;
+  }
+  .tag-danger {
+    @apply border-red-300 bg-red-50 text-red-700;
+  }
+  .kbd {
+    @apply rounded border border-ink-300 bg-ink-100 px-1.5 py-0.5 font-mono text-[11px] text-ink-700;
+  }
+  .divider {
+    @apply my-4 h-px w-full bg-ink-200;
+  }
+  .grid-fields {
+    @apply grid grid-cols-1 gap-4 sm:grid-cols-2;
+  }
+  .prose-tight p {
+    @apply my-2;
+  }
+  /* Dropdown / popover entrance. Collapses to instant under reduced motion. */
+  .menu-pop {
+    animation: menu-pop 120ms cubic-bezier(0.16, 1, 0.3, 1);
+    transform-origin: top left;
+  }
+  /* Shimmering placeholder bar, used while a pipeline stage is generating. */
+  .skeleton-line {
+    @apply relative overflow-hidden rounded bg-ink-200/80;
+  }
+  .skeleton-line::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    transform: translateX(-100%);
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+    animation: shimmer 1.4s infinite;
+  }
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-pop {
+    animation: none;
+  }
+  .skeleton-line::after {
+    animation: none;
+  }
+  .btn,
+  .card-interactive {
+    transition: none;
+  }
+}

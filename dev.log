@@ -1,0 +1,26 @@
+
+> cellumove-ad-factory@0.1.0 dev
+> next dev
+
+ ⚠ Port 3000 is in use, trying 3001 instead.
+   ▲ Next.js 15.1.6
+   - Local:        http://localhost:3001
+   - Network:      http://192.168.254.148:3001
+   - Environments: .env
+
+ ✓ Starting...
+ ✓ Ready in 1731ms
+ ○ Compiling / ...
+ ✓ Compiled / in 2.9s (650 modules)
+ GET / 200 in 3221ms
+ ○ Compiling /new ...
+ ✓ Compiled /new in 820ms (799 modules)
+ GET /new 200 in 962ms
+ ✓ Compiled /avatars in 181ms (798 modules)
+ GET /avatars 200 in 261ms
+ GET / 200 in 97ms
+ GET /new 200 in 21ms
+ GET /avatars?angle=anti-cellulite&new=1 200 in 49ms
+ GET /new 200 in 26ms
+ GET / 200 in 46ms
+ GET /new 200 in 43ms
