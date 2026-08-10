@@ -5,21 +5,23 @@ export default {
   theme: {
     extend: {
       colors: {
+        // Plum-tinted neutral ramp: ink-800 is the brand plum, everything else derives from it.
         ink: {
-          900: "#0a0a0a",
-          800: "#171717",
-          700: "#262626",
-          600: "#404040",
-          500: "#737373",
-          400: "#a3a3a3",
-          300: "#d4d4d4",
-          200: "#e5e5e5",
-          100: "#f5f5f5",
-          50: "#fafafa",
+          900: "#3B0F3C",
+          800: "#4B164C",
+          700: "#5C2A5D",
+          600: "#6E4570",
+          500: "#7D667B",
+          400: "#A292A0",
+          300: "#CFC4CE",
+          200: "#E4DCE3",
+          100: "#EFE9EE",
+          50: "#F5F5F5",
         },
         brand: {
-          pink: "#ff6db4",
-          accent: "#0ea5e9",
+          pink: "#DD88CF",
+          blush: "#F8E7F6",
+          plum: "#4B164C",
           danger: "#ef4444",
           warn: "#f59e0b",
           ok: "#10b981",
@@ -30,9 +32,10 @@ export default {
         mono: ["var(--font-geist-mono)", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       boxShadow: {
-        card: "0 1px 2px 0 rgb(10 10 10 / 0.04), 0 1px 1px -1px rgb(10 10 10 / 0.03)",
-        "card-hover": "0 4px 12px -2px rgb(10 10 10 / 0.08), 0 2px 4px -2px rgb(10 10 10 / 0.04)",
-        pop: "0 8px 24px -6px rgb(10 10 10 / 0.14), 0 2px 6px -2px rgb(10 10 10 / 0.06)",
+        // Shadows carry the plum hue instead of neutral black.
+        card: "0 1px 2px 0 rgb(75 22 76 / 0.05), 0 1px 1px -1px rgb(75 22 76 / 0.04)",
+        "card-hover": "0 4px 12px -2px rgb(75 22 76 / 0.10), 0 2px 4px -2px rgb(75 22 76 / 0.05)",
+        pop: "0 8px 24px -6px rgb(75 22 76 / 0.16), 0 2px 6px -2px rgb(75 22 76 / 0.07)",
       },
     },
   },

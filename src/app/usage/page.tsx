@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { supabase } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +16,27 @@ const FEATURE_LABEL: Record<string, string> = {
   extraction: "Winner image extraction",
 };
 
-export default async function UsagePage() {
+type Totals = { calls: number; input: number; output: number; thinking: number; cost: number };
+
+const emptyTotals = (): Totals => ({ calls: 0, input: 0, output: 0, thinking: 0, cost: 0 });
+
+function addRow(acc: Totals, r: { inputTokens: number | null; outputTokens: number | null; thinkingTokens: number | null; estimatedCostUsd: unknown }): Totals {
+  acc.calls += 1;
+  acc.input += r.inputTokens ?? 0;
+  acc.output += r.outputTokens ?? 0;
+  acc.thinking += r.thinkingTokens ?? 0;
+  acc.cost += Number(r.estimatedCostUsd ?? 0);
+  return acc;
+}
+
+/** "2026-08" → "August 2026" (UTC month keys, matching createdAt timestamps). */
+function monthLabel(month: string): string {
+  return new Date(`${month}-01T00:00:00Z`).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
+export default async function UsagePage({ searchParams }: { searchParams: Promise<{ month?: string }> }) {
+  const { month } = await searchParams;
+
   // Pull ALL rows by paging — PostgREST caps any single response at 1,000 rows
   // regardless of .limit(), which silently truncated these totals once the table
   // passed 1k calls. Page in 1k chunks (hard safety cap 50k).
@@ -32,9 +53,8 @@ export default async function UsagePage() {
     all.push(...chunk);
     if (chunk.length < PAGE) break; // last page
   }
-  const res = { data: all, error };
 
-  if (res.error) {
+  if (error) {
     return (
       <div className="space-y-4">
         <header>
@@ -48,64 +68,70 @@ export default async function UsagePage() {
       </div>
     );
   }
-  const rows = res.data ?? [];
+  const rows = all;
 
-  // Aggregates
-  const total = rows.reduce(
-    (acc, r) => {
-      acc.calls += 1;
-      acc.input += r.inputTokens ?? 0;
-      acc.output += r.outputTokens ?? 0;
-      acc.thinking += r.thinkingTokens ?? 0;
-      acc.cost += Number(r.estimatedCostUsd ?? 0);
-      return acc;
-    },
-    { calls: 0, input: 0, output: 0, thinking: 0, cost: 0 },
-  );
+  // Month scoping (UTC, matching createdAt). Default: the current month.
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const selectedMonth = month && /^\d{4}-\d{2}$/.test(month) ? month : currentMonth;
+  const monthRows = rows.filter((r) => (r.createdAt ?? "").startsWith(selectedMonth));
+  const selectedLabel = monthLabel(selectedMonth);
 
-  const byFeature = new Map<string, { calls: number; cost: number; input: number; output: number; thinking: number }>();
-  for (const r of rows) {
-    const f = byFeature.get(r.feature) ?? { calls: 0, cost: 0, input: 0, output: 0, thinking: 0 };
-    f.calls += 1;
-    f.cost += Number(r.estimatedCostUsd ?? 0);
-    f.input += r.inputTokens ?? 0;
-    f.output += r.outputTokens ?? 0;
-    f.thinking += r.thinkingTokens ?? 0;
-    byFeature.set(r.feature, f);
+  // Aggregates for the selected month
+  const total = monthRows.reduce(addRow, emptyTotals());
+
+  const byFeature = new Map<string, Totals>();
+  for (const r of monthRows) {
+    byFeature.set(r.feature, addRow(byFeature.get(r.feature) ?? emptyTotals(), r));
   }
 
   const byDay = new Map<string, number>();
-  for (const r of rows) {
+  for (const r of monthRows) {
     const day = (r.createdAt ?? "").slice(0, 10);
     byDay.set(day, (byDay.get(day) ?? 0) + Number(r.estimatedCostUsd ?? 0));
   }
-  const last14 = Array.from(byDay.entries())
-    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
-    .slice(0, 14);
-  const maxDailyCost = Math.max(0.0001, ...last14.map(([, c]) => c));
+  const days = Array.from(byDay.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
+  const maxDailyCost = Math.max(0.0001, ...days.map(([, c]) => c));
+
+  // Every month on record, newest first — the permanent per-month ledger.
+  const byMonth = new Map<string, Totals>();
+  for (const r of rows) {
+    const m = (r.createdAt ?? "").slice(0, 7);
+    byMonth.set(m, addRow(byMonth.get(m) ?? emptyTotals(), r));
+  }
+  const months = Array.from(byMonth.entries()).sort((a, b) => (a[0] < b[0] ? 1 : -1));
 
   return (
     <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Usage</h1>
-        <p className="text-sm text-ink-500">
-          Gemini 2.5 Pro on Vertex AI. Cost is estimated using published Vertex prices —
-          your actual GCP bill is authoritative.
-        </p>
+      <header className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight">Usage</h1>
+          <p className="text-sm text-ink-500">
+            Gemini 2.5 Pro on Vertex AI. Cost is estimated using published Vertex prices —
+            your actual GCP bill is authoritative.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="tag">{selectedLabel}</span>
+          {selectedMonth !== currentMonth && (
+            <Link href="/usage" className="btn text-xs">
+              Back to current month
+            </Link>
+          )}
+        </div>
       </header>
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <Stat label="Total calls" value={total.calls.toLocaleString()} />
+        <Stat label="Calls" value={total.calls.toLocaleString()} />
         <Stat label="Estimated cost" value={`$${total.cost.toFixed(4)}`} />
         <Stat label="Input tokens" value={fmt(total.input)} />
         <Stat label="Output + thinking" value={fmt(total.output + total.thinking)} />
       </section>
 
       <section className="card">
-        <h2 className="text-sm font-semibold">By feature (all time)</h2>
+        <h2 className="text-sm font-semibold">By feature — {selectedLabel}</h2>
         <div className="divider" />
         {byFeature.size === 0 ? (
-          <p className="text-sm text-ink-500">No calls recorded yet.</p>
+          <p className="text-sm text-ink-500">No calls recorded in {selectedLabel}.</p>
         ) : (
           <table className="w-full text-sm">
             <thead>
@@ -135,14 +161,50 @@ export default async function UsagePage() {
       </section>
 
       <section className="card">
-        <h2 className="text-sm font-semibold">Last 14 days</h2>
-        <p className="mt-0.5 text-xs text-ink-500">Daily estimated cost (UTC).</p>
+        <h2 className="text-sm font-semibold">Monthly history</h2>
+        <p className="mt-0.5 text-xs text-ink-500">Every month on record (UTC). Click a month to inspect it.</p>
         <div className="divider" />
-        {last14.length === 0 ? (
+        {months.length === 0 ? (
           <p className="text-sm text-ink-500">No spend yet.</p>
         ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-ink-200 text-left text-xs uppercase tracking-wide text-ink-500">
+                <th className="py-2">Month</th>
+                <th className="py-2 text-right">Calls</th>
+                <th className="py-2 text-right">Input</th>
+                <th className="py-2 text-right">Output+thinking</th>
+                <th className="py-2 text-right">Est. cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {months.map(([m, t]) => (
+                <tr key={m} className={`border-b border-ink-100 ${m === selectedMonth ? "bg-brand-blush/40" : ""}`}>
+                  <td className="py-1.5">
+                    <Link href={`/usage?month=${m}`} className="font-medium hover:underline">
+                      {monthLabel(m)}
+                    </Link>
+                  </td>
+                  <td className="py-1.5 text-right">{t.calls.toLocaleString()}</td>
+                  <td className="py-1.5 text-right">{fmt(t.input)}</td>
+                  <td className="py-1.5 text-right">{fmt(t.output + t.thinking)}</td>
+                  <td className="py-1.5 text-right">${t.cost.toFixed(4)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      <section className="card">
+        <h2 className="text-sm font-semibold">Daily cost — {selectedLabel}</h2>
+        <p className="mt-0.5 text-xs text-ink-500">Estimated cost per day (UTC).</p>
+        <div className="divider" />
+        {days.length === 0 ? (
+          <p className="text-sm text-ink-500">No spend in {selectedLabel}.</p>
+        ) : (
           <ul className="space-y-1.5">
-            {last14.map(([day, cost]) => (
+            {days.map(([day, cost]) => (
               <li key={day} className="flex items-center gap-3 text-xs">
                 <span className="w-24 shrink-0 font-mono text-ink-500">{day}</span>
                 <span className="flex-1">
@@ -159,14 +221,14 @@ export default async function UsagePage() {
       </section>
 
       <section className="card">
-        <h2 className="text-sm font-semibold">Recent calls</h2>
-        <p className="mt-0.5 text-xs text-ink-500">The last 30 Gemini invocations.</p>
+        <h2 className="text-sm font-semibold">Recent calls — {selectedLabel}</h2>
+        <p className="mt-0.5 text-xs text-ink-500">The last 30 Gemini invocations in this month.</p>
         <div className="divider" />
-        {rows.length === 0 ? (
-          <p className="text-sm text-ink-500">No calls recorded yet.</p>
+        {monthRows.length === 0 ? (
+          <p className="text-sm text-ink-500">No calls recorded in {selectedLabel}.</p>
         ) : (
           <ul className="space-y-1.5 text-xs">
-            {rows.slice(0, 30).map((r) => (
+            {monthRows.slice(0, 30).map((r) => (
               <li key={r.id} className="flex flex-wrap items-center justify-between gap-2">
                 <span className="font-mono text-ink-500">
                   {new Date(r.createdAt).toLocaleString()}

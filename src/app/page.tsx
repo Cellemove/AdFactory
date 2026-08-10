@@ -55,7 +55,7 @@ export default async function DashboardPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <Link href="/research" className="btn">Start Research</Link>
-          <Link href="/new" className="btn btn-primary">+ New Run</Link>
+          <Link href="/pipeline" className="btn btn-primary">Open Pipeline</Link>
         </div>
       </header>
 
@@ -83,7 +83,7 @@ export default async function DashboardPage() {
           </div>
           <div className="divider" />
           {recentRuns.length === 0 ? (
-            <p className="text-sm text-ink-500">No runs yet. <Link href="/new" className="underline">Start one.</Link></p>
+            <p className="text-sm text-ink-500">No runs yet. <Link href="/pipeline" className="underline">Start one in the pipeline.</Link></p>
           ) : (
             <ul className="space-y-2">
               {recentRuns.map((r) => {

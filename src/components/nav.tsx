@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { signOut } from "@/app/actions/auth";
+import { LogoMark } from "@/components/logo";
 import { ROLE_LABELS, type Role } from "@/lib/roles";
 
 type NavLink = { href: string; label: string };
@@ -21,14 +22,10 @@ const PRIMARY: NavLink[] = [
 
 const OTHER: NavLink[] = [
   { href: "/research", label: "Research" },
-  { href: "/excavate", label: "Excavate (G1)" },
   { href: "/broll", label: "B-roll" },
-  { href: "/new", label: "New Run" },
-  { href: "/script", label: "Script" },
   { href: "/winners", label: "Winners" },
-  { href: "/runs", label: "Runs" },
+  { href: "/runs", label: "History" },
   { href: "/big-swings", label: "Big Swings" },
-  { href: "/swipe-file", label: "Swipe File" },
   { href: "/agents", label: "Agents" },
   { href: "/usage", label: "Usage" },
   { href: "/about", label: "About" },
@@ -65,15 +62,16 @@ export function Nav({ username, role = "creative_strategist" }: { username?: str
 
   const otherActive = OTHER.some((l) => isActive(path, l.href));
   const tabClass = (active: boolean) =>
-    `rounded-md px-2.5 py-1 transition duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 ${
+    `rounded-full px-3 py-1 transition duration-200 ease-[cubic-bezier(0.32,0.72,0,1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 ${
       active ? "bg-ink-900 text-white shadow-sm" : "text-ink-600 hover:bg-ink-100 hover:text-ink-900"
     }`;
 
   return (
-    <header className="sticky top-0 z-30 border-b border-ink-200 bg-white/95 backdrop-blur">
-      <div className="mx-auto flex w-full max-w-7xl items-center gap-6 px-4 py-3 sm:px-6">
+    // Floating glass island, detached from the viewport edge.
+    <header className="sticky top-0 z-30 px-3 pt-3 sm:px-4">
+      <div className="mx-auto flex w-full max-w-7xl items-center gap-4 rounded-2xl border border-ink-200/70 bg-white/80 px-4 py-2.5 shadow-card backdrop-blur-xl sm:px-5">
         <Link href="/" className="flex items-center gap-2">
-          <span className="inline-block h-5 w-5 rounded-sm bg-brand-pink" />
+          <LogoMark className="h-5 w-5" />
           <span className="text-sm font-semibold tracking-tight">AdFactory</span>
         </Link>
         <nav className="flex flex-1 flex-wrap items-center gap-1 text-sm">
@@ -105,7 +103,7 @@ export function Nav({ username, role = "creative_strategist" }: { username?: str
             {open && (
               <div
                 role="menu"
-                className="menu-pop absolute left-0 top-full z-40 mt-1.5 min-w-44 rounded-lg border border-ink-200 bg-white py-1.5 shadow-pop"
+                className="menu-pop absolute left-0 top-full z-40 mt-1.5 min-w-44 rounded-xl border border-ink-200/70 bg-white/95 py-1.5 shadow-pop backdrop-blur-xl"
               >
                 {OTHER.map((l) => {
                   const active = isActive(path, l.href);
@@ -128,11 +126,6 @@ export function Nav({ username, role = "creative_strategist" }: { username?: str
           )}
         </nav>
         <div className="flex items-center gap-3">
-          {!isEditor && (
-            <Link href="/new" className="btn btn-primary">
-              + New Run
-            </Link>
-          )}
           {username && (
             <div className="flex items-center gap-2">
               <span className="hidden text-[10px] font-medium uppercase tracking-wide text-ink-400 sm:inline">

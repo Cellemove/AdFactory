@@ -3,7 +3,7 @@ import { driveConfigured, driveServiceAccountEmail } from "@/lib/drive";
 import { BrollClient } from "./BrollClient";
 
 export const dynamic = "force-dynamic";
-export const metadata = { title: "B-roll · CelluMove Ad Factory" };
+export const metadata = { title: "B-roll · AdFactory" };
 
 export default async function BrollPage() {
   const clips = await listBrollClips(2000);

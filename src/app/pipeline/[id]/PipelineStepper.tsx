@@ -496,7 +496,7 @@ function NodeCard({
   const running = status === "running";
   const badge =
     running
-      ? "bg-brand-pink text-white animate-pulse"
+      ? "bg-brand-plum text-white animate-pulse"
       : status === "done"
         ? "bg-emerald-500 text-white"
         : status === "ready"
@@ -528,7 +528,7 @@ function NodeCard({
 
       {running ? (
         <div className="mt-2.5 space-y-1.5">
-          <div className="flex items-center gap-1.5 text-xs font-medium text-brand-pink">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-brand-plum">
             <Spinner className="h-3 w-3" /> {grounded ? "Researching" : "Generating"}… {elapsed}
           </div>
           <div className="skeleton-line h-2.5 w-full" />
@@ -607,7 +607,7 @@ function DeepDiveNode({
 }) {
   const preview = output != null ? previewText(output) : undefined;
   const badge = looping
-    ? "bg-brand-pink text-white animate-pulse"
+    ? "bg-brand-plum text-white animate-pulse"
     : done
       ? "bg-emerald-500 text-white"
       : "bg-ink-900 text-white";
@@ -637,7 +637,7 @@ function DeepDiveNode({
 
       {looping ? (
         <div className="mt-2.5 space-y-1.5" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center gap-1.5 text-xs font-medium text-brand-pink">
+          <div className="flex items-center gap-1.5 text-xs font-medium text-brand-plum">
             <Spinner className="h-3 w-3" /> Scraping… {elapsed}
           </div>
           {progress && (
@@ -964,7 +964,7 @@ function SList({ label, value }: { label: string; value?: string[] }) {
 function SynthesisView({ s }: { s: DdSynthesis }) {
   return (
     <section className="space-y-3 rounded-md border border-ink-200 bg-ink-50/40 p-3">
-      <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-pink">Angle synthesis</div>
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-plum">Angle synthesis</div>
       <div className="grid gap-3 sm:grid-cols-2">
         <SField label="Who this angle speaks to" value={s.whoThisAngleSpeaksTo} />
         <SField label="Biggest pain" value={s.biggestPain} />
@@ -995,7 +995,7 @@ function SynthesisView({ s }: { s: DdSynthesis }) {
       <SList label="Messaging territories" value={s.messagingTerritories} />
       {s.singleStrongestInsight?.trim() && (
         <div className="rounded-md border border-brand-pink/40 bg-brand-pink/5 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-pink">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-plum">
             Single strongest creative insight
           </div>
           <p className="mt-0.5 whitespace-pre-wrap text-sm font-medium text-ink-900">{s.singleStrongestInsight}</p>
@@ -1206,7 +1206,7 @@ function RootCauseSummary({ value }: { value: unknown }) {
       {/* The single crispest summary line */}
       {oneLiner && (
         <div className="rounded-md border border-brand-pink/40 bg-brand-pink/5 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-pink">In one sentence</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-plum">In one sentence</div>
           <p className="mt-0.5 text-sm font-medium text-ink-900">{oneLiner}</p>
         </div>
       )}
@@ -1386,7 +1386,7 @@ function AvatarIntelSummary({ value }: { value: unknown }) {
       {/* Who she is */}
       {air.avatarSummary?.trim() && (
         <div className="rounded-md border border-brand-pink/40 bg-brand-pink/5 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-pink">The avatar</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-plum">The avatar</div>
           <p className="mt-0.5 text-sm font-medium text-ink-900">{air.avatarSummary}</p>
         </div>
       )}
@@ -1440,7 +1440,7 @@ function AvatarIntelSummary({ value }: { value: unknown }) {
             )}
             {emotional.length > 0 && (
               <div className="rounded-md border border-brand-pink/40 bg-brand-pink/5 p-3">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-pink">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-plum">
                   Emotional problems — beneath the surface
                 </div>
                 <ul className="mt-1.5 space-y-1.5">
@@ -1460,7 +1460,7 @@ function AvatarIntelSummary({ value }: { value: unknown }) {
               <ul className="mt-1.5 space-y-1 text-sm text-ink-700">
                 {triggers.map((t, i) => (
                   <li key={i} className="flex gap-1.5">
-                    <span className="shrink-0 text-brand-pink">⚡</span>
+                    <span className="shrink-0 text-brand-plum">⚡</span>
                     <span>{t}</span>
                   </li>
                 ))}
@@ -1627,7 +1627,7 @@ function BrandDnaSummary({ value }: { value: unknown }) {
       {/* Positioning — the lead */}
       {dna.positioning?.trim() && (
         <div className="rounded-md border border-brand-pink/40 bg-brand-pink/5 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-pink">Positioning</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-plum">Positioning</div>
           <p className="mt-0.5 text-sm font-medium text-ink-900">{dna.positioning}</p>
         </div>
       )}
@@ -1847,7 +1847,7 @@ function CopyArsenalSummary({ value }: { value: unknown }) {
           <div className="mt-1.5 space-y-2">
             {bigIdeas.map((t, i) => (
               <div key={i} className="flex items-start gap-2 rounded-md border border-brand-pink/40 bg-brand-pink/5 p-2.5">
-                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-pink text-[11px] font-semibold text-white">
+                <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-brand-plum text-[11px] font-semibold text-white">
                   {i + 1}
                 </span>
                 <p className="flex-1 text-sm font-medium text-ink-900">{t}</p>
@@ -2150,7 +2150,7 @@ function AdScriptsView({ value }: { value: unknown }) {
                     {s.hook?.trim() && (
                       <div className="flex items-start justify-between gap-2 rounded-md border border-brand-pink/40 bg-brand-pink/5 p-2.5">
                         <p className="flex-1 text-sm font-medium text-ink-900">
-                          <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-pink">Hook · </span>
+                          <span className="text-[11px] font-semibold uppercase tracking-wide text-brand-plum">Hook · </span>
                           {s.hook}
                         </p>
                         <CopyButton text={s.hook} />
@@ -2326,7 +2326,7 @@ function CreativeBriefsView({ value }: { value: unknown }) {
 
                     {b.keyVisual?.trim() && (
                       <div className="rounded-md border border-brand-pink/40 bg-brand-pink/5 p-2.5">
-                        <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-pink">Key visual</div>
+                        <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-plum">Key visual</div>
                         <p className="mt-0.5 whitespace-pre-wrap text-sm font-medium text-ink-900">{b.keyVisual}</p>
                       </div>
                     )}
