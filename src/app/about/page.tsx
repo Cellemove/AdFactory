@@ -1,7 +1,7 @@
 import Link from "next/link";
 
 export const metadata = {
-  title: "About · CelluMove Ad Factory",
+  title: "About · AdFactory",
   description: "What the Ad Factory is, how the pipeline works, and the guardrails that keep it honest.",
 };
 
@@ -31,7 +31,7 @@ export default function AboutPage() {
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">About</h1>
         <p className="text-sm text-ink-500">
-          CelluMove Ad Factory turns real customer voice into production-ready ad creative — research
+          AdFactory turns real customer voice into production-ready ad creative — research
           to scripts — for CelluMove 3D-shaping compression leggings.
         </p>
       </header>

@@ -1,6 +1,8 @@
 import { supabase } from "@/lib/db";
 import type { ResearchRow } from "@/lib/database.types";
 import { PIPELINE_STAGES } from "@/lib/cellumove/pipeline-stages";
+import type { ExcavationResult } from "../actions/excavate";
+import { ExcavateSection, type RecentExcavation } from "./ExcavateSection";
 import { PipelineIndexClient } from "./PipelineIndexClient";
 
 export const dynamic = "force-dynamic";
@@ -29,8 +31,22 @@ function countDone(drafts: string): number {
   }
 }
 
-export default async function PipelinePage() {
-  const [anglesRes, subsRes, researchRes, runsRes] = await Promise.all([
+function parseExcavation(drafts: string): ExcavationResult | null {
+  try {
+    return JSON.parse(drafts) as ExcavationResult;
+  } catch {
+    return null;
+  }
+}
+
+export default async function PipelinePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ excavation?: string }>;
+}) {
+  const { excavation } = await searchParams;
+
+  const [anglesRes, subsRes, researchRes, runsRes, excavationRes, recentExcavationsRes] = await Promise.all([
     supabase.from("Angle").select("id, slug, name"),
     supabase.from("SubAvatar").select("id, name, shortDesc, angleId"),
     supabase.from("AvatarResearch").select("subAvatarId"),
@@ -40,6 +56,15 @@ export default async function PipelinePage() {
       .eq("type", "pipeline")
       .order("createdAt", { ascending: false })
       .limit(30),
+    excavation
+      ? supabase.from("Research").select("drafts").eq("id", excavation).eq("type", "excavation").maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+    supabase
+      .from("Research")
+      .select("id, focus, drafts, createdAt")
+      .eq("type", "excavation")
+      .order("createdAt", { ascending: false })
+      .limit(12),
   ]);
 
   const angles = (anglesRes.data ?? []) as { id: string; slug: string; name: string }[];
@@ -77,5 +102,30 @@ export default async function PipelinePage() {
 
   const angleOptions = angles.map((a) => ({ slug: a.slug, name: a.name }));
 
-  return <PipelineIndexClient subOptions={subOptions} runs={runs} angles={angleOptions} />;
+  // G1 excavation data, embedded in the index (deep link: /pipeline?excavation=<id>).
+  const initialExcavation = excavationRes.data
+    ? parseExcavation((excavationRes.data as Pick<ResearchRow, "drafts">).drafts)
+    : null;
+  const recentExcavations: RecentExcavation[] = (
+    (recentExcavationsRes.error
+      ? []
+      : (recentExcavationsRes.data as Pick<ResearchRow, "id" | "focus" | "drafts" | "createdAt">[])) ?? []
+  ).map((r) => {
+    const p = parseExcavation(r.drafts);
+    return {
+      id: r.id,
+      avatarName: r.focus || p?.avatarName || "Avatar",
+      subCount: p?.subAvatars?.length ?? 0,
+      createdAt: r.createdAt,
+    };
+  });
+
+  return (
+    <PipelineIndexClient
+      subOptions={subOptions}
+      runs={runs}
+      angles={angleOptions}
+      excavateSlot={<ExcavateSection initial={initialExcavation} recent={recentExcavations} />}
+    />
+  );
 }

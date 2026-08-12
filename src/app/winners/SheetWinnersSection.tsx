@@ -330,7 +330,7 @@ export function SheetWinnersSection({ doc }: { doc: SheetWinnersDoc | null }) {
                         </td>
                         <td className="py-1.5 pl-3" onClick={(ev) => ev.stopPropagation()}>
                           {w.postLink ? (
-                            <a href={w.postLink} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-accent underline hover:text-ink-900">
+                            <a href={w.postLink} target="_blank" rel="noopener noreferrer" className="text-xs text-brand-plum underline hover:text-ink-900">
                               open ↗
                             </a>
                           ) : (

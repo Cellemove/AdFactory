@@ -34,10 +34,12 @@ export function PipelineIndexClient({
   subOptions,
   runs,
   angles,
+  excavateSlot,
 }: {
   subOptions: SubOption[];
   runs: RunSummary[];
   angles: AngleOption[];
+  excavateSlot?: React.ReactNode;
 }) {
   const router = useRouter();
   const [subAvatarId, setSubAvatarId] = useState(subOptions[0]?.id ?? "");
@@ -111,20 +113,7 @@ export function PipelineIndexClient({
       </header>
 
       {/* Step 1 — Avatar Excavation is the front door: desire + problem → avatar + sub-avatars. */}
-      <Link
-        href="/excavate"
-        className="card flex flex-wrap items-center justify-between gap-3 border-brand-pink/40 bg-brand-pink/5 transition hover:border-brand-pink hover:bg-brand-pink/10"
-      >
-        <div className="min-w-0">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-brand-pink">Start here · G1</div>
-          <div className="text-sm font-semibold text-ink-900">Excavate a new avatar</div>
-          <p className="mt-0.5 text-xs text-ink-500">
-            Enter one surface desire + one problem. We scrape real verbatims and map the avatar and every
-            sub-avatar — then pick one to deep-dive.
-          </p>
-        </div>
-        <span className="btn btn-primary shrink-0 text-xs">Open Excavation →</span>
-      </Link>
+      {excavateSlot}
 
       <section className="card">
         <h2 className="text-sm font-semibold">Start a new pipeline</h2>

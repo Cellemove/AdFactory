@@ -285,7 +285,7 @@ export async function excavateAvatar(input: {
     status: "pending",
     createdAt: result.createdAt,
   });
-  revalidatePath("/excavate");
+  revalidatePath("/pipeline");
   return result;
 }
 
