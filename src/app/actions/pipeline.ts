@@ -6,7 +6,7 @@ import { runAgent, extractJsonObject } from "@/lib/cellumove/agents";
 import { resolveAngle } from "@/lib/cellumove/angles";
 import { evaluatePrompt } from "@/lib/cellumove/compliance";
 import { exclusionBlock } from "@/lib/cellumove/novelty";
-import { brollLibraryContext } from "@/app/actions/broll";
+import { brollLibraryContext, recordBrollSuggestions } from "@/app/actions/broll";
 import {
   parseAvatarProfile,
   avatarForbiddenWords,
@@ -64,6 +64,9 @@ export interface DesignPackage {
   brollByBeat: Array<{ beat: string; suggestions: string[] }>;
   ugcBrief: string;
   missingClips: string[];
+  // For each missing clip: how to fill the gap without a shoot — an AI video-gen
+  // prompt and a TikTok search query to scrap a similar clip.
+  fallbacks?: Array<{ need: string; aiVideoPrompt: string; tiktokSearch: string }>;
 }
 export interface ScriptPackage {
   brief: StrategicBrief;
@@ -411,12 +414,12 @@ async function runDesigner(
   const broll = await brollLibraryContext();
   const instruction = [
     "You are the Visual Designer. You turn finished scripts into shootable/designable plans.",
-    "For EACH script: (1) suggest concrete B-roll per beat, (2) write a short UGC creator brief (look, props, shots, mood), (3) flag B-roll we most likely DON'T have and would need to shoot.",
+    "For EACH script: (1) suggest concrete B-roll per beat, (2) write a short UGC creator brief (look, props, shots, mood), (3) flag B-roll we most likely DON'T have and would need to shoot, (4) for EVERY missing clip give a fallback so the editor is never blocked: a ready-to-run AI video-generation prompt (subject, action, setting, camera, style, 5-8s) AND a TikTok search query likely to surface a scrappable similar clip.",
     "Match B-roll to the angle's mechanism cue without being literal (no clocks for time, no oranges for orange-peel).",
     broll
       ? "A B-ROLL LIBRARY of clips we ALREADY have is provided below. For each beat, prefer a real clip from it and name it exactly; only list truly-missing shots in missingClips."
       : "",
-    'Return ONLY JSON: {"designs":[{"formatSlug","brollByBeat":[{"beat","suggestions":["..."]}],"ugcBrief","missingClips":["..."]}]}',
+    'Return ONLY JSON: {"designs":[{"formatSlug","brollByBeat":[{"beat","suggestions":["..."]}],"ugcBrief","missingClips":["..."],"fallbacks":[{"need","aiVideoPrompt","tiktokSearch"}]}]}',
   ].filter(Boolean).join("\n");
 
   const context = [
@@ -494,6 +497,11 @@ export async function runScriptPipeline(rawInput: z.infer<typeof InputSchema>): 
   const designs = await runDesigner(ctx, finalScripts, input);
   const designBySlug = new Map(designs.map((d) => [d.formatSlug, d]));
 
+  // B-roll detection: count which real clips the Designer just suggested, so we
+  // can track over-use. Best-effort — never blocks the run.
+  const researchId = newId();
+  await recordBrollSuggestions(JSON.stringify(designs), "designer", researchId);
+
   const briefBySlug = new Map(briefs.map((b) => [b.formatSlug, b]));
 
   const packages: ScriptPackage[] = finalScripts.map((script) => ({
@@ -510,7 +518,7 @@ export async function runScriptPipeline(rawInput: z.infer<typeof InputSchema>): 
       },
     design:
       designBySlug.get(script.formatSlug) ?? {
-        formatSlug: script.formatSlug, brollByBeat: [], ugcBrief: "", missingClips: [],
+        formatSlug: script.formatSlug, brollByBeat: [], ugcBrief: "", missingClips: [], fallbacks: [],
       },
   }));
 
@@ -525,7 +533,7 @@ export async function runScriptPipeline(rawInput: z.infer<typeof InputSchema>): 
   // Best-effort: a persistence hiccup must not fail an otherwise-good generation.
   try {
     await supabase.from("Research").insert({
-      id: newId(),
+      id: researchId,
       type: "script_pipeline",
       angleSlug: ctx.angle.slug,
       focus: ctx.sub.name,

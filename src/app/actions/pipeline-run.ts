@@ -26,7 +26,7 @@ import {
 } from "@/lib/cellumove/pipeline-stages";
 import { scanClaims, type ClaimScan } from "@/lib/cellumove/claim-check";
 import { exclusionBlock, isNearDuplicate } from "@/lib/cellumove/novelty";
-import { brollLibraryContext } from "@/app/actions/broll";
+import { brollLibraryContext, recordBrollSuggestions } from "@/app/actions/broll";
 import { fetchThroughProxy } from "@/lib/scraper";
 import type {
   SubAvatarRow,
@@ -929,6 +929,12 @@ export async function runPipelineStage(
       thinkingBudget: def.thinkingBudget,
     });
     output = extractJsonObject<unknown>(text);
+
+    // B-roll detection: count which real clips the briefs referenced (over-use
+    // tracking). Best-effort — never blocks the stage.
+    if (def.key === "creativeBriefs") {
+      await recordBrollSuggestions(JSON.stringify(output), "creative_briefs", runId);
+    }
   }
 
   // Apply the verification system to what we just generated.

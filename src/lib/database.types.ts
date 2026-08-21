@@ -299,6 +299,27 @@ export type BrollClipRow = {
   durationMs: number | null;
   sizeBytes: number | null;
   indexedAt: string;
+  // Migration 008 — b-roll intelligence. Nullable/defaulted so rows read before
+  // the migration (or inserts that omit them) stay valid.
+  aiDescription: string | null;
+  tags: string | null;
+  analyzedAt: string | null;
+  timesSuggested: number;
+  lastSuggestedAt: string | null;
+  timesUsed: number;
+  lastUsedAt: string | null;
+};
+
+// BrollSuggestion = one detected mention of a clip in a pipeline stage's output
+// (Migration 008). The counters on BrollClip are the fast path; this is the audit
+// trail ("suggested in run X on date Y").
+export type BrollSuggestionRow = {
+  id: string;
+  clipId: string;
+  clipName: string;
+  source: string; // 'designer' | 'creative_briefs'
+  refId: string | null;
+  createdAt: string;
 };
 
 // AppUser = a login account for the internal team (Migration 005). Simple
@@ -369,6 +390,7 @@ export type Database = {
       EditorClaim: { Row: EditorClaimRow; Insert: Partial<EditorClaimRow> & { runId: string; label: string; claimedByEmail: string }; Update: Partial<EditorClaimRow>; Relationships: [] };
       AppUser: { Row: AppUserRow; Insert: Partial<AppUserRow> & { id: string; username: string; passwordHash: string }; Update: Partial<AppUserRow>; Relationships: [] };
       BrollClip: { Row: BrollClipRow; Insert: Partial<BrollClipRow> & { id: string; driveId: string; name: string; mimeType: string }; Update: Partial<BrollClipRow>; Relationships: [] };
+      BrollSuggestion: { Row: BrollSuggestionRow; Insert: Partial<BrollSuggestionRow> & { id: string; clipId: string; clipName: string; source: string }; Update: Partial<BrollSuggestionRow>; Relationships: [] };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

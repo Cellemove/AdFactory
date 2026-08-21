@@ -27,8 +27,11 @@ function loadServiceAccount(): ServiceAccount | null {
   return null;
 }
 
-function brollFolderId(): string | null {
-  return process.env.GOOGLE_DRIVE_BROLL_FOLDER_ID?.trim() || null;
+function brollFolderIds(): string[] {
+  return (process.env.GOOGLE_DRIVE_BROLL_FOLDER_ID ?? "")
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 /** The service-account email the team must share their b-roll folder with (for setup UI). */
@@ -37,7 +40,7 @@ export function driveServiceAccountEmail(): string | null {
 }
 
 export function driveConfigured(): boolean {
-  return Boolean(loadServiceAccount() && brollFolderId());
+  return Boolean(loadServiceAccount() && brollFolderIds().length);
 }
 
 function b64url(input: Buffer | string): string {
@@ -128,39 +131,96 @@ export interface DriveClip {
   sizeBytes: number | null;
 }
 
-/** Walk the configured b-roll folder tree (BFS) and return every video clip. */
+/**
+ * Fresh thumbnail URL for a Drive file (video poster frame). Drive's thumbnailLink
+ * expires after a few hours, so we mint one on demand instead of trusting the DB copy.
+ */
+export async function getDriveThumbnailUrl(driveId: string, size = 480): Promise<string | null> {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${driveId}?fields=thumbnailLink&supportsAllDrives=true`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) return null;
+  const { thumbnailLink } = (await res.json()) as { thumbnailLink?: string };
+  if (!thumbnailLink) return null;
+  // thumbnailLink ends with a size directive like "=s220" — ask for a bigger frame.
+  return thumbnailLink.replace(/=s\d+(-[a-z]+)?$/, `=s${size}`);
+}
+
+/** Download a Drive file's bytes (for Gemini clip analysis). Caller must size-gate first. */
+export async function downloadDriveFile(driveId: string): Promise<Buffer> {
+  const token = await getAccessToken();
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${driveId}?alt=media&supportsAllDrives=true`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) {
+    throw new Error(`Drive download failed (${res.status}): ${(await res.text()).slice(0, 200)}`);
+  }
+  return Buffer.from(await res.arrayBuffer());
+}
+
+async function getFolderName(token: string, id: string): Promise<string | null> {
+  const res = await fetch(
+    `https://www.googleapis.com/drive/v3/files/${id}?fields=name&supportsAllDrives=true`,
+    { headers: { Authorization: `Bearer ${token}` } },
+  );
+  if (!res.ok) return null;
+  return ((await res.json()) as { name?: string }).name ?? null;
+}
+
+/** Walk the configured b-roll folder tree(s) (BFS) and return every video clip. */
 export async function listBrollFromDrive(): Promise<DriveClip[]> {
-  const rootId = brollFolderId();
-  if (!rootId) throw new Error("GOOGLE_DRIVE_BROLL_FOLDER_ID is not set (the shared b-roll folder id).");
+  const rootIds = brollFolderIds();
+  if (!rootIds.length)
+    throw new Error("GOOGLE_DRIVE_BROLL_FOLDER_ID is not set (comma-separated shared b-roll folder ids).");
   const token = await getAccessToken();
 
   const clips: DriveClip[] = [];
-  const queue: Array<{ id: string; path: string }> = [{ id: rootId, path: "" }];
+  // With a single root, paths stay relative to it (as before). With several roots,
+  // each tree is prefixed with its root folder's name so clips stay distinguishable.
+  const queue: Array<{ id: string; path: string }> = [];
+  for (const id of rootIds) {
+    const path = rootIds.length > 1 ? ((await getFolderName(token, id)) ?? id.slice(0, 8)) : "";
+    queue.push({ id, path });
+  }
   const seen = new Set<string>();
   let foldersWalked = 0;
+  const MAX_FOLDERS = 2000;
+  const CONCURRENCY = 8; // the libraries span hundreds of folders — serial listing would take minutes
 
-  while (queue.length && foldersWalked < 1000) {
-    const item = queue.shift();
-    if (!item || seen.has(item.id)) continue;
-    seen.add(item.id);
-    foldersWalked++;
+  while (queue.length && foldersWalked < MAX_FOLDERS) {
+    const wave: Array<{ id: string; path: string }> = [];
+    while (queue.length && wave.length < Math.min(CONCURRENCY, MAX_FOLDERS - foldersWalked)) {
+      const item = queue.shift();
+      if (!item || seen.has(item.id)) continue;
+      seen.add(item.id);
+      foldersWalked++;
+      wave.push(item);
+    }
+    if (!wave.length) continue;
 
-    const children = await listChildren(token, item.id);
-    for (const f of children) {
-      if (f.mimeType === FOLDER_MIME) {
-        queue.push({ id: f.id, path: item.path ? `${item.path}/${f.name}` : f.name });
-      } else if (f.mimeType.startsWith("video/")) {
-        clips.push({
-          driveId: f.id,
-          name: f.name,
-          mimeType: f.mimeType,
-          folderPath: item.path,
-          webViewLink: f.webViewLink ?? null,
-          thumbnailLink: f.thumbnailLink ?? null,
-          description: f.description ?? null,
-          durationMs: f.videoMediaMetadata?.durationMillis ? Number(f.videoMediaMetadata.durationMillis) : null,
-          sizeBytes: f.size ? Number(f.size) : null,
-        });
+    const results = await Promise.all(
+      wave.map(async (item) => ({ item, children: await listChildren(token, item.id) })),
+    );
+    for (const { item, children } of results) {
+      for (const f of children) {
+        if (f.mimeType === FOLDER_MIME) {
+          queue.push({ id: f.id, path: item.path ? `${item.path}/${f.name}` : f.name });
+        } else if (f.mimeType.startsWith("video/")) {
+          clips.push({
+            driveId: f.id,
+            name: f.name,
+            mimeType: f.mimeType,
+            folderPath: item.path,
+            webViewLink: f.webViewLink ?? null,
+            thumbnailLink: f.thumbnailLink ?? null,
+            description: f.description ?? null,
+            durationMs: f.videoMediaMetadata?.durationMillis ? Number(f.videoMediaMetadata.durationMillis) : null,
+            sizeBytes: f.size ? Number(f.size) : null,
+          });
+        }
       }
     }
   }
