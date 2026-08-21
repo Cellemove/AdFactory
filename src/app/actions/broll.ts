@@ -95,10 +95,15 @@ export async function listBrollClips(limit = 2000): Promise<BrollClipRow[]> {
 export async function brollLibraryContext(max = 150): Promise<string> {
   let clips: BrollClipRow[] = [];
   try {
-    clips = await listBrollClips(max);
+    clips = await listBrollClips();
   } catch {
     return "";
   }
+  // The Drive mixes raw b-roll with finished ad deliverables: keep trash out and
+  // fill the prompt budget with dedicated b-roll folders first, other clips after.
+  const usable = clips.filter((c) => !/trash/i.test(c.folderPath ?? ""));
+  const isBroll = (c: BrollClipRow) => /b.?rolls?/i.test(c.folderPath ?? "");
+  clips = [...usable.filter(isBroll), ...usable.filter((c) => !isBroll(c))].slice(0, max);
   if (!clips.length) return "";
   const lines = clips.map((c) => {
     const dur = c.durationMs ? ` (${Math.round(c.durationMs / 1000)}s)` : "";

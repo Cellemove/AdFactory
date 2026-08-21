@@ -17,12 +17,12 @@ const PRIMARY: NavLink[] = [
   { href: "/verbatims", label: "Verbatims" },
   { href: "/knowledge", label: "Knowledge" },
   { href: "/avatars", label: "Avatars" },
+  { href: "/broll", label: "B-roll" },
   { href: "/reviews", label: "Reviews" },
 ];
 
 const OTHER: NavLink[] = [
   { href: "/research", label: "Research" },
-  { href: "/broll", label: "B-roll" },
   { href: "/winners", label: "Winners" },
   { href: "/runs", label: "History" },
   { href: "/big-swings", label: "Big Swings" },
