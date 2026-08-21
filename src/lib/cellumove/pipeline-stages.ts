@@ -327,6 +327,7 @@ export const PIPELINE_STAGES: PipelineStageDef[] = [
       "an editor or designer could execute WITHOUT you. One brief per creative.",
       "Each brief: a title, format (static or video), the concept, the key visual, the exact copy to use, a shot list,",
       "production notes, and the list of deliverables.",
+      "When a B-ROLL LIBRARY is provided, name real clips from it EXACTLY in the shot list (prefer clips with a low or absent \"suggested N×\" count). For any shot with NO matching clip, add a fallback to productionNotes: a ready-to-run AI video-generation prompt AND a TikTok search query to scrap a similar clip.",
       CLAIMS_GUARDRAIL,
       'Return ONLY JSON: {"briefs":[{"title":string,"format":"static"|"video","concept":string,"keyVisual":string,"copyToUse":string,"shotList":string[],"productionNotes":string,"deliverables":string[]}]}',
     ].join("\n"),
