@@ -1,178 +1,138 @@
 # Handoff — CelluMove Ad Factory
 
-**Branch:** `phase-2`
+**Updated:** 2026-08-22
+**Branch:** `Kamino-updates`
 **Stack:** Next.js 15 (App Router) · React 19 · Supabase (Postgres) · Gemini 2.5 Pro on Vertex AI (`@google/genai`) · Tailwind · Zod · tsx
-**Default model:** `gemini-2.5-pro` (see `src/lib/llm.ts`)
-
-This session deepened the research → script generation chain end-to-end: richer sourcing,
-a structured avatar "deep dive" that's captured and fed into every agent, an agent roster
-page, angle-targeted subreddits, a PDF→SOP importer, and a proxy-capable scraper.
+**Default model:** `gemini-2.5-pro` (see `src/lib/llm.ts`); b-roll clip analysis uses `gemini-2.5-flash`
 
 ---
 
-## 1. What shipped this session
+## 1. Current state of the app
 
-### Committed (`3b63e1e` — "Seed content + targeted subreddit")
+The old strategist→copywriter→compliance→designer script pipeline has grown into a
+**gated G1→G7 generation pipeline** plus a set of intelligence pages:
 
-1. **Deeper research sourcing**
-   - Added Gemini's `urlContext` tool alongside `googleSearch` in all three research calls so the
-     model reads *full* pages, not snippets. Prompts gained a "READ IN FULL" directive.
-   - New `src/lib/reddit.ts` — Reddit verbatim fetcher (app-only OAuth, anon `.json` fallback).
-     `gatherRedditVerbatims()` pulls real comment text into every research prompt.
-   - Files: `src/app/actions/research.ts`, `src/lib/reddit.ts`, `.env.example`.
+- **Pipeline (`/pipeline`)** — per sub-avatar runs through: G2 Avatar Deep Dive (grounded,
+  progressive multi-pass Reddit/YouTube mining with soft/medium/high thread targets) →
+  AIR Avatar Intelligence Report → G3 Root Cause & Mechanism → Brand DNA → G4 Copy Arsenal →
+  G5 Advertorial → G6 Ad Scripts → G7 Creative Briefs. Definitions in
+  `src/lib/cellumove/pipeline-stages.ts`, runner in `src/app/actions/pipeline-run.ts`.
+  Each stage output is claim-scanned + cited-URL-checked (`verifyStageOutput`).
+  Runs persist as `Research` rows (`type: "pipeline"`, doc as JSON in `drafts`) — no dedicated table.
+- **B-roll library (`/broll`)** — indexes the client's Google Drive b-roll
+  (Creative Crafters folder): Drive sync, Gemini watches each clip and writes a dense
+  description + tags (`analyzeBroll`), paginated/searchable library page, and a
+  **suggestion feedback loop**: G7 briefs name real clips, mentions are counted
+  (`timesSuggested` / `BrollSuggestion`), and least-suggested clips are preferred in future
+  prompts so footage doesn't get overused. Editors can mark clips actually used (`timesUsed`).
+- **Spy (`/spy`)** — grounded sweep of competitor ad creatives, og:image scraped so they render.
+- **Verbatims, Reviews, Winners, Big Swings, Usage, Agents** — supporting pages; `/agents`
+  is the live roster (role + SOPs + what each reads from the deep dive).
+- **Agent layer** — `src/lib/cellumove/agents.ts`: `runAgent()` = role (`strategist` /
+  `copywriter` / `researcher` / `designer`) + SOPs loaded from the `Sop` table by roleScope +
+  one Gemini call. Write a SOP in /knowledge and the matching agent obeys it next run.
 
-2. **Deep-dive template (research quality bar)** — `src/lib/cellumove/deep-dive-template.ts`
-   - Distilled the hand-authored 90-page deep dive into a reusable section spec + quality bar.
-   - Loaded DB-first as an editable `deep_dive_template` SOP, with a built-in constant fallback.
-   - Seeded by `scripts/seed-sop-foundation.ts`.
-
-3. **Structured avatar profile** — `src/lib/cellumove/avatar-profile.ts`
-   - `AvatarProfileSchema` (Zod) mirroring 14 deep-dive sections + `parseAvatarProfile()`, which is
-     fault-tolerant (accepts object or JSON string, strips unknowns, isolates malformed sections).
-   - `migrations/003_avatar_profile.sql` adds the `profile` TEXT column to `AvatarResearch`.
-   - Research emits + persists the profile; save degrades gracefully if the column is missing.
-   - Draft cards show a "deep profile · N" tag.
-
-4. **Pipeline consumes the profile** — `src/app/actions/pipeline.ts`
-   - `loadContext` parses the profile and threads it through `ctx`.
-   - Tailored prompt blocks per agent (renderers live in `avatar-profile.ts`):
-     - **Strategist** — primary emotion, scored buying emotions, hesitation + counter-strategy,
-       ranked desires, ranked angle candidates.
-     - **Copywriter** (main + corrective) — voice profile, power words, exact phrases-to-use,
-       a **HARD BAN** on the avatar's rejected clichés, sentence/punctuation rules, pain/desire
-       ratio, the hook bridge, real verbatims.
-     - **Designer** — concept directions, trust signals, identification.
-   - **New compliance "resonance gate"** in `checkScript`: flags the avatar's `forbiddenWords` so the
-     corrective pass rewrites them into her own phrasing.
-
-5. **Agents page** — `src/app/agents/page.tsx` (added to `src/components/nav.tsx`)
-   - Roster of all 5 agents, their pipeline stage, what each reads from the deep dive, and their
-     live SOPs (from the `Sop` table). Fail-soft if the table isn't migrated.
-
-6. **Angle-targeted subreddits** — `src/lib/cellumove/subreddits.ts`
-   - 26-sub master list in 6 keyword-matched clusters (postpartum, lipedema/circulation,
-     legs/venous, joint, body/weight, fashion/shape) + a base set.
-   - `subredditsForAngle()` picks the relevant cluster(s) per angle; wired into all three research
-     prompts and into `gatherRedditVerbatims` (in-subreddit `restrict_sr` search).
-   - Fixed a wrong slug: `r/EDS` → `r/ehlersdanlos`.
-
-### Uncommitted (in the working tree — review, then commit)
-
-7. **SOP PDF import + template**
-   - `importSopsFromPdf()` in `src/app/actions/sops.ts` — Gemini reads the PDF **natively** (no PDF
-     library), splits it into SOP rows, validates type/roleScope, upserts each.
-   - **Import PDF** button + result banner on the Knowledge → SOPs tab (`SopFoundationClient.tsx`).
-   - Printable template at `public/sop-template.html` (open → Print → Save as PDF → upload back).
-   - Note: relies on `serverActions.bodySizeLimit` ("10mb", already in `next.config.ts`).
-
-8. **Proxy-capable web scraper** — `src/lib/scraper.ts`
-   - Rotating proxy pool via undici's `ProxyAgent` (no new dependency), browser-like headers,
-     timeouts, retries, fail-soft. No-dependency HTML→readable-text extraction. `scrapeUrl()` for
-     general use; `nextProxyDispatcher()` shared with `reddit.ts`.
-   - Reddit token + data requests now egress through the proxy pool when configured.
+Recent commits (this branch): b-roll indexing + analysis page, suggestion counting,
+paginated library, migration 007/008, UI polish. Working tree is clean.
 
 ---
 
-## 2. Activation checklist (required to make it all work)
+## 2. Next feature — Copywriter agent (planned, not started)
 
-These are **manual steps** — the code is in place but dormant until done:
+Goal: a **standalone interactive Copywriter workbench** at `/copywriter`. Today copy only
+comes out of a full pipeline run; this lets a strategist task the copywriter directly
+("10 hooks for this angle", "rewrite this winner", "5 punchier primary texts") with
+multi-turn follow-ups. Plan (reuse-first, no migration):
 
-- [ ] **Run `migrations/003_avatar_profile.sql`** in the Supabase SQL editor (adds the `profile`
-      column). Until then, research saves the flat fields and silently drops the structured profile.
-- [ ] **Run `npm run seed:sop`** — seeds reference formats, market profiles, and the editable
-      `deep_dive_template` SOP. (Requires migration 001 first; 001/002 should already be applied.)
-- [ ] **Confirm GCP/Vertex creds** — research, the pipeline, and the SOP importer all call Gemini.
-      Set `GOOGLE_CLOUD_PROJECT` + ADC (`gcloud auth application-default login`) or
-      `GOOGLE_APPLICATION_CREDENTIALS_JSON`.
-- [ ] **Set Reddit OAuth** (`REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`) — a free "script" app at
-      <https://www.reddit.com/prefs/apps>. Anonymous Reddit JSON is 403-blocked; OAuth is the
-      reliable free path. (Do **not** use Reddit's Devvit platform — wrong product.)
-- [ ] **Optional: proxies** (`SCRAPER_PROXIES`) — only needed for the no-API sources or to give the
-      anon Reddit path a residential IP. Residential required for Reddit; datacenter still 403s.
-- [ ] **Commit features 7 & 8** once reviewed.
+1. **Extract shared context builders** — `loadAvatarContext`, `researchBlock`,
+   `deepDiveBlock` are private to `pipeline-run.ts` (a `"use server"` file can only export
+   async functions). Move them to a plain lib (`src/lib/cellumove/context.ts`) imported by
+   both the pipeline runner and the new action. Pure move.
+2. **`src/app/actions/copywriter.ts`** —
+   - `createCopySession(subAvatarId)`: persists a `Research` row (`type: "copywriter"`,
+     turns as JSON in `drafts`) — same zero-migration trick as pipeline/spy.
+   - `askCopywriter(sessionId, message)`: context = BRAND_BASE + CLAIMS_GUARDRAIL +
+     researchBlock (G1) + `renderCopywriterProfile` + G2 verbatim sample + the latest
+     pipeline run's Copy Arsenal / Brand DNA / mechanism for that avatar (query
+     `type: "pipeline"`, `focus` = sub name, like `priorRunsNoveltyBlock`) + last N turns.
+     One `runAgent({role: "copywriter"})` call, free-form text (not JSON). `scanClaims`
+     on each reply; store flags with the turn. Copywriter SOPs apply automatically.
+3. **`/copywriter` page + `CopywriterClient.tsx`** — session list, thread view, textarea,
+   quick-prompt chips (10 hooks / 5 headlines / primary texts / rewrite). Claim flags as
+   warning chips with a one-click "fix flagged" follow-up. Nav entry, strategists only.
+
+Deliberately skipped for MVP: streaming (server actions can't; add a route handler only if
+waits hurt), embedding retrieval over the verbatim corpus (the 80-verbatim sample block is
+enough to start), save-to-pipeline/winners (copy button first).
+
+Open questions for the client: chat vs. simple form (recommend chat — iteration is the
+point), and whether sessions may run brand-only with no avatar attached (recommend yes,
+fail-soft).
+
+Scope estimate: 2 new files + 1 extraction + a nav line. ~1 day.
 
 ---
 
-## 3. Environment variables
+## 3. Activation checklist
 
-See `.env.example` for the canonical list. Summary:
-
-| Var | Purpose |
-|---|---|
-| `GOOGLE_CLOUD_PROJECT` | Vertex AI project (required for all Gemini calls) |
-| `GOOGLE_CLOUD_LOCATION` | defaults to `global` |
-| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | service-account JSON (prod); or use ADC locally |
-| `NEXT_PUBLIC_SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase (DB + seed script) |
-| `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` | Reddit app-only OAuth (verbatim fetcher) |
-| `REDDIT_USER_AGENT` | optional UA override |
-| `SCRAPER_PROXIES` / `SCRAPER_PROXY` | optional proxy pool (http/https only) |
-| `SCRAPER_USER_AGENT` | optional browser UA for the scraper |
-| `BLOB_READ_WRITE_TOKEN` | Vercel Blob for image uploads (existing) |
+- [ ] **Supabase project must be live** — it was paused at one point (NXDOMAIN on the API
+      host). If DB calls fail, restore the project in the Supabase dashboard first.
+- [ ] **Migrations 001–008** applied in the Supabase SQL editor (007 = `BrollClip`,
+      008 = b-roll intelligence columns: `aiDescription`, `tags`, `timesSuggested`,
+      `timesUsed`, `analyzedAt`, `BrollSuggestion`). Actions fail-soft with a message
+      naming the missing migration.
+- [ ] **`npm run seed:sop`** — seeds reference formats, market profiles, deep-dive template.
+- [ ] **GCP/Vertex creds** — `GOOGLE_CLOUD_PROJECT` + ADC
+      (`gcloud auth application-default login`) or `GOOGLE_APPLICATION_CREDENTIALS_JSON`.
+- [ ] **Drive b-roll** — share the b-roll folder with the service account's
+      `client_email` (shown by `driveServiceAccountEmail()` in the /broll setup UI) and set
+      `GOOGLE_DRIVE_BROLL_FOLDER_ID` (comma-separated ids allowed). Drive access reuses the
+      same SA via a hand-rolled JWT flow (`src/lib/drive.ts`) — no extra dependency.
+- [ ] **Reddit OAuth** (`REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`) — free "script" app;
+      anonymous Reddit JSON is 403-blocked.
+- [ ] **Optional:** `SCRAPER_PROXIES` (residential needed for anon Reddit), YouTube key if
+      `src/lib/youtube.ts` requires one — check `.env.example` for the canonical list.
 
 ---
 
 ## 4. Key files
 
 ```
-src/app/actions/research.ts          three research calls (sub-avatar, angle, concept)
-src/app/actions/pipeline.ts          script pipeline: strategist→copywriter→compliance→designer
-src/app/actions/sops.ts              SOP CRUD + importSopsFromPdf
-src/lib/reddit.ts                    Reddit verbatim fetcher (OAuth/anon, proxy-aware)
-src/lib/scraper.ts                   proxy fetch + readable-text extraction
-src/lib/cellumove/avatar-profile.ts  profile Zod schema + parser + per-agent renderers
-src/lib/cellumove/deep-dive-template.ts  research quality bar
-src/lib/cellumove/subreddits.ts      angle→subreddit clusters
-src/lib/cellumove/agents.ts          runAgent() — role + SOPs + one Gemini call
-src/app/agents/page.tsx              agent roster page
-migrations/003_avatar_profile.sql    profile column (NEW — run it)
-public/sop-template.html             printable SOP template
+src/lib/cellumove/pipeline-stages.ts   G2→G7 stage definitions (instructions, schemas, depths)
+src/app/actions/pipeline-run.ts        stage runner, progressive deep-dive accumulator, verification
+src/lib/cellumove/agents.ts            runAgent() — role + SOPs + one Gemini call
+src/lib/cellumove/avatar-profile.ts    profile Zod schema + per-role renderers
+src/app/actions/broll.ts               Drive sync, clip analysis, suggestion counting, paged search
+src/lib/drive.ts                       Drive REST via the Vertex service account (readonly)
+src/app/actions/spy.ts                 competitor creative sweep (Research type "competitor_spy")
+src/app/actions/sops.ts                SOP CRUD + PDF import
+src/lib/reddit.ts / src/lib/youtube.ts verbatim + comment fetchers (proxy-aware)
+src/lib/cellumove/claim-check.ts       deterministic compliance scan (scanClaims)
+src/app/agents/page.tsx                agent roster page
+migrations/                            001–008 (all required)
 ```
 
 ---
 
 ## 5. Known gaps / risks
 
-- **Profiles are unproven live.** Profile generation hasn't been validated against real Gemini
-  output (no GCP creds during the session). Inspect a real run before trusting it at scale —
-  watch for truncation, since one call currently emits 3–4 full profiles.
-- **The profile is invisible/uneditable in the UI.** It's captured and consumed by the pipeline,
-  but there's no viewer/editor. The hand-authored 90-page deep dive can't be imported yet.
-- **Verbatim loop not closed.** The `Verbatim` table + taxonomy exist, but research doesn't write
-  the profile's `languageMining` items into it. `/verbatims` won't fill from deep dives.
-- **Reddit anon is 403-blocked** from normal IPs — needs OAuth (free) or residential proxy.
-- **4 subreddit slugs unverified** — `cellulite`, `Veins`, `compressionsocks`, `PPD` are parked in
-  `UNVERIFIED_SUBREDDIT_CANDIDATES` (kept out of the active list). Verify and promote.
-- **Gemini grounding can't be confined to subreddits** — the `googleSearch` tool has no
-  include/allowlist (only `excludeDomains`, Vertex-only). Steering is `site:` prompt suggestions +
-  the deterministic `gatherRedditVerbatims` fetcher. Opportunity: wire `excludeDomains` to blocklist
-  the SEO/content-farm sites the prompts already reject.
-- **Image/video generation still prompt-only.** The `nano_banana_pro` prompts exist; rendering real
-  creatives (Imagen/Veo) needs paid GCP — the "Ad Factory delivers assets, not prompts" payoff.
+- **Copywriter agent not built** — plan in §2; nothing implemented yet.
+- **Old handoff items still open where not superseded:** verbatim loop (research →
+  `Verbatim` rows) and real image/video generation (Imagen/Veo) remain undone.
+- **B-roll analysis caps at 15 MB/clip** — bigger clips are marked analyzed-but-skipped and
+  stay description-less; they match by filename only.
+- **Suggestion counting is text-scan** (exact clip-name mentions, length-guarded) — survives
+  schema drift but can miss renamed/short-named clips.
+- **Gemini grounding can't be confined to subreddits** — steering is `site:` prompts + the
+  deterministic fetchers.
 
 ---
 
-## 6. Recommended next steps
-
-1. **Validate (Phase 0):** run migration 003 + `npm run seed:sop`, set creds, do one real
-   sub-avatar research run, inspect the profile, then run the pipeline and eyeball the copy shift.
-2. **Make the deep dive visible + ingestible (Phase 1):** profile viewer + editor on the avatar
-   page, and a **PDF importer** that parses an existing deep dive into `AvatarProfile` (highest
-   leverage — you already own gold-standard deep dives).
-3. **Close the verbatim loop (Phase 2):** on save, fan `languageMining` items into `Verbatim` rows.
-4. **Harden generation (Phase 3):** split discovery (flat candidates) from a dedicated "deepen this
-   avatar" call; switch to Gemini structured output (`responseSchema`); verify the parked slugs.
-5. **Expand (Phase 4):** Meta Ad Library API (free token) for real running ads; image generation.
-
----
-
-## 7. Running & verifying
+## 6. Running & verifying
 
 ```bash
 npm run dev          # dev server on :3000
-npm run typecheck    # tsc --noEmit (clean as of this handoff)
+npm run typecheck    # tsc --noEmit
 npm run build        # production build
 npm run seed:sop     # seed formats, markets, deep-dive template SOP
 ```
-
-All routes serve 200 with the current changes (`/`, `/research`, `/avatars`, `/agents`,
-`/knowledge`, `/script`, `/new`, `/runs`). Typecheck is clean.
