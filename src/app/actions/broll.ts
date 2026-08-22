@@ -319,3 +319,77 @@ export async function analyzeBroll(
   revalidatePath("/broll");
   return { analyzed, skipped, failed, remaining: remain.count ?? 0, lastError };
 }
+
+// ─── Paged listing for the /broll page ───────────────────────────────────────
+// Search + sort + pagination happen in the database, so the page ships ~60 rows
+// no matter how large the library grows (7k+ clips with AI descriptions would
+// otherwise be a multi-MB payload).
+export interface BrollPageData {
+  clips: BrollClipRow[];
+  total: number; // clips matching the current search
+  pageCount: number;
+  indexedTotal: number;
+  analyzedTotal: number;
+  suggestionsTotal: number;
+}
+
+export async function searchBrollClips(opts: {
+  q?: string;
+  sort?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<BrollPageData> {
+  const pageSize = Math.min(Math.max(opts.pageSize ?? 60, 1), 200);
+  const page = Math.max(opts.page ?? 1, 1);
+  // Commas/parens would break PostgREST's or() filter syntax — strip them.
+  const q = (opts.q ?? "").trim().replace(/[,()]/g, " ").replace(/\s+/g, " ").trim();
+  const sort = opts.sort ?? "analyzed";
+  const from = (page - 1) * pageSize;
+
+  // rich=false is the pre-migration-008 fallback (no analysis/counter columns).
+  const attempt = (rich: boolean) => {
+    let query = supabase.from("BrollClip").select("*", { count: "exact" });
+    if (q) {
+      const pat = `%${q}%`;
+      query = query.or(
+        rich
+          ? `name.ilike.${pat},folderPath.ilike.${pat},aiDescription.ilike.${pat},tags.ilike.${pat}`
+          : `name.ilike.${pat},folderPath.ilike.${pat}`,
+      );
+    }
+    if (rich && sort === "analyzed") {
+      query = query.order("analyzedAt", { ascending: false, nullsFirst: false });
+    } else if (rich && sort === "most-suggested") {
+      query = query.order("timesSuggested", { ascending: false });
+    } else if (rich && sort === "least-suggested") {
+      query = query.order("timesSuggested", { ascending: true });
+    } else if (rich && sort === "most-used") {
+      query = query.order("timesUsed", { ascending: false });
+    }
+    // Stable tiebreaker (and the whole order for "folder" / fallback mode).
+    query = query.order("folderPath", { ascending: true }).order("name", { ascending: true });
+    return query.range(from, from + pageSize - 1);
+  };
+
+  let res = await attempt(true);
+  if (res.error && /column .* does not exist|schema cache/i.test(res.error.message)) {
+    res = await attempt(false);
+  }
+  if (res.error) throw new Error(res.error.message);
+  const total = res.count ?? 0;
+
+  const [indexedRes, analyzedRes, suggRes] = await Promise.all([
+    supabase.from("BrollClip").select("id", { head: true, count: "exact" }),
+    supabase.from("BrollClip").select("id", { head: true, count: "exact" }).not("analyzedAt", "is", null),
+    supabase.from("BrollSuggestion").select("id", { head: true, count: "exact" }),
+  ]);
+
+  return {
+    clips: (res.data ?? []) as BrollClipRow[],
+    total,
+    pageCount: Math.max(1, Math.ceil(total / pageSize)),
+    indexedTotal: indexedRes.count ?? 0,
+    analyzedTotal: analyzedRes.count ?? 0, // 0 when 008 isn't applied yet
+    suggestionsTotal: suggRes.count ?? 0,
+  };
+}
