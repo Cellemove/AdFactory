@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { syncBroll, analyzeBroll, markClipUsed } from "../actions/broll";
 
 interface ClipLite {
@@ -33,20 +34,48 @@ export function BrollClient({
   serviceAccountEmail,
   folderIdSet,
   clips,
+  q,
+  sort,
+  page,
+  pageCount,
+  total,
+  indexedTotal,
+  analyzedTotal,
+  suggestionsTotal,
 }: {
   configured: boolean;
   serviceAccountEmail: string | null;
   folderIdSet: boolean;
   clips: ClipLite[];
+  q: string;
+  sort: SortKey;
+  page: number;
+  pageCount: number;
+  total: number;
+  indexedTotal: number;
+  analyzedTotal: number;
+  suggestionsTotal: number;
 }) {
+  const router = useRouter();
   const [busy, start] = useTransition();
+  const [navigating, startNav] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [sort, setSort] = useState<SortKey>("analyzed");
+  const [query, setQuery] = useState(q);
   const [usedBump, setUsedBump] = useState<Record<string, number>>({});
   const [thumbFailed, setThumbFailed] = useState<Record<string, boolean>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
+  const navigate = (next: { q?: string; sort?: SortKey; page?: number }) => {
+    const p = new URLSearchParams();
+    const nq = next.q ?? q;
+    const nsort = next.sort ?? sort;
+    const npage = next.page ?? 1; // any filter change resets to page 1
+    if (nq) p.set("q", nq);
+    if (nsort !== "analyzed") p.set("sort", nsort);
+    if (npage > 1) p.set("page", String(npage));
+    startNav(() => router.push(`/broll${p.size ? `?${p}` : ""}`));
+  };
 
   const sync = () => {
     setError(null);
@@ -91,29 +120,6 @@ export function BrollClient({
     });
   };
 
-  const analyzedCount = useMemo(() => clips.filter((c) => c.analyzedAt).length, [clips]);
-  const suggestedTotal = useMemo(() => clips.reduce((n, c) => n + c.timesSuggested, 0), [clips]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let list = q
-      ? clips.filter(
-          (c) =>
-            c.name.toLowerCase().includes(q) ||
-            (c.folderPath ?? "").toLowerCase().includes(q) ||
-            (c.aiDescription ?? "").toLowerCase().includes(q) ||
-            (c.tags ?? "").toLowerCase().includes(q),
-        )
-      : [...clips];
-    if (sort === "analyzed")
-      // Stable sort: analyzed clips first, folder order preserved within each group.
-      list.sort((a, b) => Number(Boolean(b.analyzedAt)) - Number(Boolean(a.analyzedAt)));
-    else if (sort === "most-suggested") list.sort((a, b) => b.timesSuggested - a.timesSuggested);
-    else if (sort === "least-suggested") list.sort((a, b) => a.timesSuggested - b.timesSuggested);
-    else if (sort === "most-used") list.sort((a, b) => b.timesUsed - a.timesUsed);
-    return list;
-  }, [clips, query, sort]);
-
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-3">
@@ -125,7 +131,7 @@ export function BrollClient({
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="btn" onClick={analyze} disabled={busy || !configured || clips.length === 0}>
+          <button className="btn" onClick={analyze} disabled={busy || !configured || indexedTotal === 0}>
             {busy ? "Working…" : "Analyze clips (AI)"}
           </button>
           <button className="btn btn-primary" onClick={sync} disabled={busy || !configured}>
@@ -134,16 +140,16 @@ export function BrollClient({
         </div>
       </header>
 
-      {clips.length > 0 && (
+      {indexedTotal > 0 && (
         <div className="flex flex-wrap gap-4 text-xs text-ink-500">
           <span>
-            <span className="font-semibold text-ink-900">{clips.length}</span> clips indexed
+            <span className="font-semibold text-ink-900">{indexedTotal}</span> clips indexed
           </span>
           <span>
-            <span className="font-semibold text-ink-900">{analyzedCount}</span> analyzed by AI
+            <span className="font-semibold text-ink-900">{analyzedTotal}</span> analyzed by AI
           </span>
           <span>
-            <span className="font-semibold text-ink-900">{suggestedTotal}</span> suggestions recorded
+            <span className="font-semibold text-ink-900">{suggestionsTotal}</span> suggestions recorded
           </span>
         </div>
       )}
@@ -178,26 +184,49 @@ export function BrollClient({
         </div>
       )}
 
-      {configured && clips.length === 0 && (
+      {configured && indexedTotal === 0 && (
         <div className="card text-sm text-ink-500">
           No clips indexed yet. Hit <span className="font-medium">Sync from Drive</span> to pull your b-roll.
         </div>
       )}
 
-      {clips.length > 0 && (
+      {indexedTotal > 0 && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <input
-              className="input h-9 max-w-sm"
-              placeholder="Search name, folder, description, tags…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
+            <form
+              className="flex items-center gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                navigate({ q: query, page: 1 });
+              }}
+            >
+              <input
+                className="input h-9 w-72 max-w-full"
+                placeholder="Search name, folder, description, tags…"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <button type="submit" className="btn h-9 text-xs" disabled={navigating}>
+                Search
+              </button>
+              {q && (
+                <button
+                  type="button"
+                  className="text-xs text-ink-500 underline underline-offset-2 hover:text-ink-900"
+                  onClick={() => {
+                    setQuery("");
+                    navigate({ q: "", page: 1 });
+                  }}
+                >
+                  clear
+                </button>
+              )}
+            </form>
             <div className="flex items-center gap-2">
               <select
                 className="input h-9 w-auto text-xs"
                 value={sort}
-                onChange={(e) => setSort(e.target.value as SortKey)}
+                onChange={(e) => navigate({ sort: e.target.value as SortKey, page: 1 })}
               >
                 <option value="analyzed">Analyzed first</option>
                 <option value="folder">By folder</option>
@@ -206,12 +235,17 @@ export function BrollClient({
                 <option value="most-used">Most used</option>
               </select>
               <span className="text-xs text-ink-500">
-                {filtered.length} of {clips.length} clips
+                {q ? `${total} match${total === 1 ? "" : "es"}` : `${total} clips`}
               </span>
             </div>
           </div>
-          <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
-            {filtered.map((c) => {
+
+          <ul
+            className={`grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 ${
+              navigating ? "opacity-60 transition-opacity" : ""
+            }`}
+          >
+            {clips.map((c) => {
               const used = usedBump[c.id] ?? c.timesUsed;
               return (
                 <li key={c.id} className="card">
@@ -325,6 +359,28 @@ export function BrollClient({
               );
             })}
           </ul>
+
+          {pageCount > 1 && (
+            <nav className="flex items-center justify-center gap-3 pt-2 text-sm">
+              <button
+                className="btn h-8 text-xs"
+                onClick={() => navigate({ page: page - 1 })}
+                disabled={page <= 1 || navigating}
+              >
+                ← Prev
+              </button>
+              <span className="text-xs text-ink-500">
+                Page <span className="font-semibold text-ink-900">{page}</span> of {pageCount}
+              </span>
+              <button
+                className="btn h-8 text-xs"
+                onClick={() => navigate({ page: page + 1 })}
+                disabled={page >= pageCount || navigating}
+              >
+                Next →
+              </button>
+            </nav>
+          )}
         </>
       )}
     </div>

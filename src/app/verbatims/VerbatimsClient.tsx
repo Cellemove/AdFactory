@@ -9,6 +9,7 @@ interface Cat { slug: string; label: string; description: string }
 
 export function VerbatimsClient({
   angles, subs, markets, categories, sourceTypes, verbatims,
+  filterAngle, filterCat, page, pageCount, total, angleTotal, countByCat,
 }: {
   angles: Array<{ id: string; name: string; slug: string }>;
   subs: Array<{ id: string; name: string; angleName: string }>;
@@ -16,9 +17,17 @@ export function VerbatimsClient({
   categories: Cat[];
   sourceTypes: Array<{ slug: string; label: string }>;
   verbatims: VerbatimRow[];
+  filterAngle: string;
+  filterCat: string;
+  page: number;
+  pageCount: number;
+  total: number;
+  angleTotal: number;
+  countByCat: Record<string, number>;
 }) {
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
+  const [navigating, startNav] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -30,9 +39,18 @@ export function VerbatimsClient({
   const [platforms, setPlatforms] = useState<string[]>([]);
   const [count, setCount] = useState("24");
 
-  // Browser filters
-  const [filterAngle, setFilterAngle] = useState("");
-  const [filterCat, setFilterCat] = useState("");
+  // Browser filters live in the URL — the database applies them, so they cover
+  // the whole corpus (not just loaded rows) and survive refresh.
+  const navigate = (next: { angle?: string; cat?: string; page?: number }) => {
+    const p = new URLSearchParams();
+    const nAngle = next.angle ?? filterAngle;
+    const nCat = next.cat ?? filterCat;
+    const nPage = next.page ?? 1; // filter changes reset to page 1
+    if (nAngle) p.set("angle", nAngle);
+    if (nCat) p.set("cat", nCat);
+    if (nPage > 1) p.set("page", String(nPage));
+    startNav(() => router.push(`/verbatims${p.size ? `?${p}` : ""}`));
+  };
 
   const catLabel = useMemo(() => new Map(categories.map((c) => [c.slug, c.label])), [categories]);
 
@@ -72,18 +90,6 @@ export function VerbatimsClient({
       catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     });
   };
-
-  const filtered = verbatims.filter((v) =>
-    (!filterAngle || v.angleSlug === filterAngle) && (!filterCat || v.category === filterCat),
-  );
-
-  // Per-category counts (over the angle filter only, so the category chips stay useful).
-  const angleScoped = verbatims.filter((v) => !filterAngle || v.angleSlug === filterAngle);
-  const countByCat = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const v of angleScoped) m.set(v.category, (m.get(v.category) ?? 0) + 1);
-    return m;
-  }, [angleScoped]);
 
   const canMine = (angleSlug || subAvatarId) && !isPending;
 
@@ -156,9 +162,16 @@ export function VerbatimsClient({
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-sm font-semibold">Corpus</h2>
-          <span className="text-xs text-ink-500">{filtered.length} shown · {verbatims.length} loaded</span>
+          <span className="text-xs text-ink-500">
+            {total} match{total === 1 ? "" : "es"}
+            {pageCount > 1 ? ` · page ${page}/${pageCount}` : ""}
+          </span>
           <div className="ml-auto flex gap-2">
-            <select className="input h-8 py-0 text-xs" value={filterAngle} onChange={(e) => setFilterAngle(e.target.value)}>
+            <select
+              className="input h-8 py-0 text-xs"
+              value={filterAngle}
+              onChange={(e) => navigate({ angle: e.target.value, page: 1 })}
+            >
               <option value="">All angles</option>
               {angles.map((a) => <option key={a.id} value={a.slug}>{a.name}</option>)}
             </select>
@@ -168,28 +181,28 @@ export function VerbatimsClient({
         {/* Category chips */}
         <div className="flex flex-wrap gap-1.5">
           <button
-            onClick={() => setFilterCat("")}
+            onClick={() => navigate({ cat: "", page: 1 })}
             className={`rounded-md px-2 py-0.5 text-xs transition ${filterCat === "" ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
           >
-            All ({angleScoped.length})
+            All ({angleTotal})
           </button>
           {categories.map((c) => (
             <button
               key={c.slug}
-              onClick={() => setFilterCat(c.slug === filterCat ? "" : c.slug)}
+              onClick={() => navigate({ cat: c.slug === filterCat ? "" : c.slug, page: 1 })}
               title={c.description}
               className={`rounded-md px-2 py-0.5 text-xs transition ${filterCat === c.slug ? "bg-ink-900 text-white" : "bg-ink-100 text-ink-700 hover:bg-ink-200"}`}
             >
-              {c.label} ({countByCat.get(c.slug) ?? 0})
+              {c.label} ({countByCat[c.slug] ?? 0})
             </button>
           ))}
         </div>
 
-        {filtered.length === 0 ? (
+        {verbatims.length === 0 ? (
           <div className="card text-sm text-ink-500">No verbatims yet for this filter. Mine some above.</div>
         ) : (
-          <ul className="space-y-2">
-            {filtered.map((v) => (
+          <ul className={`space-y-2 ${navigating ? "opacity-60 transition-opacity" : ""}`}>
+            {verbatims.map((v) => (
               <li key={v.id} className="card flex items-start justify-between gap-3 py-2.5">
                 <div className="min-w-0">
                   <p className="text-sm">“{v.text}”</p>
@@ -206,6 +219,28 @@ export function VerbatimsClient({
               </li>
             ))}
           </ul>
+        )}
+
+        {pageCount > 1 && (
+          <nav className="flex items-center justify-center gap-3 pt-2 text-sm">
+            <button
+              className="btn h-8 text-xs"
+              onClick={() => navigate({ page: page - 1 })}
+              disabled={page <= 1 || navigating}
+            >
+              ← Prev
+            </button>
+            <span className="text-xs text-ink-500">
+              Page <span className="font-semibold text-ink-900">{page}</span> of {pageCount}
+            </span>
+            <button
+              className="btn h-8 text-xs"
+              onClick={() => navigate({ page: page + 1 })}
+              disabled={page >= pageCount || navigating}
+            >
+              Next →
+            </button>
+          </nav>
         )}
       </div>
     </div>
