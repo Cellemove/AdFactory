@@ -9,7 +9,8 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
-    "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts"
+    "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts",
+    "check:env": "tsx --env-file=.env scripts/env-check.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
