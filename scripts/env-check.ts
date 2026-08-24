@@ -65,7 +65,8 @@ async function main() {
   // ── Reddit OAuth ───────────────────────────────────────────────────────────
   const rid = env("REDDIT_CLIENT_ID");
   const rsec = env("REDDIT_CLIENT_SECRET");
-  log("env: REDDIT_CLIENT_ID/SECRET", !!(rid && rsec), rid && rsec ? "" : "research falls back to no-Reddit");
+  // Reddit is optional by choice (creds removed 2026-08-24) — absent is fine.
+  log("env: REDDIT_CLIENT_ID/SECRET (optional)", true, rid && rsec ? "set" : "not set — research runs without Reddit");
   if (rid && rsec) {
     try {
       const resp = await fetch("https://www.reddit.com/api/v1/access_token", {

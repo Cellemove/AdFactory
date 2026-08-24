@@ -82,8 +82,10 @@ save-to-pipeline/winners (copy button first), brand-only sessions with no avatar
       `client_email` (shown by `driveServiceAccountEmail()` in the /broll setup UI) and set
       `GOOGLE_DRIVE_BROLL_FOLDER_ID` (comma-separated ids allowed). Drive access reuses the
       same SA via a hand-rolled JWT flow (`src/lib/drive.ts`) — no extra dependency.
-- [ ] **Reddit OAuth** (`REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`) — free "script" app;
-      anonymous Reddit JSON is 403-blocked.
+- [x] **Reddit OAuth — intentionally off** (creds removed 2026-08-24, they were 401ing
+      anyway). Research runs on grounded search + YouTube comments; the anonymous Reddit
+      fallback usually 403s. To restore direct Reddit mining, create a free "script" app
+      at reddit.com/prefs/apps and set `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`.
 - [ ] **Optional:** `SCRAPER_PROXIES` (residential needed for anon Reddit), YouTube key if
       `src/lib/youtube.ts` requires one — check `.env.example` for the canonical list.
 
