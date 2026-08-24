@@ -20,3 +20,4 @@ public/uploads/*
 .DS_Store
 *.tsbuildinfo
 .tsx-cache
+analyze-runner.log
