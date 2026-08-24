@@ -125,7 +125,7 @@ export default async function PipelinePage({
       subOptions={subOptions}
       runs={runs}
       angles={angleOptions}
-      excavateSlot={<ExcavateSection initial={initialExcavation} recent={recentExcavations} />}
+      excavateSlot={<ExcavateSection key="excavate" initial={initialExcavation} recent={recentExcavations} />}
     />
   );
 }

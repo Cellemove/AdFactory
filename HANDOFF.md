@@ -37,39 +37,33 @@ paginated library, migration 007/008, UI polish. Working tree is clean.
 
 ---
 
-## 2. Next feature — Copywriter agent (planned, not started)
+## 2. Copywriter agent (SHIPPED 2026-08-23, uncommitted)
 
-Goal: a **standalone interactive Copywriter workbench** at `/copywriter`. Today copy only
-comes out of a full pipeline run; this lets a strategist task the copywriter directly
-("10 hooks for this angle", "rewrite this winner", "5 punchier primary texts") with
-multi-turn follow-ups. Plan (reuse-first, no migration):
+A **standalone interactive Copywriter workbench** at `/copywriter` (nav: primary bar).
+Strategists task the copywriter directly ("10 hooks for this angle", "rewrite this
+winner", "5 punchier primary texts") with multi-turn follow-ups. Implementation:
 
-1. **Extract shared context builders** — `loadAvatarContext`, `researchBlock`,
-   `deepDiveBlock` are private to `pipeline-run.ts` (a `"use server"` file can only export
-   async functions). Move them to a plain lib (`src/lib/cellumove/context.ts`) imported by
-   both the pipeline runner and the new action. Pure move.
-2. **`src/app/actions/copywriter.ts`** —
-   - `createCopySession(subAvatarId)`: persists a `Research` row (`type: "copywriter"`,
-     turns as JSON in `drafts`) — same zero-migration trick as pipeline/spy.
-   - `askCopywriter(sessionId, message)`: context = BRAND_BASE + CLAIMS_GUARDRAIL +
-     researchBlock (G1) + `renderCopywriterProfile` + G2 verbatim sample + the latest
-     pipeline run's Copy Arsenal / Brand DNA / mechanism for that avatar (query
-     `type: "pipeline"`, `focus` = sub name, like `priorRunsNoveltyBlock`) + last N turns.
-     One `runAgent({role: "copywriter"})` call, free-form text (not JSON). `scanClaims`
-     on each reply; store flags with the turn. Copywriter SOPs apply automatically.
-3. **`/copywriter` page + `CopywriterClient.tsx`** — session list, thread view, textarea,
-   quick-prompt chips (10 hooks / 5 headlines / primary texts / rewrite). Claim flags as
-   warning chips with a one-click "fix flagged" follow-up. Nav entry, strategists only.
+- **`src/lib/cellumove/context.ts`** — `loadAvatarContext` / `researchBlock` /
+  `renderProfileFor` / `deepDiveBlock` extracted from `pipeline-run.ts` (pure move;
+  `deepDiveBlock` now takes the stage value instead of the whole doc). Shared by the
+  pipeline runner and the copywriter.
+- **`src/lib/cellumove/copy-session.ts`** — session doc types + parser (turns as JSON).
+- **`src/app/actions/copywriter.ts`** — `createCopySession` (a `Research` row,
+  `type: "copywriter"`, zero-migration), `askCopywriter` (context = G1 research +
+  copywriter profile + G2 verbatim sample + newest pipeline run's Copy Arsenal /
+  Brand DNA / G3 mechanism, scanned newest-first across runs; one
+  `runAgent({role: "copywriter"})` call, free-form markdown; `scanClaims` on every
+  reply, flags stored with the turn; usage tag `copywriter_session`), and
+  `deleteCopySession`. Copywriter SOPs from /knowledge apply automatically.
+- **`src/app/copywriter/`** — page (session picker via `?s=<id>`) + `CopywriterClient`
+  (thread view, optimistic sends, quick-prompt chips, claim-flag chips with one-click
+  "Fix flagged" follow-up, per-reply copy button, Ctrl+Enter to send).
 
-Deliberately skipped for MVP: streaming (server actions can't; add a route handler only if
-waits hurt), embedding retrieval over the verbatim corpus (the 80-verbatim sample block is
-enough to start), save-to-pipeline/winners (copy button first).
-
-Open questions for the client: chat vs. simple form (recommend chat — iteration is the
-point), and whether sessions may run brand-only with no avatar attached (recommend yes,
-fail-soft).
-
-Scope estimate: 2 new files + 1 extraction + a nav line. ~1 day.
+Sessions require a researched avatar (same G1 gate as the pipeline). Deliberately
+skipped: streaming (add a route handler only if waits hurt), embedding retrieval over
+the verbatim corpus (the 80-verbatim sample block is enough to start),
+save-to-pipeline/winners (copy button first), brand-only sessions with no avatar.
+`npm run typecheck` + `npm run build` both clean.
 
 ---
 
@@ -116,7 +110,8 @@ migrations/                            001–008 (all required)
 
 ## 5. Known gaps / risks
 
-- **Copywriter agent not built** — plan in §2; nothing implemented yet.
+- **Copywriter workbench is unvalidated live** — shipped (§2) but not yet exercised
+  against real Gemini output or committed. Run one session end-to-end, then commit.
 - **Old handoff items still open where not superseded:** verbatim loop (research →
   `Verbatim` rows) and real image/video generation (Imagen/Veo) remain undone.
 - **B-roll analysis caps at 15 MB/clip** — bigger clips are marked analyzed-but-skipped and

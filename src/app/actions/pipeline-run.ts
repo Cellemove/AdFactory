@@ -7,13 +7,14 @@ import { recordUsage } from "@/lib/usage";
 import { gatherRedditVerbatims, resolveRedditPermalink } from "@/lib/reddit";
 import { gatherYouTubeComments, fetchYouTubeThreads, formatYouTubeThreads, type YTThread } from "@/lib/youtube";
 import { subredditsForAngle, renderSubredditBlock } from "@/lib/cellumove/subreddits";
-import { runAgent, extractJsonObject, type AgentRole } from "@/lib/cellumove/agents";
+import { runAgent, extractJsonObject } from "@/lib/cellumove/agents";
 import {
-  parseAvatarProfile,
-  renderStrategistProfile,
-  renderCopywriterProfile,
-  renderDesignerProfile,
-} from "@/lib/cellumove/avatar-profile";
+  loadAvatarContext,
+  researchBlock,
+  renderProfileFor,
+  deepDiveBlock,
+  type AvatarCtx,
+} from "@/lib/cellumove/context";
 import {
   stageDef,
   BRAND_BASE,
@@ -28,12 +29,7 @@ import { scanClaims, type ClaimScan } from "@/lib/cellumove/claim-check";
 import { exclusionBlock, isNearDuplicate } from "@/lib/cellumove/novelty";
 import { brollLibraryContext, recordBrollSuggestions } from "@/app/actions/broll";
 import { fetchThroughProxy } from "@/lib/scraper";
-import type {
-  SubAvatarRow,
-  AvatarResearchRow,
-  AngleRow,
-  ResearchRow,
-} from "@/lib/database.types";
+import type { ResearchRow } from "@/lib/database.types";
 
 // Per-stage verification: a compliance/claim scan of the generated copy + a
 // liveness check of any URLs it cited. The "new system" applied to the pipeline.
@@ -130,74 +126,8 @@ async function verifyStageOutput(output: unknown): Promise<StageVerification> {
   return { claims, sources, sourcesOk: sources.filter((s) => s.ok).length, sourcesTotal: sources.length };
 }
 
-// ─── Context loading (G1 + G2 = existing research/deep dive) ──────────────────
-
-async function loadAvatarContext(subAvatarId: string) {
-  const sub = unwrapOpt(
-    await supabase.from("SubAvatar").select("*").eq("id", subAvatarId).maybeSingle(),
-  ) as SubAvatarRow | null;
-  if (!sub) throw new Error("Sub-avatar not found.");
-
-  const research = unwrapOpt(
-    await supabase.from("AvatarResearch").select("*").eq("subAvatarId", sub.id).maybeSingle(),
-  ) as AvatarResearchRow | null;
-
-  // The pipeline needs the avatar excavation (G1) + deep dive (G2) already done.
-  const missing: string[] = [];
-  if (!research) missing.push("no research attached");
-  else {
-    if (!research.painPoints?.trim()) missing.push("pain points");
-    if (!research.dailyLanguage?.trim()) missing.push("daily language");
-    if (!research.triggers?.trim()) missing.push("trigger moments");
-  }
-  if (missing.length) {
-    throw new Error(
-      `This avatar isn't ready for the pipeline. Missing: ${missing.join(", ")}. Complete G1/G2 (Excavation + Deep Dive) under /avatars or /research first.`,
-    );
-  }
-
-  const angle = unwrapOpt(
-    await supabase.from("Angle").select("*").eq("id", sub.angleId).maybeSingle(),
-  ) as AngleRow | null;
-  if (!angle) throw new Error("Angle for this sub-avatar not found.");
-
-  const profile = parseAvatarProfile(research!.profile);
-  return { sub, research: research!, angle, profile };
-}
-
-type AvatarCtx = Awaited<ReturnType<typeof loadAvatarContext>>;
-
-function researchBlock(ctx: AvatarCtx): string {
-  const r = ctx.research;
-  return [
-    `SUB-AVATAR: ${ctx.sub.name}${ctx.sub.shortDesc ? ` — ${ctx.sub.shortDesc}` : ""}`,
-    `ANGLE: ${ctx.angle.name} (${ctx.angle.slug}) — mechanism to own: ${ctx.angle.mechanism}`,
-    `  Mechanisms BANNED for this angle: ${ctx.angle.bannedMechanism}`,
-    "",
-    "CUSTOMER RESEARCH (G1 Avatar Excavation — use her actual words):",
-    `  Pain points: ${r.painPoints}`,
-    `  Desires: ${r.desires}`,
-    `  Objections: ${r.objections}`,
-    `  Daily language: ${r.dailyLanguage}`,
-    `  Triggers: ${r.triggers}`,
-    `  Identity: ${r.identity}`,
-    `  Social proof that lands: ${r.socialProof}`,
-    `  Buying context: ${r.buyingContext}`,
-  ].join("\n");
-}
-
-function renderProfileFor(role: AgentRole, ctx: AvatarCtx): string {
-  switch (role) {
-    case "strategist":
-      return renderStrategistProfile(ctx.profile);
-    case "copywriter":
-      return renderCopywriterProfile(ctx.profile);
-    case "designer":
-      return renderDesignerProfile(ctx.profile);
-    default:
-      return "";
-  }
-}
+// Context builders (loadAvatarContext, researchBlock, renderProfileFor,
+// deepDiveBlock) live in lib/cellumove/context.ts — shared with the copywriter.
 
 // Render the prior stages a stage depends on, as labelled JSON blocks. The
 // grounded deep dive (G2) is rendered separately (deepDiveBlock), so skip it here.
@@ -213,38 +143,6 @@ function priorStagesBlock(doc: PipelineDoc, needs: PipelineStageKey[]): string {
     .filter(Boolean);
   if (blocks.length === 0) return "";
   return ["UPSTREAM STAGE OUTPUTS — build directly on these:", "", blocks.join("\n\n")].join("\n");
-}
-
-// The grounded G2 research, fed into every downstream stage as the foundation.
-// For a progressive accumulator (which can hold ~1000 verbatims) we feed the
-// synthesis + a representative SAMPLE of quotes, not the whole corpus — otherwise
-// every downstream prompt balloons by tens of thousands of tokens.
-function deepDiveBlock(doc: PipelineDoc, verbatimSample = 80): string {
-  const dd = doc.stages.deepDive;
-  if (dd == null) return "";
-  let payload: unknown = dd;
-  const a = dd as Partial<DeepDiveAccumulator>;
-  if (a.kind === "progressive" && Array.isArray(a.verbatims)) {
-    payload = {
-      avatar: a.avatar,
-      synthesis: a.synthesis, // the decision-ready angle brief
-      threadsRead: Array.isArray(a.threads) ? a.threads.length : 0,
-      totalVerbatimsCollected: a.verbatims.length,
-      bigPatterns: a.bigPatterns,
-      painPoints: a.painPoints,
-      desires: a.desires,
-      fears: a.fears,
-      objections: a.objections,
-      dailyLanguage: a.dailyLanguage,
-      outliers: a.outliers,
-      sampleVerbatims: a.verbatims.slice(0, verbatimSample),
-    };
-  }
-  return [
-    "GROUNDED DEEP-DIVE RESEARCH (G2) — real findings; build everything on this:",
-    "",
-    JSON.stringify(payload, null, 2),
-  ].join("\n");
 }
 
 // ─── Progressive deep-dive accumulator (G2) ───────────────────────────────────
@@ -910,7 +808,7 @@ export async function runPipelineStage(
       renderProfileFor(def.role, ctx),
       // The grounded G2 research feeds every downstream stage. AIR is a pure
       // synthesis OF that corpus, so it gets a much larger verbatim sample.
-      deepDiveBlock(doc, def.key === "avatarIntel" ? 400 : 80),
+      deepDiveBlock(doc.stages.deepDive, def.key === "avatarIntel" ? 400 : 80),
       novelty,
       priorStagesBlock(doc, def.needs),
       broll,

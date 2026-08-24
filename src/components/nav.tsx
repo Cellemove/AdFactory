@@ -13,6 +13,7 @@ type NavLink = { href: string; label: string };
 const PRIMARY: NavLink[] = [
   { href: "/", label: "Dashboard" },
   { href: "/pipeline", label: "Pipeline" },
+  { href: "/copywriter", label: "Copywriter" },
   { href: "/spy", label: "Spy" },
   { href: "/verbatims", label: "Verbatims" },
   { href: "/knowledge", label: "Knowledge" },
