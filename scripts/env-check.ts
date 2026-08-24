@@ -45,10 +45,18 @@ async function main() {
   if (project) {
     try {
       const { GoogleGenAI } = await import("@google/genai");
+      // Mirror src/lib/llm.ts: pass the SA from GOOGLE_APPLICATION_CREDENTIALS_JSON
+      // explicitly — the auth library does NOT read that env var on its own, and
+      // falling back to machine ADC would test the wrong principal.
+      const rawSa = env("GOOGLE_APPLICATION_CREDENTIALS_JSON");
+      const sa = rawSa ? (JSON.parse(rawSa) as { client_email?: string; private_key?: string }) : null;
       const llm = new GoogleGenAI({
         vertexai: true,
         project,
         location: env("GOOGLE_CLOUD_LOCATION") || "global",
+        ...(sa?.client_email && sa?.private_key
+          ? { googleAuthOptions: { credentials: { client_email: sa.client_email, private_key: sa.private_key } } }
+          : {}),
       });
       const r = await llm.models.generateContent({
         model: "gemini-2.5-flash",

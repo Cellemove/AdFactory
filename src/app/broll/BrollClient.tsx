@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { syncBroll, analyzeBroll, markClipUsed } from "../actions/broll";
 
@@ -90,22 +90,72 @@ export function BrollClient({
     });
   };
 
-  const analyze = () => {
+  // ── Auto-loop analysis: keeps calling analyzeBroll until the library is done,
+  // the user stops it, or three failing batches in a row (stall guard). Client-
+  // driven, so the tab must stay open; every pass is persisted server-side and an
+  // interrupted run resumes where it left off.
+  const [analyzing, setAnalyzing] = useState(false);
+  const stopRef = useRef(false);
+  const [progress, setProgress] = useState<{
+    done: number;
+    skipped: number;
+    failed: number;
+    remaining: number | null;
+    lastError: string | null;
+  }>({ done: 0, skipped: 0, failed: 0, remaining: null, lastError: null });
+
+  const analyzeAll = () => {
+    if (analyzing || busy) return;
     setError(null);
     setNotice(null);
-    start(async () => {
+    stopRef.current = false;
+    setAnalyzing(true);
+    setProgress({ done: 0, skipped: 0, failed: 0, remaining: null, lastError: null });
+    (async () => {
+      let done = 0;
+      let skipped = 0;
+      let failed = 0;
+      let batches = 0;
+      let stall = 0;
+      let remaining: number | null = null;
       try {
-        const r = await analyzeBroll(5);
-        setNotice(
-          `Analyzed ${r.analyzed} clip${r.analyzed === 1 ? "" : "s"}` +
-            (r.skipped ? `, ${r.skipped} skipped (too large)` : "") +
-            (r.failed ? `, ${r.failed} failed${r.lastError ? ` (${r.lastError.slice(0, 120)})` : ""}` : "") +
-            ` · ${r.remaining} still to analyze. Click again to continue.`,
-        );
+        for (;;) {
+          const r = await analyzeBroll(8);
+          done += r.analyzed;
+          skipped += r.skipped;
+          failed += r.failed;
+          batches++;
+          remaining = r.remaining;
+          setProgress({ done, skipped, failed, remaining, lastError: r.lastError });
+          if (stopRef.current || r.remaining === 0) break;
+          if (r.analyzed + r.skipped === 0) {
+            stall++;
+            if (r.failed === 0 || stall >= 3) {
+              if (r.failed > 0) {
+                setError(
+                  `Analysis stalled — 3 failing batches in a row${r.lastError ? `: ${r.lastError.slice(0, 140)}` : ""}`,
+                );
+              }
+              break;
+            }
+          } else {
+            stall = 0;
+          }
+          // Long runs: refresh the server-rendered counts every ~10 batches.
+          if (batches % 10 === 0) router.refresh();
+        }
+        if (stopRef.current) {
+          setNotice(`Stopped — ${done} analyzed this run, ${remaining ?? "?"} still to go. Run again to continue.`);
+        } else if (remaining === 0) {
+          setNotice(`Analysis complete — ${done} analyzed, ${skipped} skipped (too large), ${failed} failed.`);
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setAnalyzing(false);
+        router.refresh();
       }
-    });
+    })();
   };
 
   const markUsed = (clipId: string) => {
@@ -131,10 +181,16 @@ export function BrollClient({
           </p>
         </div>
         <div className="flex gap-2">
-          <button className="btn" onClick={analyze} disabled={busy || !configured || indexedTotal === 0}>
-            {busy ? "Working…" : "Analyze clips (AI)"}
-          </button>
-          <button className="btn btn-primary" onClick={sync} disabled={busy || !configured}>
+          {analyzing ? (
+            <button className="btn" onClick={() => { stopRef.current = true; }} title="Finishes the current batch, then stops">
+              Stop analyzing
+            </button>
+          ) : (
+            <button className="btn" onClick={analyzeAll} disabled={busy || !configured || indexedTotal === 0}>
+              Analyze all clips (AI)
+            </button>
+          )}
+          <button className="btn btn-primary" onClick={sync} disabled={busy || analyzing || !configured}>
             {busy ? "Working…" : "Sync from Drive"}
           </button>
         </div>
@@ -154,6 +210,23 @@ export function BrollClient({
         </div>
       )}
 
+      {analyzing && (
+        <div className="card border-sky-300 bg-sky-50 text-sm text-sky-900">
+          <span className="mr-2 inline-block h-3 w-3 animate-spin rounded-full border-2 border-sky-300 border-t-sky-900 align-middle" />
+          Analyzing… <span className="font-semibold">{progress.done}</span> done this run
+          {progress.skipped > 0 && `, ${progress.skipped} skipped (too large)`}
+          {progress.failed > 0 && `, ${progress.failed} failed`}
+          {progress.remaining != null && (
+            <>
+              {" "}· <span className="font-semibold">{progress.remaining}</span> remaining
+            </>
+          )}
+          {" "}— keep this tab open.
+          {progress.lastError && (
+            <div className="mt-1 text-xs text-sky-800">last error: {progress.lastError.slice(0, 140)}</div>
+          )}
+        </div>
+      )}
       {notice && <div className="card border-emerald-300 bg-emerald-50 text-sm text-emerald-900">{notice}</div>}
       {error && <div className="card border-red-300 bg-red-50 text-sm text-red-800">{error}</div>}
 

@@ -259,58 +259,61 @@ export async function analyzeBroll(
   let failed = 0;
   let lastError: string | null = null;
 
-  for (const clip of candidates) {
-    if (analyzed + skipped >= batch) break;
+  // Process the batch CONCURRENTLY — each clip is one Drive download + one Flash
+  // call, and serial batches made a 7k-clip library a multi-day job. Counter
+  // mutation from the closures is safe (single-threaded event loop).
+  await Promise.all(
+    candidates.slice(0, batch).map(async (clip) => {
+      // Too big (or size unknown) for inline analysis: mark as visited so the batch
+      // walker doesn't re-hit it forever. It simply stays description-less.
+      if (!clip.sizeBytes || clip.sizeBytes > ANALYZE_MAX_BYTES) {
+        await supabase.from("BrollClip").update({ analyzedAt: new Date().toISOString() }).eq("id", clip.id);
+        skipped++;
+        return;
+      }
 
-    // Too big (or size unknown) for inline analysis: mark as visited so the batch
-    // walker doesn't re-hit it forever. It simply stays description-less.
-    if (!clip.sizeBytes || clip.sizeBytes > ANALYZE_MAX_BYTES) {
-      await supabase.from("BrollClip").update({ analyzedAt: new Date().toISOString() }).eq("id", clip.id);
-      skipped++;
-      continue;
-    }
-
-    try {
-      const bytes = await downloadDriveFile(clip.driveId);
-      const llm = getLLM();
-      const resp = await llm.models.generateContent({
-        model: "gemini-2.5-flash",
-        contents: [
-          {
-            role: "user",
-            parts: [
-              { inlineData: { mimeType: clip.mimeType, data: bytes.toString("base64") } },
-              {
-                text: [
-                  "You are indexing a b-roll library for CelluMove (compression shaping leggings ads).",
-                  "Watch this clip and return ONLY JSON:",
-                  '{"description": "<ONE dense sentence: subject, action, setting, framing, mood>",',
-                  ' "tags": ["5-10 short lowercase tags: body part, action, setting, shot type, mood, product-visible or no-product"]}',
-                ].join("\n"),
-              },
-            ],
-          },
-        ],
-        config: { responseMimeType: "application/json", temperature: 0.2 },
-      });
-      const parsed = JSON.parse(resp.text ?? "{}") as { description?: string; tags?: string[] };
-      const upd = await supabase
-        .from("BrollClip")
-        .update({
-          aiDescription: parsed.description?.slice(0, 500) ?? null,
-          tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 12).join(", ").slice(0, 300) : null,
-          analyzedAt: new Date().toISOString(),
-        })
-        .eq("id", clip.id);
-      if (upd.error) throw new Error(friendly008(upd.error.message));
-      analyzed++;
-    } catch (e) {
-      // Transient failures stay unmarked so a later batch retries them.
-      failed++;
-      lastError = e instanceof Error ? e.message : String(e);
-      if (/migrations\/008/.test(lastError)) throw new Error(lastError);
-    }
-  }
+      try {
+        const bytes = await downloadDriveFile(clip.driveId);
+        const llm = getLLM();
+        const resp = await llm.models.generateContent({
+          model: "gemini-2.5-flash",
+          contents: [
+            {
+              role: "user",
+              parts: [
+                { inlineData: { mimeType: clip.mimeType, data: bytes.toString("base64") } },
+                {
+                  text: [
+                    "You are indexing a b-roll library for CelluMove (compression shaping leggings ads).",
+                    "Watch this clip and return ONLY JSON:",
+                    '{"description": "<ONE dense sentence: subject, action, setting, framing, mood>",',
+                    ' "tags": ["5-10 short lowercase tags: body part, action, setting, shot type, mood, product-visible or no-product"]}',
+                  ].join("\n"),
+                },
+              ],
+            },
+          ],
+          config: { responseMimeType: "application/json", temperature: 0.2 },
+        });
+        const parsed = JSON.parse(resp.text ?? "{}") as { description?: string; tags?: string[] };
+        const upd = await supabase
+          .from("BrollClip")
+          .update({
+            aiDescription: parsed.description?.slice(0, 500) ?? null,
+            tags: Array.isArray(parsed.tags) ? parsed.tags.slice(0, 12).join(", ").slice(0, 300) : null,
+            analyzedAt: new Date().toISOString(),
+          })
+          .eq("id", clip.id);
+        if (upd.error) throw new Error(friendly008(upd.error.message));
+        analyzed++;
+      } catch (e) {
+        // Transient failures stay unmarked so a later batch retries them.
+        failed++;
+        lastError = e instanceof Error ? e.message : String(e);
+        if (/migrations\/008/.test(lastError)) throw new Error(lastError);
+      }
+    }),
+  );
 
   const remain = await supabase
     .from("BrollClip")
