@@ -5,6 +5,8 @@
 // supabase-js requires each table's Row to be assignable to `Record<string, unknown>`,
 // which interfaces do not satisfy by default.
 
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+
 export type AngleRow = {
   id: string;
   slug: string;
@@ -179,6 +181,8 @@ export type CopyPrincipleRow = {
 export type ProductRow = {
   id: string;
   name: string;
+  code?: string | null;
+  context?: Json;
   imagePath: string | null;
   description: string | null;
   createdAt: string;
@@ -327,8 +331,84 @@ export type BrollSuggestionRow = {
 export type AppUserRow = {
   id: string;
   username: string;
+  shortCode?: string | null;
   passwordHash: string;
   role: string; // 'creative_strategist' | 'editor'
+  createdAt: string;
+};
+
+export type ScriptProjectRow = {
+  id: string;
+  title: string;
+  status: string;
+  strategistUserId: string;
+  editorUserId: string | null;
+  createdByUserId: string;
+  productId: string;
+  subAvatarId: string | null;
+  angleId: string;
+  referenceFormatId: string | null;
+  idea: string;
+  adNumber: string;
+  creativeName: string;
+  format: string;
+  targetDurationSec: number;
+  teardownRecordId: string | null;
+  teardownSnapshot: Json | null;
+  document: Json;
+  displayName: string;
+  revision: number;
+  currentVersion: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScriptVersionRow = {
+  id: string;
+  projectId: string;
+  version: number;
+  document: Json;
+  origin: string;
+  changeSummary: string;
+  model: string | null;
+  promptVersion: string | null;
+  createdByUserId: string;
+  createdAt: string;
+};
+
+export type ScriptAssignmentRow = {
+  id: string;
+  projectId: string;
+  editorUserId: string | null;
+  status: string;
+  deliveryUrl: string | null;
+  reviewNote: string | null;
+  reviewedByUserId: string | null;
+  assignedAt: string | null;
+  claimedAt: string | null;
+  submittedAt: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScriptSourceRow = {
+  id: string;
+  projectId: string;
+  sourceType: string;
+  sourceId: string | null;
+  title: string;
+  url: string | null;
+  snapshot: Json | null;
+  createdAt: string;
+};
+
+export type ScriptEventRow = {
+  id: string;
+  projectId: string;
+  actorUserId: string | null;
+  eventType: string;
+  payload: Json;
   createdAt: string;
 };
 
@@ -391,6 +471,11 @@ export type Database = {
       AppUser: { Row: AppUserRow; Insert: Partial<AppUserRow> & { id: string; username: string; passwordHash: string }; Update: Partial<AppUserRow>; Relationships: [] };
       BrollClip: { Row: BrollClipRow; Insert: Partial<BrollClipRow> & { id: string; driveId: string; name: string; mimeType: string }; Update: Partial<BrollClipRow>; Relationships: [] };
       BrollSuggestion: { Row: BrollSuggestionRow; Insert: Partial<BrollSuggestionRow> & { id: string; clipId: string; clipName: string; source: string }; Update: Partial<BrollSuggestionRow>; Relationships: [] };
+      ScriptProject: { Row: ScriptProjectRow; Insert: Partial<ScriptProjectRow> & { id: string; title: string; strategistUserId: string; createdByUserId: string; productId: string; angleId: string; idea: string; adNumber: string; creativeName: string; format: string; document: Json; displayName: string }; Update: Partial<ScriptProjectRow>; Relationships: [] };
+      ScriptVersion: { Row: ScriptVersionRow; Insert: Partial<ScriptVersionRow> & { id: string; projectId: string; version: number; document: Json; origin: string; changeSummary: string; createdByUserId: string }; Update: Partial<ScriptVersionRow>; Relationships: [] };
+      ScriptAssignment: { Row: ScriptAssignmentRow; Insert: Partial<ScriptAssignmentRow> & { id: string; projectId: string; status: string }; Update: Partial<ScriptAssignmentRow>; Relationships: [] };
+      ScriptSource: { Row: ScriptSourceRow; Insert: Partial<ScriptSourceRow> & { id: string; projectId: string; sourceType: string; title: string }; Update: Partial<ScriptSourceRow>; Relationships: [] };
+      ScriptEvent: { Row: ScriptEventRow; Insert: Partial<ScriptEventRow> & { id: string; projectId: string; eventType: string }; Update: Partial<ScriptEventRow>; Relationships: [] };
     };
     Views: Record<string, never>;
     Functions: Record<string, never>;

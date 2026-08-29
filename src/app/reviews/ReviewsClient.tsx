@@ -2,12 +2,14 @@
 
 import { useState, useTransition } from "react";
 import { claimRun, setDelivery, submitReview, releaseClaim } from "../actions/reviews";
+import { claimScriptProject, reviewScriptDelivery, submitScriptDelivery } from "../actions/scripts";
 import { ROLE_LABELS, type Role } from "@/lib/roles";
 import type { EditorClaimRow } from "@/lib/database.types";
 
 type Claim = EditorClaimRow & { deliverable: { creativeBriefs?: unknown; adScripts?: unknown } };
 type Me = { id: string; username: string; role: Role };
 type Claimable = { runId: string; label: string; createdAt: string };
+type ScriptPackage = { projectId: string; title: string; displayName: string; document: unknown; status: string; editorUserId: string | null; editorName: string | null; deliveryUrl: string | null; reviewNote: string | null; updatedAt: string };
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   pending: { label: "Pending review", cls: "tag tag-warn" },
@@ -20,11 +22,15 @@ export function ReviewsClient({
   claims,
   claimable,
   tableMissing,
+  scriptPackages,
+  scriptTableMissing,
 }: {
   me: Me;
   claims: Claim[];
   claimable: Claimable[];
   tableMissing: boolean;
+  scriptPackages: ScriptPackage[];
+  scriptTableMissing: boolean;
 }) {
   const isEditor = me.role === "editor";
   const [error, setError] = useState<string | null>(null);
@@ -42,6 +48,9 @@ export function ReviewsClient({
 
   const myClaims = claims.filter((c) => c.claimedByEmail === me.username);
   const shownClaims = isEditor ? myClaims : claims;
+  const shownScripts = isEditor
+    ? scriptPackages.filter((item) => item.editorUserId === me.id || item.editorUserId === null)
+    : scriptPackages;
 
   return (
     <div className="space-y-6">
@@ -63,6 +72,18 @@ export function ReviewsClient({
       )}
 
       {error && <div className="card border-red-300 bg-red-50 text-sm text-red-800">{error}</div>}
+
+      <section className="space-y-3">
+        <div>
+          <h2 className="text-sm font-semibold">Script Studio handoffs <span className="ml-2 text-xs font-normal text-ink-400">{shownScripts.length}</span></h2>
+          <p className="mt-0.5 text-xs text-ink-500">Structured scripts assigned directly or available for an editor to claim.</p>
+        </div>
+        {scriptTableMissing ? (
+          <div className="card border-amber-300 bg-amber-50 text-sm text-amber-900">Apply <code className="font-mono">migrations/009_script_studio.sql</code> to enable Script Studio handoffs.</div>
+        ) : shownScripts.length === 0 ? (
+          <p className="card text-sm text-ink-500">No Script Studio handoffs yet.</p>
+        ) : shownScripts.map((item) => <ScriptPackageCard key={item.projectId} item={item} me={me} isEditor={isEditor} run={run} />)}
+      </section>
 
       {/* Editors: available packages to claim */}
       {isEditor && (
@@ -111,6 +132,23 @@ export function ReviewsClient({
       </section>
     </div>
   );
+}
+
+function ScriptPackageCard({ item, me, isEditor, run }: { item: ScriptPackage; me: Me; isEditor: boolean; run: (fn: () => Promise<void>) => void }) {
+  const [deliveryUrl, setDeliveryUrl] = useState(item.deliveryUrl ?? "");
+  const [note, setNote] = useState(item.reviewNote ?? "");
+  const [reviewStatus, setReviewStatus] = useState<"changes_requested" | "approved">("approved");
+  const available = item.editorUserId === null;
+  const mine = item.editorUserId === me.id;
+  const status = STATUS_META[item.status] ?? { label: item.status.replaceAll("_", " "), cls: "tag" };
+
+  return <article className="card space-y-3">
+    <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="font-semibold">{item.title}</h3><span className={status.cls}>{status.label}</span></div><div className="mt-1 break-all font-mono text-[10px] text-ink-400">{item.displayName}</div></div><div className="text-xs text-ink-500">{item.editorName ? `@${item.editorName}` : "Unassigned queue"} · {new Date(item.updatedAt).toLocaleString()}</div></div>
+    <details><summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-ink-500">Structured script</summary><div className="mt-2 max-h-96 overflow-y-auto rounded-lg border border-ink-200 bg-ink-50 p-3"><Readable value={item.document} /></div></details>
+    {isEditor && available && <button className="btn btn-primary" onClick={() => run(() => claimScriptProject(item.projectId))}>Claim script →</button>}
+    {isEditor && mine && <div className="space-y-2"><label className="label">Delivered creative URL</label><div className="flex flex-col gap-2 sm:flex-row"><input className="input flex-1" placeholder="Drive, Frame.io, or other delivery link" value={deliveryUrl} onChange={(event) => setDeliveryUrl(event.target.value)} /><button className="btn btn-primary" onClick={() => run(() => submitScriptDelivery(item.projectId, deliveryUrl))}>Submit delivery</button></div>{item.reviewNote && <div className="rounded-lg bg-ink-50 p-3 text-sm"><span className="font-medium">Strategist feedback:</span> {item.reviewNote}</div>}</div>}
+    {!isEditor && <div className="space-y-2 border-t border-ink-200 pt-3"><label className="label">Review editor delivery</label>{item.deliveryUrl ? <a href={item.deliveryUrl} target="_blank" rel="noreferrer" className="block text-sm underline">{item.deliveryUrl}</a> : <p className="text-sm text-ink-400">No delivery submitted yet.</p>}<textarea className="input min-h-20" placeholder="Feedback for the editor…" value={note} onChange={(event) => setNote(event.target.value)} /><div className="flex gap-2"><select className="input max-w-56" value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value as typeof reviewStatus)}><option value="approved">Approve</option><option value="changes_requested">Request changes</option></select><button className="btn btn-primary" disabled={item.status !== "submitted"} onClick={() => run(() => reviewScriptDelivery(item.projectId, note, reviewStatus))}>Submit review</button></div>{item.status !== "submitted" && <p className="text-xs text-ink-400">Review unlocks after the editor submits a delivery.</p>}</div>}
+  </article>;
 }
 
 function ClaimCard({

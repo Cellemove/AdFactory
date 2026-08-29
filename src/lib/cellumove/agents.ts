@@ -15,6 +15,8 @@ export type AgentRole = "strategist" | "copywriter" | "researcher" | "designer";
 
 export interface RunAgentOptions {
   role: AgentRole;
+  // Additional SOP roles to load for cross-functional generation turns.
+  additionalRoles?: AgentRole[];
   // Base task instruction — what this agent is being asked to do this call.
   instruction: string;
   // The user-turn content (context, data, the actual request).
@@ -33,12 +35,13 @@ export interface RunAgentOptions {
 
 // Best-effort SOP load. Tolerates a not-yet-migrated DB (returns nothing) so the
 // pipeline still runs on the engine's built-in rules before any SOPs are written.
-async function loadRoleSops(role: AgentRole, marketCode?: string | null): Promise<SopRow[]> {
+async function loadRoleSops(roles: AgentRole[], marketCode?: string | null): Promise<SopRow[]> {
   try {
+    const roleScopes = [...new Set<AgentRole | "all">([...roles, "all"])];
     const res = await supabase
       .from("Sop")
       .select("*")
-      .in("roleScope", [role, "all"])
+      .in("roleScope", roleScopes)
       .order("pinned", { ascending: false })
       .order("order", { ascending: true });
     if (res.error) return [];
@@ -91,7 +94,8 @@ export function extractJsonObject<T>(text: string): T {
 // Run one agent turn. Returns the raw text; callers parse with extractJsonObject
 // when they passed json:true.
 export async function runAgent(opts: RunAgentOptions): Promise<string> {
-  const sops = await loadRoleSops(opts.role, opts.marketCode);
+  const roles = [...new Set([opts.role, ...(opts.additionalRoles ?? [])])];
+  const sops = await loadRoleSops(roles, opts.marketCode);
   const system = `${opts.instruction}${renderSops(sops)}`;
 
   const llm = getLLM();
@@ -115,7 +119,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
     model: DEFAULT_MODEL,
     usage: resp.usageMetadata,
     grounded: opts.grounded,
-    metadata: { role: opts.role, market: opts.marketCode ?? undefined, sopCount: sops.length, ...opts.metadata },
+    metadata: { role: opts.role, sopRoles: roles, market: opts.marketCode ?? undefined, sopCount: sops.length, ...opts.metadata },
   });
 
   const text = resp.text;
