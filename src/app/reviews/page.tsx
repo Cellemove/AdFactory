@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
 import { supabase } from "@/lib/db";
-import type { EditorClaimRow, ResearchRow } from "@/lib/database.types";
+import type { AppUserRow, EditorClaimRow, ResearchRow, ScriptAssignmentRow, ScriptProjectRow } from "@/lib/database.types";
 import { ReviewsClient } from "./ReviewsClient";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +18,7 @@ export default async function ReviewsPage() {
   const me = await getSessionUser();
   if (!me) redirect("/login");
 
-  const [claimsRes, runsRes] = await Promise.all([
+  const [claimsRes, runsRes, scriptAssignmentsRes, scriptProjectsRes, usersRes] = await Promise.all([
     supabase.from("EditorClaim").select("*").order("updatedAt", { ascending: false }),
     supabase
       .from("Research")
@@ -26,6 +26,9 @@ export default async function ReviewsPage() {
       .eq("type", "pipeline")
       .order("createdAt", { ascending: false })
       .limit(60),
+    supabase.from("ScriptAssignment").select("*").order("updatedAt", { ascending: false }),
+    supabase.from("ScriptProject").select("*").order("updatedAt", { ascending: false }),
+    supabase.from("AppUser").select("*").order("username"),
   ]);
 
   const tableMissing = Boolean(claimsRes.error);
@@ -49,8 +52,30 @@ export default async function ReviewsPage() {
   }
 
   const claimsWithWork = claims.map((c) => ({ ...c, deliverable: deliverableByRun[c.runId] ?? {} }));
+  const scriptTableMissing = Boolean(scriptAssignmentsRes.error || scriptProjectsRes.error);
+  const scriptProjects = (scriptTableMissing ? [] : scriptProjectsRes.data ?? []) as ScriptProjectRow[];
+  const scriptAssignments = (scriptTableMissing ? [] : scriptAssignmentsRes.data ?? []) as ScriptAssignmentRow[];
+  const users = (usersRes.data ?? []) as AppUserRow[];
+  const userById = new Map(users.map((user) => [user.id, user]));
+  const projectById = new Map(scriptProjects.map((project) => [project.id, project]));
+  const scriptPackages = scriptAssignments.flatMap((assignment) => {
+    const project = projectById.get(assignment.projectId);
+    if (!project) return [];
+    return [{
+      projectId: project.id,
+      title: project.title,
+      displayName: project.displayName,
+      document: project.document,
+      status: assignment.status,
+      editorUserId: assignment.editorUserId,
+      editorName: assignment.editorUserId ? userById.get(assignment.editorUserId)?.username ?? null : null,
+      deliveryUrl: assignment.deliveryUrl,
+      reviewNote: assignment.reviewNote,
+      updatedAt: assignment.updatedAt,
+    }];
+  });
 
   return (
-    <ReviewsClient me={me} claims={claimsWithWork} claimable={claimable} tableMissing={tableMissing} />
+    <ReviewsClient me={me} claims={claimsWithWork} claimable={claimable} tableMissing={tableMissing} scriptPackages={scriptPackages} scriptTableMissing={scriptTableMissing} />
   );
 }

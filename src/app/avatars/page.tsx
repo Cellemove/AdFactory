@@ -4,6 +4,8 @@ import type { SubAvatarRow, AngleRow, AvatarResearchRow } from "@/lib/database.t
 import { NewSubAvatarForm } from "./NewSubAvatarForm";
 import { NewAngleForm } from "./NewAngleForm";
 import { ProductsSection } from "./ProductsSection";
+import { readShopifyProductMetadata } from "@/lib/shopify";
+import { readAdFactoryProductOverrides } from "@/lib/product-overrides";
 
 type SubWithAngleResearch = SubAvatarRow & { angle: AngleRow; research: AvatarResearchRow | null };
 
@@ -44,12 +46,19 @@ export default async function AvatarsPage({
       <NewSubAvatarForm angles={angles.map((a) => ({ slug: a.slug, name: a.name }))} preselectedAngle={sp.angle} openByDefault={sp.new === "1"} />
 
       <ProductsSection
-        products={products.map((p) => ({
-          id: p.id,
-          name: p.name,
-          imagePath: p.imagePath,
-          description: p.description,
-        }))}
+        products={products.map((p) => {
+          const shopify = readShopifyProductMetadata(p.context);
+          return {
+            id: p.id,
+            name: p.name,
+            code: p.code ?? "",
+            imagePath: p.imagePath,
+            description: p.description,
+            sourceLabel: shopify ? "Shopify" : undefined,
+            hasLocalOverrides: Boolean(readAdFactoryProductOverrides(p.context)),
+            images: shopify?.images ?? [],
+          };
+        })}
       />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
