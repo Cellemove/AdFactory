@@ -11,12 +11,28 @@
 // fetch yields ok:false, never an exception.
 
 import { fetchThroughProxy, extractReadableText } from "@/lib/scraper";
+import { createHash } from "node:crypto";
 import type { AvatarProfile } from "./avatar-profile";
+import {
+  canonicalizeResearchUrl,
+  classifyResearchSource,
+  normalizeEvidenceClaims,
+  normalizeEvidenceText,
+  researchDomain,
+  type EvidenceVerificationStatus,
+  type ResearchEvidenceClaim,
+  type ResearchSourceType,
+} from "./research-evidence";
 
 export interface SourceCheck {
   url: string;
+  canonicalUrl: string | null;
+  domain: string;
+  sourceType: ResearchSourceType;
   ok: boolean;
   status: number;
+  excerpt: string;
+  contentHash: string | null;
 }
 
 export interface VerbatimCheck {
@@ -34,6 +50,7 @@ export interface DraftVerification {
   verbatims: VerbatimCheck[];
   verbatimsVerified: number;
   verbatimsTotal: number;
+  evidence: ResearchEvidenceClaim[];
 }
 
 // Minimal structural shape we verify — keeps this module decoupled from the
@@ -41,6 +58,7 @@ export interface DraftVerification {
 export interface VerifiableDraft {
   sources: string[];
   profile?: AvatarProfile | null;
+  evidence?: ResearchEvidenceClaim[] | null;
 }
 
 const VERBATIM_CATEGORIES = [
@@ -102,18 +120,27 @@ interface Fetched {
   ok: boolean;
   status: number;
   norm: string;
+  excerpt: string;
+  contentHash: string | null;
 }
 
 async function fetchNormalized(url: string): Promise<Fetched> {
   try {
     const res = await fetchThroughProxy(url, { timeoutMs: FETCH_TIMEOUT_MS, accept: "text/html" });
-    if (!res) return { ok: false, status: 0, norm: "" };
+    if (!res) return { ok: false, status: 0, norm: "", excerpt: "", contentHash: null };
     const text = res.contentType.includes("json")
       ? res.body.slice(0, PAGE_CHARS)
       : extractReadableText(res.body, PAGE_CHARS);
-    return { ok: res.ok && Boolean(res.body), status: res.status, norm: normalize(text) };
+    const normalized = normalize(text);
+    return {
+      ok: res.ok && Boolean(res.body),
+      status: res.status,
+      norm: normalized,
+      excerpt: text.replace(/\s+/g, " ").trim().slice(0, 1200),
+      contentHash: normalized ? createHash("sha256").update(normalized).digest("hex") : null,
+    };
   } catch {
-    return { ok: false, status: 0, norm: "" };
+    return { ok: false, status: 0, norm: "", excerpt: "", contentHash: null };
   }
 }
 
@@ -140,13 +167,30 @@ function collectVerbatims(profile: AvatarProfile | null | undefined): VerbatimCh
  * corpus). Returns a structured report; never throws.
  */
 export async function verifyDraft(draft: VerifiableDraft): Promise<DraftVerification> {
-  const sources = (draft.sources ?? []).filter(isHttpUrl);
-  const verbatims = collectVerbatims(draft.profile).slice(0, MAX_VERBATIMS);
+  const declaredSources = (draft.sources ?? []).filter(isHttpUrl);
+  const profileVerbatims = collectVerbatims(draft.profile).map((item): ResearchEvidenceClaim => ({
+    category: item.category,
+    text: item.text,
+    type: "verbatim",
+    sourceUrl: item.source,
+  }));
+  const explicitEvidence = normalizeEvidenceClaims(draft.evidence);
+  const evidenceMap = new Map<string, ResearchEvidenceClaim>();
+  for (const item of [...explicitEvidence, ...profileVerbatims]) {
+    const sourceUrl = item.sourceUrl ? canonicalizeResearchUrl(item.sourceUrl) : null;
+    const key = `${item.type}:${normalizeEvidenceText(item.text)}:${sourceUrl ?? ""}`;
+    if (!evidenceMap.has(key)) evidenceMap.set(key, { ...item, sourceUrl });
+  }
+  const evidence = [...evidenceMap.values()].slice(0, MAX_VERBATIMS * 2);
+  const sources = [...new Set([
+    ...declaredSources.map((url) => canonicalizeResearchUrl(url) ?? url),
+    ...evidence.map((item) => item.sourceUrl).filter((url): url is string => Boolean(url && isHttpUrl(url))),
+  ])];
 
   // Unique set of URLs to fetch: cited sources + any URL a verbatim points at.
   const urlSet = new Set<string>();
   for (const u of sources) urlSet.add(u);
-  for (const v of verbatims) if (v.source && isHttpUrl(v.source)) urlSet.add(v.source);
+  for (const item of evidence) if (item.sourceUrl && isHttpUrl(item.sourceUrl)) urlSet.add(item.sourceUrl);
   const urls = [...urlSet].slice(0, MAX_URLS);
 
   const fetched = new Map<string, Fetched>();
@@ -158,21 +202,44 @@ export async function verifyDraft(draft: VerifiableDraft): Promise<DraftVerifica
 
   const sourceChecks: SourceCheck[] = sources.map((u) => {
     const f = fetched.get(u);
-    return { url: u, ok: f?.ok ?? false, status: f?.status ?? 0 };
+    return {
+      url: u,
+      canonicalUrl: canonicalizeResearchUrl(u),
+      domain: researchDomain(u),
+      sourceType: classifyResearchSource(u),
+      ok: f?.ok ?? false,
+      status: f?.status ?? 0,
+      excerpt: f?.excerpt ?? "",
+      contentHash: f?.contentHash ?? null,
+    };
   });
 
-  // Corpus = all successfully fetched pages, for verbatims with no usable URL.
-  const corpusNorm = [...fetched.values()].filter((f) => f.ok).map((f) => f.norm).join(" \n ");
-
-  const verbatimChecks: VerbatimCheck[] = verbatims.map((v) => {
-    let verified = false;
-    if (v.source && isHttpUrl(v.source)) {
-      const f = fetched.get(v.source);
-      if (f?.ok) verified = quoteFoundIn(v.text, f.norm);
+  // Source-specific verification is deliberate: finding a quote on some other
+  // cited page must not validate an incorrect source attribution.
+  const checkedEvidence = evidence.map((item): ResearchEvidenceClaim => {
+    let verificationStatus: EvidenceVerificationStatus;
+    if (item.type === "inference") {
+      verificationStatus = "inference";
+    } else if (!item.sourceUrl || !isHttpUrl(item.sourceUrl)) {
+      verificationStatus = "unverified";
+    } else {
+      const fetchedSource = fetched.get(item.sourceUrl);
+      if (item.type === "verbatim") {
+        verificationStatus = fetchedSource?.ok && quoteFoundIn(item.text, fetchedSource.norm) ? "verified" : "unverified";
+      } else {
+        verificationStatus = fetchedSource?.ok ? "source_checked" : "unverified";
+      }
     }
-    if (!verified) verified = quoteFoundIn(v.text, corpusNorm); // appears anywhere in the cited corpus
-    return { ...v, verified };
+    return { ...item, verificationStatus };
   });
+  const verbatimChecks: VerbatimCheck[] = checkedEvidence
+    .filter((item) => item.type === "verbatim")
+    .map((item) => ({
+      category: item.category,
+      text: item.text,
+      source: item.sourceUrl ?? null,
+      verified: item.verificationStatus === "verified",
+    }));
 
   return {
     checkedAt: new Date().toISOString(),
@@ -182,5 +249,6 @@ export async function verifyDraft(draft: VerifiableDraft): Promise<DraftVerifica
     verbatims: verbatimChecks,
     verbatimsVerified: verbatimChecks.filter((v) => v.verified).length,
     verbatimsTotal: verbatimChecks.length,
+    evidence: checkedEvidence,
   };
 }

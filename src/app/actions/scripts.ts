@@ -6,9 +6,16 @@ import { requireEditor, requireStrategist } from "@/lib/authorization";
 import {
   buildScriptDisplayName,
   createInitialScriptDocument,
+  inspectScriptQuality,
   parseScriptDocument,
   ScriptDocumentSchema,
 } from "@/lib/cellumove/script-studio";
+import {
+  canClaimScript,
+  canEditScript,
+  canSendScript,
+  normalizeScriptWorkflowStatus,
+} from "@/lib/cellumove/script-workflow";
 import {
   generateResourceGroundedScript,
   type GeneratedScriptSource,
@@ -37,6 +44,10 @@ const CreateScriptProjectSchema = z.object({
 
 function asJson(value: unknown): Json {
   return JSON.parse(JSON.stringify(value)) as Json;
+}
+
+function isStatusConstraintError(message: string): boolean {
+  return /status.*check|check constraint|violates check constraint/i.test(message);
 }
 
 function parseBeats(value: string): ReferenceFormatBeat[] {
@@ -140,7 +151,7 @@ export async function createScriptProject(input: z.infer<typeof CreateScriptProj
     unwrap(await supabase.from("ScriptProject").insert({
       id: projectId,
       title: parsed.title,
-      status: editor ? "assigned" : "available",
+      status: "draft",
       strategistUserId: strategist.id,
       editorUserId: editor?.id ?? null,
       createdByUserId: actor.id,
@@ -167,12 +178,6 @@ export async function createScriptProject(input: z.infer<typeof CreateScriptProj
       id: newId(), projectId, version: 1, document: asJson(document), origin: "generated",
       changeSummary: "AI-generated resource-grounded first draft", model: generated.model,
       promptVersion: generated.promptVersion, createdByUserId: actor.id, createdAt,
-    }).select("id").single());
-
-    unwrap(await supabase.from("ScriptAssignment").insert({
-      id: newId(), projectId, editorUserId: editor?.id ?? null,
-      status: editor ? "assigned" : "available", assignedAt: editor ? createdAt : null,
-      createdAt, updatedAt: createdAt,
     }).select("id").single());
 
     await persistScriptSources(projectId, generated.sources, createdAt);
@@ -217,6 +222,9 @@ export async function generateScriptProjectDraft(input: {
   ) as ScriptProjectRow | null;
   if (!project) throw new Error("Script project not found.");
   if (project.revision !== expectedRevision) throw new Error("This script changed in another session. Reload before generating again.");
+  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
+    throw new Error("This script is frozen for the editor. Request changes before editing the handed-off version.");
+  }
 
   const [productRaw, angleRaw, avatarRaw, frameworkRaw] = await Promise.all([
     unwrapOpt(await supabase.from("Product").select("*").eq("id", project.productId).maybeSingle()),
@@ -300,6 +308,13 @@ export async function saveScriptDocument(input: {
   const projectId = z.string().min(1).parse(input.projectId);
   const expectedRevision = z.number().int().nonnegative().parse(input.expectedRevision);
   const document = parseScriptDocument(input.document);
+  const project = unwrapOpt(
+    await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle(),
+  ) as ScriptProjectRow | null;
+  if (!project) throw new Error("Script project not found.");
+  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
+    throw new Error("This script is frozen for the editor. Request changes before editing the handed-off version.");
+  }
   const now = new Date().toISOString();
   const nextRevision = expectedRevision + 1;
 
@@ -328,6 +343,9 @@ export async function snapshotScriptProject(input: { projectId: string; changeSu
   const changeSummary = z.string().trim().min(2).max(240).parse(input.changeSummary);
   const project = unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()) as ScriptProjectRow | null;
   if (!project) throw new Error("Script project not found.");
+  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
+    throw new Error("This script is frozen for the editor. Request changes before creating another version.");
+  }
   const version = project.currentVersion + 1;
   const now = new Date().toISOString();
 
@@ -339,6 +357,107 @@ export async function snapshotScriptProject(input: { projectId: string; changeSu
   if (error) throw new Error(error.message);
   revalidatePath(`/scripts/${projectId}`);
   return { version };
+}
+
+export async function sendScriptProjectToEditor(input: {
+  projectId: string;
+  expectedRevision: number;
+  document: z.infer<typeof ScriptDocumentSchema>;
+}): Promise<{ revision: number; version: number; status: "ready" }> {
+  const actor = await requireStrategist();
+  const projectId = z.string().min(1).parse(input.projectId);
+  const expectedRevision = z.number().int().nonnegative().parse(input.expectedRevision);
+  const document = parseScriptDocument(input.document);
+  const [projectRaw, assignmentRaw] = await Promise.all([
+    unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()),
+    unwrapOpt(await supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle()),
+  ]);
+  const project = projectRaw as ScriptProjectRow | null;
+  const assignment = assignmentRaw as ScriptAssignmentRow | null;
+  if (!project) throw new Error("Script project not found.");
+  if (project.revision !== expectedRevision) throw new Error("This script changed in another session. Reload before sending it.");
+  if (!canSendScript(normalizeScriptWorkflowStatus(project.status, assignment?.status))) {
+    throw new Error("This script has already moved to the editor workflow.");
+  }
+  if (document.product.id !== project.productId || document.angle.id !== project.angleId) {
+    throw new Error("The open document does not match this script project. Reload and try again.");
+  }
+  const blockingIssues = inspectScriptQuality(document).filter((issue) => issue.severity === "error");
+  if (blockingIssues.length > 0) {
+    throw new Error(`Resolve the script's blocking claim check before sending: ${blockingIssues[0]?.message}`);
+  }
+
+  const now = new Date().toISOString();
+  const revision = expectedRevision + 1;
+  const version = project.currentVersion + 1;
+  const projectUpdate = {
+    document: asJson(document),
+    revision,
+    currentVersion: version,
+    status: "ready",
+    updatedAt: now,
+  };
+  let updated = await supabase
+    .from("ScriptProject")
+    .update(projectUpdate)
+    .eq("id", projectId)
+    .eq("revision", expectedRevision)
+    .select("id")
+    .maybeSingle();
+  if (updated.error && isStatusConstraintError(updated.error.message)) {
+    updated = await supabase
+      .from("ScriptProject")
+      .update({ ...projectUpdate, status: "review" })
+      .eq("id", projectId)
+      .eq("revision", expectedRevision)
+      .select("id")
+      .maybeSingle();
+  }
+  if (updated.error) throw new Error(updated.error.message);
+  if (!updated.data) throw new Error("This script changed in another session. Reload before sending it.");
+
+  unwrap(await supabase.from("ScriptVersion").insert({
+    id: newId(), projectId, version, document: asJson(document), origin: "assigned",
+    changeSummary: project.status === "changes_requested" ? "Updated script sent to editor" : "Script sent to editor",
+    createdByUserId: actor.id, createdAt: now,
+  }).select("id").single());
+
+  const assignmentValues = {
+    editorUserId: project.editorUserId,
+    status: "ready",
+    deliveryUrl: null,
+    reviewNote: null,
+    reviewedByUserId: null,
+    assignedAt: now,
+    claimedAt: null,
+    submittedAt: null,
+    reviewedAt: null,
+    updatedAt: now,
+  };
+  const legacyReadyStatus = project.editorUserId ? "assigned" : "available";
+  if (assignment) {
+    let assignmentUpdate = await supabase.from("ScriptAssignment").update(assignmentValues).eq("id", assignment.id);
+    if (assignmentUpdate.error && isStatusConstraintError(assignmentUpdate.error.message)) {
+      assignmentUpdate = await supabase.from("ScriptAssignment").update({ ...assignmentValues, status: legacyReadyStatus }).eq("id", assignment.id);
+    }
+    if (assignmentUpdate.error) throw new Error(assignmentUpdate.error.message);
+  } else {
+    const assignmentInsert = { id: newId(), projectId, ...assignmentValues, createdAt: now };
+    let assignmentCreate = await supabase.from("ScriptAssignment").insert(assignmentInsert);
+    if (assignmentCreate.error && isStatusConstraintError(assignmentCreate.error.message)) {
+      assignmentCreate = await supabase.from("ScriptAssignment").insert({ ...assignmentInsert, status: legacyReadyStatus });
+    }
+    if (assignmentCreate.error) throw new Error(assignmentCreate.error.message);
+  }
+
+  await supabase.from("ScriptEvent").insert({
+    id: newId(), projectId, actorUserId: actor.id, eventType: "ready_for_editor",
+    payload: asJson({ version, revision, editorUserId: project.editorUserId }), createdAt: now,
+  });
+  revalidatePath(`/scripts/${projectId}`);
+  revalidatePath("/scripts");
+  revalidatePath("/reviews");
+  return { revision, version, status: "ready" };
 }
 
 export async function claimScriptProject(projectIdInput: string): Promise<void> {
@@ -353,7 +472,9 @@ export async function claimScriptProject(projectIdInput: string): Promise<void> 
   if (!project || !assignment) throw new Error("Script assignment not found.");
   if (assignment.editorUserId && assignment.editorUserId !== editor.id) throw new Error("This script is assigned to another editor.");
   if (assignment.status === "claimed" && assignment.editorUserId === editor.id) return;
-  if (!['available', 'assigned'].includes(assignment.status)) throw new Error("This script cannot be claimed in its current state.");
+  if (!canClaimScript(normalizeScriptWorkflowStatus(project.status, assignment.status))) {
+    throw new Error("This script is not ready to be claimed.");
+  }
 
   const [productRaw, angleRaw, strategistRaw] = await Promise.all([
     unwrapOpt(await supabase.from("Product").select("*").eq("id", project.productId).maybeSingle()),
@@ -381,8 +502,11 @@ export async function claimScriptProject(projectIdInput: string): Promise<void> 
   }).eq("id", assignment.id).eq("status", assignment.status).select("id").maybeSingle();
   if (claimed.error) throw new Error(claimed.error.message);
   if (!claimed.data) throw new Error("Another editor claimed this script first.");
-  const { error } = await supabase.from("ScriptProject").update({ editorUserId: editor.id, status: "assigned", displayName, updatedAt: now }).eq("id", projectId);
-  if (error) throw new Error(error.message);
+  let projectClaim = await supabase.from("ScriptProject").update({ editorUserId: editor.id, status: "claimed", displayName, updatedAt: now }).eq("id", projectId);
+  if (projectClaim.error && isStatusConstraintError(projectClaim.error.message)) {
+    projectClaim = await supabase.from("ScriptProject").update({ editorUserId: editor.id, status: "assigned", displayName, updatedAt: now }).eq("id", projectId);
+  }
+  if (projectClaim.error) throw new Error(projectClaim.error.message);
   await supabase.from("ScriptEvent").insert({ id: newId(), projectId, actorUserId: editor.id, eventType: "editor_claimed", payload: {}, createdAt: now });
   revalidatePath("/reviews");
   revalidatePath("/scripts");
@@ -400,19 +524,14 @@ export async function submitScriptDelivery(projectIdInput: string, deliveryUrlIn
   const assignment = assignmentRaw as ScriptAssignmentRow | null;
   if (!project || !assignment) throw new Error("Script assignment not found.");
   if (assignment.editorUserId !== editor.id) throw new Error("This script is not assigned to you.");
-  if (!["assigned", "claimed", "changes_requested"].includes(assignment.status)) throw new Error("This script cannot be submitted in its current state.");
+  if (!["claimed", "changes_requested"].includes(assignment.status)) throw new Error("Claim this script before submitting a delivery.");
 
   const now = new Date().toISOString();
-  const version = project.currentVersion + 1;
-  unwrap(await supabase.from("ScriptVersion").insert({
-    id: newId(), projectId, version, document: project.document, origin: "submitted",
-    changeSummary: "Submitted to strategist", createdByUserId: editor.id, createdAt: now,
-  }).select("id").single());
   const assignmentUpdate = await supabase.from("ScriptAssignment").update({ deliveryUrl, status: "submitted", submittedAt: now, updatedAt: now }).eq("id", assignment.id);
   if (assignmentUpdate.error) throw new Error(assignmentUpdate.error.message);
-  const projectUpdate = await supabase.from("ScriptProject").update({ status: "submitted", currentVersion: version, updatedAt: now }).eq("id", projectId);
+  const projectUpdate = await supabase.from("ScriptProject").update({ status: "submitted", updatedAt: now }).eq("id", projectId);
   if (projectUpdate.error) throw new Error(projectUpdate.error.message);
-  await supabase.from("ScriptEvent").insert({ id: newId(), projectId, actorUserId: editor.id, eventType: "delivery_submitted", payload: asJson({ deliveryUrl, version }), createdAt: now });
+  await supabase.from("ScriptEvent").insert({ id: newId(), projectId, actorUserId: editor.id, eventType: "delivery_submitted", payload: asJson({ deliveryUrl, handoffVersion: project.currentVersion }), createdAt: now });
   revalidatePath("/reviews");
   revalidatePath(`/scripts/${projectId}`);
   revalidatePath("/scripts");

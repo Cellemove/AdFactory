@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildScriptDisplayName, createInitialScriptDocument, inspectScriptQuality, renderScriptDownload, scriptDownloadFilename } from "./script-studio";
+import { canClaimScript, canEditScript, canSendScript, normalizeScriptWorkflowStatus } from "./script-workflow";
 
 test("builds the agreed stable naming convention", () => {
   assert.equal(
@@ -57,4 +58,17 @@ test("renders a readable production handoff with timing, B-roll, and sources", (
   assert.match(handoff, /Product close-up — https:\/\/example\.com\/clip/);
   assert.match(handoff, /Product research — https:\/\/example\.com\/research/);
   assert.equal(scriptDownloadFilename(document), "Vacation-Test-V1-V1-script.txt");
+});
+
+test("normalizes the explicit editor handoff lifecycle", () => {
+  assert.equal(normalizeScriptWorkflowStatus("draft", null), "draft");
+  assert.equal(normalizeScriptWorkflowStatus("review", "assigned"), "ready");
+  assert.equal(normalizeScriptWorkflowStatus("assigned", "claimed"), "claimed");
+  assert.equal(normalizeScriptWorkflowStatus("submitted", "submitted"), "submitted");
+  assert.equal(normalizeScriptWorkflowStatus("changes_requested", "changes_requested"), "changes_requested");
+  assert.equal(normalizeScriptWorkflowStatus("approved", "approved"), "approved");
+  assert.equal(canEditScript("draft"), true);
+  assert.equal(canEditScript("ready"), false);
+  assert.equal(canSendScript("changes_requested"), true);
+  assert.equal(canClaimScript("ready"), true);
 });
