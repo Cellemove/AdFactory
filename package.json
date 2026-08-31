@@ -12,6 +12,9 @@
     "test:teardown": "tsx --test src/lib/cellumove/teardown-brief.test.ts",
     "test:script-generation": "tsx --test src/lib/cellumove/script-generation.test.ts",
     "test:product-overrides": "tsx --test src/lib/product-overrides.test.ts",
+    "test:research-architecture": "tsx --test src/lib/cellumove/research-architecture.test.ts",
+    "test:verified-verbatims": "tsx --test src/lib/cellumove/verified-verbatims.test.ts",
+    "verbatims:rebuild-verified": "tsx --env-file=.env scripts/rebuild-verified-verbatims.ts",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
     "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts"
   },

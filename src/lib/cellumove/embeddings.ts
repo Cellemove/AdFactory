@@ -12,7 +12,7 @@ import { getLLM, isLLMConfigured } from "@/lib/llm";
 import { filterNovel } from "./novelty";
 
 // Vertex text-embedding model. Overridable; text-embedding-004 is broadly available.
-const EMBED_MODEL = process.env.EMBED_MODEL?.trim() || "text-embedding-004";
+export const EMBED_MODEL = process.env.EMBED_MODEL?.trim() || "text-embedding-004";
 const SIM_THRESHOLD = 0.9; // cosine >= this ⇒ semantic near-duplicate
 
 /** Embed texts (batched, order-preserving). null on any failure — caller fails soft. */

@@ -188,6 +188,7 @@ export async function generateResourceGroundedScript(input: {
             .from("Verbatim")
             .select("*")
             .eq("subAvatarId", input.avatar.id)
+            .like("researchId", "verified:%")
             .order("sourceWeight", { ascending: false })
             .order("engagementScore", { ascending: false })
             .limit(24),
@@ -199,6 +200,7 @@ export async function generateResourceGroundedScript(input: {
         .from("Verbatim")
         .select("*")
         .eq("angleSlug", input.angle.slug)
+        .like("researchId", "verified:%")
         .order("sourceWeight", { ascending: false })
         .order("engagementScore", { ascending: false })
         .limit(24),
