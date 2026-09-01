@@ -97,138 +97,6 @@ function secondsFromBeat(beat: ReferenceFormatBeat, fallback: number): number {
   return fallback;
 }
 
-const TARGET_SECONDS_PER_BEAT = 8;
-
-const DURATION_EXPANSION_BEATS: Array<Pick<ScriptModule, "kind" | "label" | "visualDirection">> = [
-  {
-    kind: "agitation",
-    label: "Stakes & Daily Impact",
-    visualDirection: "Show a specific everyday moment where the problem becomes frustrating or emotionally costly.",
-  },
-  {
-    kind: "solution",
-    label: "How It Works",
-    visualDirection: "Demonstrate the product mechanism clearly with a close-up, comparison, or step-by-step product moment.",
-  },
-  {
-    kind: "proof",
-    label: "Proof & Demonstration",
-    visualDirection: "Show the strongest supportable proof, product detail, result, or real-use demonstration available in the resources.",
-  },
-  {
-    kind: "proof",
-    label: "Objection Handler",
-    visualDirection: "Address the audience's most likely hesitation with a concrete visual answer and grounded reassurance.",
-  },
-  {
-    kind: "solution",
-    label: "Product Experience",
-    visualDirection: "Show how the product looks, feels, fits, or is used in a believable day-to-day setting.",
-  },
-  {
-    kind: "offer",
-    label: "Offer & Options",
-    visualDirection: "Present only verified product options or offer details, then transition naturally toward the next step.",
-  },
-  {
-    kind: "custom",
-    label: "Emotional Payoff",
-    visualDirection: "Return to the desired outcome and show the audience's believable emotional change after using the product.",
-  },
-  {
-    kind: "custom",
-    label: "Key Takeaway",
-    visualDirection: "Recap the clearest product benefit in a fresh visual before the final call to action.",
-  },
-];
-
-function nextModuleId(modules: ScriptModule[]): string {
-  const usedIds = new Set(modules.map((module) => module.id));
-  let index = modules.length + 1;
-  while (usedIds.has(`module-${index}`)) index += 1;
-  return `module-${index}`;
-}
-
-function allocateExactDuration(modules: ScriptModule[], targetDurationSec: number): ScriptModule[] {
-  const currentDuration = modules.reduce((sum, module) => sum + module.durationSec, 0);
-  if (currentDuration === targetDurationSec) return modules;
-
-  const lockedDuration = modules.reduce((sum, module) => sum + (module.locked ? module.durationSec : 0), 0);
-  const editable = modules.map((module, index) => ({ module, index })).filter(({ module }) => !module.locked);
-  if (!editable.length) return modules;
-
-  const available = Math.round(targetDurationSec - lockedDuration);
-  if (available < editable.length) {
-    return modules.map((module) => module.locked ? module : { ...module, durationSec: 1 });
-  }
-
-  const remainingAfterMinimums = available - editable.length;
-  const totalWeight = editable.reduce((sum, { module }) => sum + Math.max(1, module.durationSec), 0);
-  const allocations = editable.map(({ module, index }) => {
-    const exactShare = remainingAfterMinimums * (Math.max(1, module.durationSec) / totalWeight);
-    return {
-      index,
-      durationSec: 1 + Math.floor(exactShare),
-      remainder: exactShare - Math.floor(exactShare),
-    };
-  });
-  let unallocated = available - allocations.reduce((sum, allocation) => sum + allocation.durationSec, 0);
-  allocations
-    .slice()
-    .sort((a, b) => b.remainder - a.remainder || a.index - b.index)
-    .forEach((allocation) => {
-      if (unallocated <= 0) return;
-      const original = allocations.find((candidate) => candidate.index === allocation.index);
-      if (original) original.durationSec += 1;
-      unallocated -= 1;
-    });
-  const durationByIndex = new Map(allocations.map((allocation) => [allocation.index, allocation.durationSec]));
-  return modules.map((module, index) => module.locked
-    ? module
-    : { ...module, durationSec: durationByIndex.get(index) ?? module.durationSec });
-}
-
-/**
- * Expands short framework outlines into a production-ready beat plan and makes
- * the editable timing total exactly match the requested duration.
- */
-export function ensureScriptDurationPlan(document: ScriptDocument): ScriptDocument {
-  const parsed = ScriptDocumentSchema.parse(document);
-  const minimumBeatCount = Math.max(parsed.modules.length, Math.ceil(parsed.targetDurationSec / TARGET_SECONDS_PER_BEAT));
-  const modules = parsed.modules.map((module) => ({ ...module }));
-  const firstCtaIndex = modules.findIndex((module) => module.kind === "cta");
-  const insertionIndex = firstCtaIndex >= 0 ? firstCtaIndex : modules.length;
-  const labels = new Set(modules.map((module) => module.label.toLocaleLowerCase()));
-  let expansionIndex = 0;
-
-  while (modules.length < minimumBeatCount) {
-    const template = DURATION_EXPANSION_BEATS[expansionIndex % DURATION_EXPANSION_BEATS.length]!;
-    const cycle = Math.floor(expansionIndex / DURATION_EXPANSION_BEATS.length) + 1;
-    const baseLabel = template.label;
-    const label = labels.has(baseLabel.toLocaleLowerCase()) || cycle > 1 ? `${baseLabel} ${cycle + 1}` : baseLabel;
-    const expandedBeat: ScriptModule = {
-      id: nextModuleId(modules),
-      kind: template.kind,
-      label,
-      durationSec: TARGET_SECONDS_PER_BEAT,
-      spokenText: "",
-      onScreenText: "",
-      visualDirection: template.visualDirection,
-      brollRefs: [],
-      locked: false,
-      claimFlags: [],
-    };
-    modules.splice(insertionIndex + expansionIndex, 0, expandedBeat);
-    labels.add(label.toLocaleLowerCase());
-    expansionIndex += 1;
-  }
-
-  return ScriptDocumentSchema.parse({
-    ...parsed,
-    modules: allocateExactDuration(modules, parsed.targetDurationSec),
-  });
-}
-
 export function createInitialScriptDocument(input: {
   title: string;
   product: { id: string; name: string; code: string };
@@ -283,7 +151,7 @@ export function createInitialScriptDocument(input: {
     });
   }
 
-  return ensureScriptDurationPlan(ScriptDocumentSchema.parse({
+  return ScriptDocumentSchema.parse({
     schemaVersion: 1,
     title: input.title,
     product: input.product,
@@ -300,7 +168,7 @@ export function createInitialScriptDocument(input: {
     })),
     selectedHookId: null,
     modules,
-  }));
+  });
 }
 
 function namingPart(value: string, fallback: string): string {

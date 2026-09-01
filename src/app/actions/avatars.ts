@@ -41,7 +41,6 @@ export async function createSubAvatar(input: z.infer<typeof CreateSubAvatarSchem
     .single();
   const created = unwrap(res);
   revalidatePath("/avatars");
-  revalidatePath("/scripts/new");
   return created;
 }
 

@@ -11,7 +11,6 @@
     "test:script-studio": "tsx --test src/lib/cellumove/script-studio.test.ts",
     "test:teardown": "tsx --test src/lib/cellumove/teardown-brief.test.ts",
     "test:script-generation": "tsx --test src/lib/cellumove/script-generation.test.ts",
-    "test:script-rag": "tsx --test src/lib/cellumove/script-rag.test.ts",
     "test:product-overrides": "tsx --test src/lib/product-overrides.test.ts",
     "test:research-architecture": "tsx --test src/lib/cellumove/research-architecture.test.ts",
     "test:verified-verbatims": "tsx --test src/lib/cellumove/verified-verbatims.test.ts",

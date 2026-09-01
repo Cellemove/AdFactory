@@ -7,7 +7,6 @@ import { normalizeScriptWorkflowStatus, SCRIPT_STATUS_META } from "@/lib/cellumo
 import type { ScriptAssignmentRow, ScriptProjectRow } from "@/lib/database.types";
 import { supabase, unwrapOpt } from "@/lib/db";
 import { ScriptStudioClient } from "./ScriptStudioClient";
-import { AssignEditorControl } from "../AssignEditorControl";
 
 export const metadata: Metadata = { title: "Script Editor · AdFactory" };
 export const dynamic = "force-dynamic";
@@ -28,7 +27,6 @@ export default async function ScriptDetailPage({ params }: { params: Promise<{ i
   const users = strategistRes.data ?? [];
   const strategist = users.find((user) => user.id === project.strategistUserId);
   const editor = users.find((user) => user.id === project.editorUserId);
-  const editors = users.filter((user) => user.role === "editor").map((user) => ({ id: user.id, username: user.username }));
   const document = parseScriptDocument(project.document);
   const assignment = editorRes.data as ScriptAssignmentRow | null;
   const workflowStatus = normalizeScriptWorkflowStatus(project.status, assignment?.status);
@@ -43,7 +41,7 @@ export default async function ScriptDetailPage({ params }: { params: Promise<{ i
             <div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-semibold tracking-tight">{project.title}</h1><span className={statusMeta.className}>{statusMeta.label}</span></div>
             <p className="mt-1 break-all font-mono text-xs text-ink-500">{project.displayName}</p>
           </div>
-          <div className="space-y-2 text-right text-xs text-ink-500"><div>Owner: @{strategist?.username ?? "unknown"}</div>{editor ? <div>Editor: @{editor.username}</div> : <div className="space-y-1"><div>Editor: Unassigned</div><AssignEditorControl projectId={project.id} editors={editors} /></div>}<div>Version {project.currentVersion} · revision {project.revision}</div></div>
+          <div className="text-right text-xs text-ink-500"><div>Owner: @{strategist?.username ?? "unknown"}</div><div>Editor: {editor ? `@${editor.username}` : "Unassigned"}</div><div>Version {project.currentVersion} · revision {project.revision}</div></div>
         </div>
       </header>
 

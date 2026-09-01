@@ -4,7 +4,6 @@ import { requireStrategist } from "@/lib/authorization";
 import { normalizeScriptWorkflowStatus, SCRIPT_STATUS_META } from "@/lib/cellumove/script-workflow";
 import type { AppUserRow, ProductRow, ScriptAssignmentRow, ScriptProjectRow } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
-import { AssignEditorControl } from "./AssignEditorControl";
 
 export const metadata: Metadata = { title: "Script Studio · AdFactory" };
 export const dynamic = "force-dynamic";
@@ -44,7 +43,6 @@ export default async function ScriptsPage() {
   const assignments = (assignmentsRes.data ?? []) as ScriptAssignmentRow[];
   const userById = new Map(users.map((user) => [user.id, user]));
   const productById = new Map(products.map((product) => [product.id, product]));
-  const editors = users.filter((user) => user.role === "editor").map((user) => ({ id: user.id, username: user.username }));
   const assigned = projects.filter((project) => Boolean(project.editorUserId)).length;
   const approved = projects.filter((project) => project.status === "approved").length;
 
@@ -85,7 +83,7 @@ export default async function ScriptsPage() {
                     <td className="px-4 py-3"><Link href={`/scripts/${project.id}`} className="font-medium hover:underline">{project.title}</Link><div className="mt-0.5 max-w-lg truncate font-mono text-[10px] text-ink-400">{project.displayName}</div></td>
                     <td className="px-4 py-3 text-ink-600">{productById.get(project.productId)?.name ?? "—"}</td>
                     <td className="px-4 py-3 text-ink-600">@{userById.get(project.strategistUserId)?.username ?? "unknown"}</td>
-                    <td className="px-4 py-3 text-ink-600">{project.editorUserId ? `@${userById.get(project.editorUserId)?.username ?? "unknown"}` : <AssignEditorControl projectId={project.id} editors={editors} compact />}</td>
+                    <td className="px-4 py-3 text-ink-600">{project.editorUserId ? `@${userById.get(project.editorUserId)?.username ?? "unknown"}` : "Unassigned"}</td>
                     <td className="px-4 py-3"><span className={STATUS_STYLE[project.status] ?? "tag"}>{project.status.replaceAll("_", " ")}</span></td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-ink-500">{new Date(project.updatedAt).toLocaleDateString()}</td>
                   </tr>;
