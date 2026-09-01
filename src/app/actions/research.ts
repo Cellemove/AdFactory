@@ -13,6 +13,22 @@ import { subredditsForAngle, renderSubredditBlock } from "@/lib/cellumove/subred
 import { exclusionBlock } from "@/lib/cellumove/novelty";
 import { priorExcavationItems } from "@/lib/cellumove/novelty-sources";
 import { dedupeNovel } from "@/lib/cellumove/embeddings";
+import {
+  deterministicResearchId,
+  evaluateResearchQuality,
+  normalizeEvidenceClaims,
+  type ResearchEvidenceClaim,
+  type ResearchQualityReport,
+  type ResearchQueryPlan,
+  type ResearchType,
+} from "@/lib/cellumove/research-evidence";
+import { planResearchQueries, queryPlanQueries, renderResearchQueryPlan } from "@/lib/cellumove/research-planner.server";
+import {
+  persistResearchLedger,
+  renderRetrievedResearchEvidence,
+  retrieveResearchEvidence,
+  type LedgerDraft,
+} from "@/lib/cellumove/research-ledger.server";
 import type { SopRow } from "@/lib/database.types";
 
 // The deep-dive section spec + quality bar the sub-avatar researcher follows.
@@ -92,6 +108,87 @@ export interface ResearchedAvatarDraft {
   profile?: AvatarProfile | null;
   // Anti-hallucination check: source liveness + verbatim provenance (best-effort).
   verification?: DraftVerification | null;
+  evidence?: ResearchEvidenceClaim[];
+  quality?: ResearchQualityReport;
+  researchId?: string;
+  draftKey?: string;
+}
+
+interface EvidenceAwareDraft {
+  sources: string[];
+  evidence?: ResearchEvidenceClaim[];
+  profile?: AvatarProfile | null;
+  verification?: DraftVerification | null;
+  quality?: ResearchQualityReport;
+  researchId?: string;
+  draftKey?: string;
+}
+
+async function finalizeEvidenceDrafts<T extends EvidenceAwareDraft>(input: {
+  type: ResearchType;
+  researchId: string;
+  drafts: T[];
+  labelOf: (draft: T) => string;
+}): Promise<T[]> {
+  return Promise.all(input.drafts.map(async (draft, index) => {
+    const draftKey = deterministicResearchId(input.type, input.researchId, String(index), input.labelOf(draft));
+    let verification: DraftVerification;
+    try {
+      verification = await verifyDraft({ sources: draft.sources, profile: draft.profile, evidence: draft.evidence });
+    } catch {
+      verification = {
+        checkedAt: new Date().toISOString(),
+        sources: draft.sources.map((url) => ({ url, canonicalUrl: null, domain: "", sourceType: "unknown", ok: false, status: 0, excerpt: "", contentHash: null })),
+        sourcesOk: 0,
+        sourcesTotal: draft.sources.length,
+        verbatims: [],
+        verbatimsVerified: 0,
+        verbatimsTotal: 0,
+        evidence: normalizeEvidenceClaims(draft.evidence),
+      };
+    }
+    const evidence = verification.evidence;
+    const quality = evaluateResearchQuality({ type: input.type, sources: verification.sources, evidence });
+    return { ...draft, evidence, verification, quality, researchId: input.researchId, draftKey };
+  }));
+}
+
+async function persistEvidenceResearchRun(input: {
+  researchId: string;
+  type: ResearchType;
+  angleSlug: string | null;
+  focus: string | null;
+  queryPlan: ResearchQueryPlan;
+  drafts: EvidenceAwareDraft[];
+}): Promise<void> {
+  const inserted = await supabase.from("Research").insert({
+    id: input.researchId,
+    type: input.type,
+    angleSlug: input.angleSlug,
+    focus: input.focus,
+    drafts: JSON.stringify(input.drafts),
+    status: "pending",
+    notes: "Evidence-first research v1. Apply migration 011 to enable the reusable ledger and feedback tables.",
+    createdAt: new Date().toISOString(),
+  });
+  if (inserted.error) throw new Error(inserted.error.message);
+  await persistResearchLedger({
+    researchId: input.researchId,
+    type: input.type,
+    queryPlan: input.queryPlan,
+    drafts: input.drafts.map((draft): LedgerDraft => ({
+      draftKey: draft.draftKey!,
+      evidence: draft.evidence ?? [],
+      verification: draft.verification ?? null,
+      quality: draft.quality!,
+    })),
+  });
+}
+
+function assertResearchQuality(quality: ResearchQualityReport | undefined, overrideQuality: boolean): void {
+  if (quality?.status === "reject" && !overrideQuality) {
+    throw new Error(`This draft failed the evidence quality gate (${quality.score}/100). Review its blockers or choose Save anyway.`);
+  }
 }
 
 const SYSTEM_PROMPT = [
@@ -140,10 +237,13 @@ const SYSTEM_PROMPT = [
       "dailyLanguage": "newline-separated phrases they actually use",
       "triggers": "newline-separated buying-trigger moments",
       "identity": "1-2 sentences on how they see themselves",
-      "socialProof": "what proof would land — peer testimonials, doctor mentions, before/afters, etc.",
-      "buyingContext": "where, when, how they shop for this",
-      "sources": ["https://reddit.com/...", "https://quora.com/...", "https://..."],
-      "profile": { "...": "the structured deep dive — see PROFILE OBJECT below" }
+       "socialProof": "what proof would land — peer testimonials, doctor mentions, before/afters, etc.",
+       "buyingContext": "where, when, how they shop for this",
+       "sources": ["https://reddit.com/...", "https://quora.com/...", "https://..."],
+       "evidence": [
+         { "category": "pain|desire|objection|trigger|identity|failed_solution|mechanism", "type": "verbatim|claim|inference", "text": "one atomic quote, fact, or explicitly labelled inference", "sourceUrl": "exact page URL; omit only for inference", "sourceTitle": "page/thread title" }
+       ],
+       "profile": { "...": "the structured deep dive — see PROFILE OBJECT below" }
     }
   ]
 }`,
@@ -169,6 +269,7 @@ const SYSTEM_PROMPT = [
   "  identification: { selfImageToPortray, whereTheyWantToBe, whatTheyWantToFeel, whatTheyWantToLookLike }",
   "  buyerPsychology: { buyerVsUser, buyingEmotions:{fear,guilt,pride,shame,trust,excitement} (each 0-10),",
   "    painDesireRatio:{painPct,desirePct,copyImplication}, purchaseHesitation, counterStrategy }",
+  "Include at least 5 atomic evidence items per draft. A verbatim must be copied exactly and point to the exact page where it appears. Claims must point to a supporting page. Uncited synthesis must use type=inference.",
 ].join("\n");
 
 function extractJson(text: string): { drafts: ResearchedAvatarDraft[] } {
@@ -223,6 +324,12 @@ export async function researchSubAvatars(
   if (!angle) throw new Error(`Unknown angle: ${angleSlug}`);
 
   const llm = getLLM();
+  const queryPlan = await planResearchQueries({
+    type: "sub_avatar",
+    angle: angle.name,
+    mechanism: angle.mechanism,
+    focus,
+  });
   const subs = subredditsForAngle({
     slug: angle.slug,
     name: angle.name,
@@ -230,14 +337,9 @@ export async function researchSubAvatars(
     requiredKeyword: angle.requiredKeyword,
     focus,
   });
-  const [reddit, deepDive, existingItems] = await Promise.all([
+  const [reddit, deepDive, existingItems, retrievedEvidence] = await Promise.all([
     gatherRedditVerbatims(
-      [
-        focus || angle.name,
-        `${angle.requiredKeyword} ${angle.name}`,
-        `${angle.name} what helps`,
-        `${angle.requiredKeyword} tried everything`,
-      ].filter(Boolean),
+      queryPlanQueries(queryPlan, 4),
       { subreddits: subs },
     ),
     loadDeepDiveTemplate(),
@@ -246,6 +348,7 @@ export async function researchSubAvatars(
     Promise.all([existingAvatarItems(angleSlug), priorExcavationItems(angleSlug)]).then(
       ([owned, excav]) => Array.from(new Set([...owned, ...excav])),
     ),
+    retrieveResearchEvidence({ query: queryPlan.brief, angleSlug, topK: 8 }),
   ]);
   // The deep-dive template is the depth + quality bar. Even though this call still
   // emits the flat draft shape (the structured profile lands in a later step), the
@@ -271,6 +374,7 @@ export async function researchSubAvatars(
       : "",
     "",
     "Search the web. Find what people actually say about this angle's pain points, desires, and triggers — in their own words.",
+    renderResearchQueryPlan(queryPlan),
     "Synthesize 3-4 distinct sub-avatar candidates. Distinct = different stages/contexts/triggers, not variants of one person.",
     "NOVELTY IS REQUIRED: every candidate must be genuinely different from the avatars in the 'ALREADY OWN' list below and from each other. Do not reword or re-skin an existing one.",
     "FILL EVERY FIELD WITH REAL RESEARCHED CONTENT in the avatar's own words — NEVER copy the field's description text from the schema (e.g. do not output 'newline-separated bullets, real phrasing…' as a value).",
@@ -282,6 +386,7 @@ export async function researchSubAvatars(
     ),
     renderSubredditBlock(subs),
     redditBlock(reddit),
+    renderRetrievedResearchEvidence(retrievedEvidence),
   ]
     .filter(Boolean)
     .join("\n");
@@ -321,6 +426,7 @@ export async function researchSubAvatars(
     socialProof: d.socialProof ?? "",
     buyingContext: d.buyingContext ?? "",
     sources: Array.isArray(d.sources) ? d.sources.filter((s) => typeof s === "string") : [],
+    evidence: normalizeEvidenceClaims((d as { evidence?: unknown }).evidence),
     // Loosely parse the structured profile; null when absent or unusable.
     profile: parseAvatarProfile((d as { profile?: unknown }).profile),
     verification: null as DraftVerification | null,
@@ -328,34 +434,19 @@ export async function researchSubAvatars(
 
   // Novelty gate (lexical + semantic): drop candidates that repeat an existing
   // avatar or each other. Keeps originals if it would empty the list.
-  const finalDrafts = await dedupeNovel(
+  const novelDrafts = await dedupeNovel(
     normalized,
     existingItems,
     (d) => `${d.name} ${d.shortDesc} ${d.painPoints}`,
   );
-
-  // Anti-hallucination pass: fetch each cited source and check verbatims against
-  // the real page text. Fail-soft — if verification errors, drafts still return.
-  await Promise.all(
-    finalDrafts.map(async (d) => {
-      try {
-        d.verification = await verifyDraft({ sources: d.sources, profile: d.profile });
-      } catch {
-        d.verification = null;
-      }
-    }),
-  );
-
-  // Persist the research session so the /research page can list past sessions.
-  await supabase.from("Research").insert({
-    id: newId(),
+  const researchId = newId();
+  const finalDrafts = await finalizeEvidenceDrafts({
     type: "sub_avatar",
-    angleSlug,
-    focus: focus ?? null,
-    drafts: JSON.stringify(finalDrafts),
-    status: "pending",
-    createdAt: new Date().toISOString(),
+    researchId,
+    drafts: novelDrafts,
+    labelOf: (draft) => draft.name,
   });
+  await persistEvidenceResearchRun({ researchId, type: "sub_avatar", angleSlug, focus: focus ?? null, queryPlan, drafts: finalDrafts });
   revalidatePath("/research");
   return finalDrafts;
 }
@@ -370,6 +461,11 @@ export interface ResearchedAngleDraft {
   bannedMechanism: string;
   audienceNote: string;      // who this targets
   sources: string[];
+  evidence?: ResearchEvidenceClaim[];
+  verification?: DraftVerification | null;
+  quality?: ResearchQualityReport;
+  researchId?: string;
+  draftKey?: string;
 }
 
 const ANGLE_RESEARCH_SYSTEM_PROMPT = [
@@ -399,6 +495,7 @@ const ANGLE_RESEARCH_SYSTEM_PROMPT = [
   "",
   "Return 3-5 DISTINCT angle candidates. Distinct = different physiological mechanisms, different audiences, or different trigger contexts.",
   "Every angle must cite AT LEAST 3 sources, with at least 2 of them being real-people forum/community URLs (Reddit, Quora, Mumsnet, etc.). Meta Ads Library counts as supporting evidence but does NOT substitute for the forum sources.",
+  "Include at least 5 atomic evidence items per draft. Exact quotes use type=verbatim and must point to the exact page. Uncited synthesis must use type=inference.",
   "",
   "Return EXACTLY one JSON object — no prose, no markdown fences, no preamble:",
   `{
@@ -410,8 +507,11 @@ const ANGLE_RESEARCH_SYSTEM_PROMPT = [
       "mechanism": "the physiological / lifestyle mechanism this angle owns",
       "requiredKeyword": "1 word that MUST appear in every prompt for this angle",
       "bannedMechanism": "pipe|separated|mechanisms from other angles that would dilute this one",
-      "audienceNote": "1-sentence description of the target audience",
-      "sources": ["https://...", "https://..."]
+       "audienceNote": "1-sentence description of the target audience",
+       "sources": ["https://...", "https://..."],
+       "evidence": [
+         { "category": "pain|desire|trigger|mechanism|market_signal", "type": "verbatim|claim|inference", "text": "one atomic quote, fact, or explicitly labelled inference", "sourceUrl": "exact source URL; omit only for inference", "sourceTitle": "page/thread title" }
+       ]
     }
   ]
 }`,
@@ -419,19 +519,13 @@ const ANGLE_RESEARCH_SYSTEM_PROMPT = [
 
 export async function researchAngles(focus?: string | null): Promise<ResearchedAngleDraft[]> {
   const llm = getLLM();
+  const queryPlan = await planResearchQueries({ type: "angle", focus });
   // Open exploration with no focus casts across every cluster; a focus narrows it.
   const subs = subredditsForAngle({ focus });
-  const reddit = await gatherRedditVerbatims(
-    focus
-      ? [focus, `${focus} reddit`, `${focus} what helps`, `${focus} anyone else`]
-      : [
-          "compression leggings reddit",
-          "heavy legs swelling what helps",
-          "lipedema leggings",
-          "shapewear all day comfort reddit",
-        ],
-    { subreddits: subs },
-  );
+  const [reddit, retrievedEvidence] = await Promise.all([
+    gatherRedditVerbatims(queryPlanQueries(queryPlan, 4), { subreddits: subs }),
+    retrieveResearchEvidence({ query: queryPlan.brief, topK: 8 }),
+  ]);
   // Angles we already own — feed them in so the model proposes genuinely new ones.
   const existingAngleRows = ((await supabase.from("Angle").select("name, mechanism")).data ?? []) as {
     name: string;
@@ -444,6 +538,7 @@ export async function researchAngles(focus?: string | null): Promise<ResearchedA
     focus ? `FOCUS FROM USER: ${focus}` : "FOCUS: open exploration — surface any angle currently working.",
     "",
     "Search the web NOW. Find what is currently winning in the DTC compression / wellness / leggings ad space.",
+    renderResearchQueryPlan(queryPlan),
     "Propose 3-5 distinct angle candidates following the schema in the system prompt.",
     "NOVELTY IS REQUIRED: every angle must be genuinely different from the ones we already own (below) and from each other — a different mechanism, audience, or trigger. Do not reword an existing angle.",
     "Return ONLY the JSON object described in the system prompt.",
@@ -454,6 +549,7 @@ export async function researchAngles(focus?: string | null): Promise<ResearchedA
     ),
     renderSubredditBlock(subs),
     redditBlock(reddit),
+    renderRetrievedResearchEvidence(retrievedEvidence),
   ].filter(Boolean).join("\n");
 
   const resp = await llm.models.generateContent({
@@ -495,28 +591,29 @@ export async function researchAngles(focus?: string | null): Promise<ResearchedA
     bannedMechanism: d.bannedMechanism ?? "",
     audienceNote: d.audienceNote ?? "",
     sources: Array.isArray(d.sources) ? d.sources.filter((s) => typeof s === "string") : [],
+    evidence: normalizeEvidenceClaims((d as { evidence?: unknown }).evidence),
   }));
   // Novelty gate (lexical + semantic) vs existing angles and each other.
-  const finalDrafts = await dedupeNovel(
+  const novelDrafts = await dedupeNovel(
     normalized,
     existingAngleItems,
     (d) => `${d.name} ${d.positioning} ${d.mechanism}`,
   );
-  await supabase.from("Research").insert({
-    id: newId(),
+  const researchId = newId();
+  const finalDrafts = await finalizeEvidenceDrafts({
     type: "angle",
-    angleSlug: null,
-    focus: focus ?? null,
-    drafts: JSON.stringify(finalDrafts),
-    status: "pending",
-    createdAt: new Date().toISOString(),
+    researchId,
+    drafts: novelDrafts,
+    labelOf: (draft) => draft.name,
   });
+  await persistEvidenceResearchRun({ researchId, type: "angle", angleSlug: null, focus: focus ?? null, queryPlan, drafts: finalDrafts });
   revalidatePath("/research");
   return finalDrafts;
 }
 
-export async function saveResearchedAngle(draft: ResearchedAngleDraft): Promise<{ angleId: string }> {
+export async function saveResearchedAngle(draft: ResearchedAngleDraft, overrideQuality = false): Promise<{ angleId: string }> {
   if (!draft.name?.trim()) throw new Error("Draft is missing a name.");
+  assertResearchQuality(draft.quality, overrideQuality);
   // Derive a unique slug.
   const base =
     draft.slug ||
@@ -561,6 +658,11 @@ export interface ResearchedConceptDraft {
   visualConcept: string;
   reasoning: string;       // why this concept is working now
   sources: string[];
+  evidence?: ResearchEvidenceClaim[];
+  verification?: DraftVerification | null;
+  quality?: ResearchQualityReport;
+  researchId?: string;
+  draftKey?: string;
 }
 
 const CONCEPT_RESEARCH_SYSTEM_PROMPT = [
@@ -594,6 +696,7 @@ const CONCEPT_RESEARCH_SYSTEM_PROMPT = [
   "Return 4-6 DISTINCT concepts. Distinct = different hook mechanics (question, transformation, social proof, identity, contrast, demo, etc.), different emotional entries, different visual setups.",
   "Every concept must cite AT LEAST 3 sources, mixing at least one real-ad URL (Meta Ads Library / TikTok / YouTube) AND at least one real-people URL (Reddit / Quora / forum).",
   "The hook copy you propose should echo phrasing you actually saw in the real-people sources — not generic marketing language.",
+  "Include at least 5 atomic evidence items per concept. Exact customer/ad quotes use type=verbatim and must point to the exact page. Uncited strategy must use type=inference.",
   "",
   "Return EXACTLY one JSON object — no prose, no markdown fences, no preamble:",
   `{
@@ -603,8 +706,11 @@ const CONCEPT_RESEARCH_SYSTEM_PROMPT = [
       "hook": "The opening idea / spike — one sentence",
       "headline": "Specific headline copy that goes with this concept",
       "visualConcept": "1-2 sentences describing what's on screen / in the image",
-      "reasoning": "1 sentence on why this is working now (what trend, what platform, what audience reaction)",
-      "sources": ["https://...", "https://..."]
+       "reasoning": "1 sentence on why this is working now (what trend, what platform, what audience reaction)",
+       "sources": ["https://...", "https://..."],
+       "evidence": [
+         { "category": "customer_language|ad_pattern|visual_pattern|objection|market_signal", "type": "verbatim|claim|inference", "text": "one atomic quote, observation, or explicitly labelled inference", "sourceUrl": "exact source URL; omit only for inference", "sourceTitle": "ad/page/thread title" }
+       ]
     }
   ]
 }`,
@@ -642,6 +748,12 @@ export async function researchConcepts(
   if (!angle) throw new Error(`Unknown angle: ${angleSlug}`);
 
   const llm = getLLM();
+  const queryPlan = await planResearchQueries({
+    type: "concept",
+    angle: angle.name,
+    mechanism: angle.mechanism,
+    focus,
+  });
   const subs = subredditsForAngle({
     slug: angle.slug,
     name: angle.name,
@@ -649,15 +761,10 @@ export async function researchConcepts(
     requiredKeyword: angle.requiredKeyword,
     focus,
   });
-  const reddit = await gatherRedditVerbatims(
-    [
-      focus || angle.name,
-      `${angle.name} finally`,
-      `${angle.requiredKeyword} anyone else`,
-      `${angle.name} what worked`,
-    ].filter(Boolean),
-    { subreddits: subs },
-  );
+  const [reddit, retrievedEvidence] = await Promise.all([
+    gatherRedditVerbatims(queryPlanQueries(queryPlan, 4), { subreddits: subs }),
+    retrieveResearchEvidence({ query: queryPlan.brief, angleSlug, topK: 8 }),
+  ]);
   // Hooks/headlines we already have — so the model finds fresh concepts.
   const [concRes, winRes] = await Promise.all([
     supabase.from("Research").select("drafts").eq("type", "concept").order("createdAt", { ascending: false }).limit(8),
@@ -682,6 +789,7 @@ export async function researchConcepts(
     focus ? `EXTRA FOCUS: ${focus}` : "",
     "",
     "Search the web NOW. Find specific ad concepts currently winning for this angle (hook + headline + visual).",
+    renderResearchQueryPlan(queryPlan),
     "Propose 4-6 distinct concepts following the schema in the system prompt.",
     "NOVELTY IS REQUIRED: every concept's hook + headline must be genuinely different from the ones we already have (below) and from each other. Do not reword an existing hook.",
     "Return ONLY the JSON object described in the system prompt.",
@@ -692,6 +800,7 @@ export async function researchConcepts(
     ),
     renderSubredditBlock(subs),
     redditBlock(reddit),
+    renderRetrievedResearchEvidence(retrievedEvidence),
   ].filter(Boolean).join("\n");
 
   const resp = await llm.models.generateContent({
@@ -731,18 +840,18 @@ export async function researchConcepts(
     visualConcept: d.visualConcept ?? "",
     reasoning: d.reasoning ?? "",
     sources: Array.isArray(d.sources) ? d.sources.filter((s) => typeof s === "string") : [],
+    evidence: normalizeEvidenceClaims((d as { evidence?: unknown }).evidence),
   }));
   // Novelty gate (lexical + semantic) vs existing hooks/headlines and each other.
-  const finalDrafts = await dedupeNovel(normalized, existingConceptItems, (d) => `${d.hook} ${d.headline}`);
-  await supabase.from("Research").insert({
-    id: newId(),
+  const novelDrafts = await dedupeNovel(normalized, existingConceptItems, (d) => `${d.hook} ${d.headline}`);
+  const researchId = newId();
+  const finalDrafts = await finalizeEvidenceDrafts({
     type: "concept",
-    angleSlug,
-    focus: focus ?? null,
-    drafts: JSON.stringify(finalDrafts),
-    status: "pending",
-    createdAt: new Date().toISOString(),
+    researchId,
+    drafts: novelDrafts,
+    labelOf: (draft) => `${draft.title} ${draft.hook}`,
   });
+  await persistEvidenceResearchRun({ researchId, type: "concept", angleSlug, focus: focus ?? null, queryPlan, drafts: finalDrafts });
   revalidatePath("/research");
   return finalDrafts;
 }
@@ -750,6 +859,7 @@ export async function researchConcepts(
 export async function saveResearchedSubAvatar(input: {
   angleSlug: string;
   draft: ResearchedAvatarDraft;
+  overrideQuality?: boolean;
 }): Promise<{ subAvatarId: string }> {
   const angle = unwrapOpt(
     await supabase.from("Angle").select("*").eq("slug", input.angleSlug).maybeSingle(),
@@ -758,6 +868,7 @@ export async function saveResearchedSubAvatar(input: {
 
   const d = input.draft;
   if (!d.name?.trim()) throw new Error("Draft is missing a name.");
+  assertResearchQuality(d.quality, Boolean(input.overrideQuality));
 
   const base = d.name
     .toLowerCase()

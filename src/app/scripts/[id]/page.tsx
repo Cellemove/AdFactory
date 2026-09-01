@@ -3,7 +3,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { requireStrategist } from "@/lib/authorization";
 import { parseScriptDocument } from "@/lib/cellumove/script-studio";
-import type { ScriptProjectRow } from "@/lib/database.types";
+import { normalizeScriptWorkflowStatus, SCRIPT_STATUS_META } from "@/lib/cellumove/script-workflow";
+import type { ScriptAssignmentRow, ScriptProjectRow } from "@/lib/database.types";
 import { supabase, unwrapOpt } from "@/lib/db";
 import { ScriptStudioClient } from "./ScriptStudioClient";
 import { AssignEditorControl } from "../AssignEditorControl";
@@ -29,6 +30,9 @@ export default async function ScriptDetailPage({ params }: { params: Promise<{ i
   const editor = users.find((user) => user.id === project.editorUserId);
   const editors = users.filter((user) => user.role === "editor").map((user) => ({ id: user.id, username: user.username }));
   const document = parseScriptDocument(project.document);
+  const assignment = editorRes.data as ScriptAssignmentRow | null;
+  const workflowStatus = normalizeScriptWorkflowStatus(project.status, assignment?.status);
+  const statusMeta = SCRIPT_STATUS_META[workflowStatus];
 
   return (
     <div className="space-y-5">
@@ -36,14 +40,14 @@ export default async function ScriptDetailPage({ params }: { params: Promise<{ i
         <Link href="/scripts" className="text-sm text-ink-500 hover:text-ink-900">← Script Studio</Link>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-semibold tracking-tight">{project.title}</h1><span className="tag">{project.status.replaceAll("_", " ")}</span></div>
+            <div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-semibold tracking-tight">{project.title}</h1><span className={statusMeta.className}>{statusMeta.label}</span></div>
             <p className="mt-1 break-all font-mono text-xs text-ink-500">{project.displayName}</p>
           </div>
           <div className="space-y-2 text-right text-xs text-ink-500"><div>Owner: @{strategist?.username ?? "unknown"}</div>{editor ? <div>Editor: @{editor.username}</div> : <div className="space-y-1"><div>Editor: Unassigned</div><AssignEditorControl projectId={project.id} editors={editors} /></div>}<div>Version {project.currentVersion} · revision {project.revision}</div></div>
         </div>
       </header>
 
-      <ScriptStudioClient projectId={project.id} initialDocument={document} initialRevision={project.revision} initialVersion={project.currentVersion} />
+      <ScriptStudioClient projectId={project.id} initialDocument={document} initialRevision={project.revision} initialVersion={project.currentVersion} initialStatus={workflowStatus} editorName={editor?.username ?? null} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="card"><h2 className="font-semibold">Sources</h2><div className="divider" />{(sourcesRes.data ?? []).length === 0 ? <p className="text-sm text-ink-500">No imported sources.</p> : <ul className="space-y-2 text-sm">{(sourcesRes.data ?? []).map((source) => <li key={source.id}><span className="tag mr-2">{source.sourceType}</span>{source.url ? <a className="hover:underline" href={source.url} target="_blank" rel="noreferrer">{source.title}</a> : source.title}</li>)}</ul>}</section>
