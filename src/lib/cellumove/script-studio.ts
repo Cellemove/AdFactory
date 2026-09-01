@@ -206,7 +206,7 @@ export function ensureScriptDurationPlan(document: ScriptDocument): ScriptDocume
     const cycle = Math.floor(expansionIndex / DURATION_EXPANSION_BEATS.length) + 1;
     const baseLabel = template.label;
     const label = labels.has(baseLabel.toLocaleLowerCase()) || cycle > 1 ? `${baseLabel} ${cycle + 1}` : baseLabel;
-    const module: ScriptModule = {
+    const expandedBeat: ScriptModule = {
       id: nextModuleId(modules),
       kind: template.kind,
       label,
@@ -218,7 +218,7 @@ export function ensureScriptDurationPlan(document: ScriptDocument): ScriptDocume
       locked: false,
       claimFlags: [],
     };
-    modules.splice(insertionIndex + expansionIndex, 0, module);
+    modules.splice(insertionIndex + expansionIndex, 0, expandedBeat);
     labels.add(label.toLocaleLowerCase());
     expansionIndex += 1;
   }
