@@ -217,9 +217,6 @@ export async function generateScriptProjectDraft(input: {
   ) as ScriptProjectRow | null;
   if (!project) throw new Error("Script project not found.");
   if (project.revision !== expectedRevision) throw new Error("This script changed in another session. Reload before generating again.");
-  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
-    throw new Error("This script is frozen for the editor. Request changes before editing the handed-off version.");
-  }
 
   const [productRaw, angleRaw, avatarRaw, frameworkRaw] = await Promise.all([
     unwrapOpt(await supabase.from("Product").select("*").eq("id", project.productId).maybeSingle()),
@@ -303,13 +300,6 @@ export async function saveScriptDocument(input: {
   const projectId = z.string().min(1).parse(input.projectId);
   const expectedRevision = z.number().int().nonnegative().parse(input.expectedRevision);
   const document = parseScriptDocument(input.document);
-  const project = unwrapOpt(
-    await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle(),
-  ) as ScriptProjectRow | null;
-  if (!project) throw new Error("Script project not found.");
-  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
-    throw new Error("This script is frozen for the editor. Request changes before editing the handed-off version.");
-  }
   const now = new Date().toISOString();
   const nextRevision = expectedRevision + 1;
 
@@ -338,9 +328,6 @@ export async function snapshotScriptProject(input: { projectId: string; changeSu
   const changeSummary = z.string().trim().min(2).max(240).parse(input.changeSummary);
   const project = unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()) as ScriptProjectRow | null;
   if (!project) throw new Error("Script project not found.");
-  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
-    throw new Error("This script is frozen for the editor. Request changes before creating another version.");
-  }
   const version = project.currentVersion + 1;
   const now = new Date().toISOString();
 
@@ -366,9 +353,7 @@ export async function claimScriptProject(projectIdInput: string): Promise<void> 
   if (!project || !assignment) throw new Error("Script assignment not found.");
   if (assignment.editorUserId && assignment.editorUserId !== editor.id) throw new Error("This script is assigned to another editor.");
   if (assignment.status === "claimed" && assignment.editorUserId === editor.id) return;
-  if (!canClaimScript(normalizeScriptWorkflowStatus(project.status, assignment.status))) {
-    throw new Error("This script is not ready to be claimed.");
-  }
+  if (!['available', 'assigned'].includes(assignment.status)) throw new Error("This script cannot be claimed in its current state.");
 
   const [productRaw, angleRaw, strategistRaw] = await Promise.all([
     unwrapOpt(await supabase.from("Product").select("*").eq("id", project.productId).maybeSingle()),
@@ -396,11 +381,8 @@ export async function claimScriptProject(projectIdInput: string): Promise<void> 
   }).eq("id", assignment.id).eq("status", assignment.status).select("id").maybeSingle();
   if (claimed.error) throw new Error(claimed.error.message);
   if (!claimed.data) throw new Error("Another editor claimed this script first.");
-  let projectClaim = await supabase.from("ScriptProject").update({ editorUserId: editor.id, status: "claimed", displayName, updatedAt: now }).eq("id", projectId);
-  if (projectClaim.error && isStatusConstraintError(projectClaim.error.message)) {
-    projectClaim = await supabase.from("ScriptProject").update({ editorUserId: editor.id, status: "assigned", displayName, updatedAt: now }).eq("id", projectId);
-  }
-  if (projectClaim.error) throw new Error(projectClaim.error.message);
+  const { error } = await supabase.from("ScriptProject").update({ editorUserId: editor.id, status: "assigned", displayName, updatedAt: now }).eq("id", projectId);
+  if (error) throw new Error(error.message);
   await supabase.from("ScriptEvent").insert({ id: newId(), projectId, actorUserId: editor.id, eventType: "editor_claimed", payload: {}, createdAt: now });
   revalidatePath("/reviews");
   revalidatePath("/scripts");
@@ -418,14 +400,19 @@ export async function submitScriptDelivery(projectIdInput: string, deliveryUrlIn
   const assignment = assignmentRaw as ScriptAssignmentRow | null;
   if (!project || !assignment) throw new Error("Script assignment not found.");
   if (assignment.editorUserId !== editor.id) throw new Error("This script is not assigned to you.");
-  if (!["claimed", "changes_requested"].includes(assignment.status)) throw new Error("Claim this script before submitting a delivery.");
+  if (!["assigned", "claimed", "changes_requested"].includes(assignment.status)) throw new Error("This script cannot be submitted in its current state.");
 
   const now = new Date().toISOString();
+  const version = project.currentVersion + 1;
+  unwrap(await supabase.from("ScriptVersion").insert({
+    id: newId(), projectId, version, document: project.document, origin: "submitted",
+    changeSummary: "Submitted to strategist", createdByUserId: editor.id, createdAt: now,
+  }).select("id").single());
   const assignmentUpdate = await supabase.from("ScriptAssignment").update({ deliveryUrl, status: "submitted", submittedAt: now, updatedAt: now }).eq("id", assignment.id);
   if (assignmentUpdate.error) throw new Error(assignmentUpdate.error.message);
-  const projectUpdate = await supabase.from("ScriptProject").update({ status: "submitted", updatedAt: now }).eq("id", projectId);
+  const projectUpdate = await supabase.from("ScriptProject").update({ status: "submitted", currentVersion: version, updatedAt: now }).eq("id", projectId);
   if (projectUpdate.error) throw new Error(projectUpdate.error.message);
-  await supabase.from("ScriptEvent").insert({ id: newId(), projectId, actorUserId: editor.id, eventType: "delivery_submitted", payload: asJson({ deliveryUrl, handoffVersion: project.currentVersion }), createdAt: now });
+  await supabase.from("ScriptEvent").insert({ id: newId(), projectId, actorUserId: editor.id, eventType: "delivery_submitted", payload: asJson({ deliveryUrl, version }), createdAt: now });
   revalidatePath("/reviews");
   revalidatePath(`/scripts/${projectId}`);
   revalidatePath("/scripts");

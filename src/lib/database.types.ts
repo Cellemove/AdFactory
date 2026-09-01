@@ -209,57 +209,6 @@ export type ResearchRow = {
   drafts: string;           // JSON-stringified draft array — shape depends on `type`
   status: string;           // 'pending' | 'saved' | 'discarded'
   notes: string | null;
-  queryPlan: Json | null;
-  qualityScore: number | null;
-  qualityStatus: string | null;
-  qualityReport: Json | null;
-  createdAt: string;
-};
-
-export type ResearchSourceRow = {
-  id: string;
-  researchId: string;
-  canonicalUrl: string;
-  domain: string;
-  sourceType: string;
-  title: string | null;
-  author: string | null;
-  publishedAt: string | null;
-  retrievedAt: string;
-  status: string;
-  httpStatus: number;
-  excerpt: string | null;
-  contentHash: string | null;
-  metadata: Json;
-};
-
-export type ResearchEvidenceRow = {
-  id: string;
-  researchId: string;
-  sourceId: string | null;
-  draftKey: string;
-  category: string;
-  evidenceType: string;
-  text: string;
-  normalizedText: string;
-  sourceUrl: string | null;
-  verificationStatus: string;
-  confidence: number;
-  contentHash: string;
-  embedding: string | null;
-  embeddingModel: string | null;
-  embeddingVersion: string;
-  metadata: Json;
-  createdAt: string;
-};
-
-export type ResearchFeedbackRow = {
-  id: string;
-  researchId: string;
-  draftKey: string;
-  evidenceId: string | null;
-  rating: string;
-  note: string | null;
   createdAt: string;
 };
 
@@ -498,13 +447,13 @@ export type Database = {
   public: {
     Tables: {
       Angle: { Row: AngleRow; Insert: Partial<AngleRow> & { slug: string; name: string; requiredKeyword: string; mechanism: string; bannedMechanism: string; silhouette: string; colorway: string }; Update: Partial<AngleRow>; Relationships: [] };
-      SubAvatar: { Row: SubAvatarRow; Insert: Partial<SubAvatarRow> & { angleId: string; slug: string; name: string }; Update: Partial<SubAvatarRow>; Relationships: [{ foreignKeyName: "SubAvatar_angleId_fkey"; columns: ["angleId"]; isOneToOne: false; referencedRelation: "Angle"; referencedColumns: ["id"] }] };
-      AvatarResearch: { Row: AvatarResearchRow; Insert: Partial<AvatarResearchRow> & { subAvatarId: string; painPoints: string; desires: string; objections: string; dailyLanguage: string; triggers: string; identity: string; socialProof: string; buyingContext: string }; Update: Partial<AvatarResearchRow>; Relationships: [{ foreignKeyName: "AvatarResearch_subAvatarId_fkey"; columns: ["subAvatarId"]; isOneToOne: true; referencedRelation: "SubAvatar"; referencedColumns: ["id"] }] };
-      WinningAd: { Row: WinningAdRow; Insert: Partial<WinningAdRow> & { angleId: string; adName: string; funnel: string; headline: string; visualConcept: string }; Update: Partial<WinningAdRow>; Relationships: [{ foreignKeyName: "WinningAd_angleId_fkey"; columns: ["angleId"]; isOneToOne: false; referencedRelation: "Angle"; referencedColumns: ["id"] }] };
+      SubAvatar: { Row: SubAvatarRow; Insert: Partial<SubAvatarRow> & { angleId: string; slug: string; name: string }; Update: Partial<SubAvatarRow>; Relationships: [] };
+      AvatarResearch: { Row: AvatarResearchRow; Insert: Partial<AvatarResearchRow> & { subAvatarId: string; painPoints: string; desires: string; objections: string; dailyLanguage: string; triggers: string; identity: string; socialProof: string; buyingContext: string }; Update: Partial<AvatarResearchRow>; Relationships: [] };
+      WinningAd: { Row: WinningAdRow; Insert: Partial<WinningAdRow> & { angleId: string; adName: string; funnel: string; headline: string; visualConcept: string }; Update: Partial<WinningAdRow>; Relationships: [] };
       BigSwing: { Row: BigSwingRow; Insert: Partial<BigSwingRow> & { slug: string; name: string; format: string; funnel: string; description: string; headlineOptions: string; visualSpec: string }; Update: Partial<BigSwingRow>; Relationships: [] };
-      Brief: { Row: BriefRow; Insert: Partial<BriefRow> & { angleId: string; lane: string; funnel: string; hook: string; exactHeadline: string; visualConcept: string }; Update: Partial<BriefRow>; Relationships: [{ foreignKeyName: "Brief_angleId_fkey"; columns: ["angleId"]; isOneToOne: false; referencedRelation: "Angle"; referencedColumns: ["id"] }, { foreignKeyName: "Brief_subAvatarId_fkey"; columns: ["subAvatarId"]; isOneToOne: false; referencedRelation: "SubAvatar"; referencedColumns: ["id"] }, { foreignKeyName: "Brief_parentWinnerId_fkey"; columns: ["parentWinnerId"]; isOneToOne: false; referencedRelation: "WinningAd"; referencedColumns: ["id"] }, { foreignKeyName: "Brief_bigSwingId_fkey"; columns: ["bigSwingId"]; isOneToOne: false; referencedRelation: "BigSwing"; referencedColumns: ["id"] }] };
-      Run: { Row: RunRow; Insert: Partial<RunRow> & { briefId: string; angleId: string }; Update: Partial<RunRow>; Relationships: [{ foreignKeyName: "Run_briefId_fkey"; columns: ["briefId"]; isOneToOne: false; referencedRelation: "Brief"; referencedColumns: ["id"] }, { foreignKeyName: "Run_angleId_fkey"; columns: ["angleId"]; isOneToOne: false; referencedRelation: "Angle"; referencedColumns: ["id"] }] };
-      Generation: { Row: GenerationRow; Insert: Partial<GenerationRow> & { runId: string; index: number; promptJson: string; promptText: string; level: string; hook: string; headlineRendered: string; complianceNotes: string }; Update: Partial<GenerationRow>; Relationships: [{ foreignKeyName: "Generation_runId_fkey"; columns: ["runId"]; isOneToOne: false; referencedRelation: "Run"; referencedColumns: ["id"] }] };
+      Brief: { Row: BriefRow; Insert: Partial<BriefRow> & { angleId: string; lane: string; funnel: string; hook: string; exactHeadline: string; visualConcept: string }; Update: Partial<BriefRow>; Relationships: [] };
+      Run: { Row: RunRow; Insert: Partial<RunRow> & { briefId: string; angleId: string }; Update: Partial<RunRow>; Relationships: [] };
+      Generation: { Row: GenerationRow; Insert: Partial<GenerationRow> & { runId: string; index: number; promptJson: string; promptText: string; level: string; hook: string; headlineRendered: string; complianceNotes: string }; Update: Partial<GenerationRow>; Relationships: [] };
       Iteration: { Row: IterationRow; Insert: Partial<IterationRow> & { iterationName: string; iterationNumber: number; level: string; editor: string; originalAdName: string; hookSlug: string }; Update: Partial<IterationRow>; Relationships: [] };
       PerformanceEntry: { Row: PerformanceEntryRow; Insert: Partial<PerformanceEntryRow> & { adName: string; spend: number }; Update: Partial<PerformanceEntryRow>; Relationships: [] };
       SwipeFile: { Row: SwipeFileRow; Insert: Partial<SwipeFileRow> & { title: string }; Update: Partial<SwipeFileRow>; Relationships: [] };
@@ -513,9 +462,6 @@ export type Database = {
       Product: { Row: ProductRow; Insert: Partial<ProductRow> & { name: string }; Update: Partial<ProductRow>; Relationships: [] };
       Settings: { Row: SettingsRow; Insert: Partial<SettingsRow>; Update: Partial<SettingsRow>; Relationships: [] };
       Research: { Row: ResearchRow; Insert: Partial<ResearchRow> & { type: string; drafts: string }; Update: Partial<ResearchRow>; Relationships: [] };
-      ResearchSource: { Row: ResearchSourceRow; Insert: Partial<ResearchSourceRow> & { id: string; researchId: string; canonicalUrl: string; domain: string; sourceType: string }; Update: Partial<ResearchSourceRow>; Relationships: [] };
-      ResearchEvidence: { Row: ResearchEvidenceRow; Insert: Partial<ResearchEvidenceRow> & { id: string; researchId: string; draftKey: string; category: string; evidenceType: string; text: string; normalizedText: string; verificationStatus: string; confidence: number; contentHash: string }; Update: Partial<ResearchEvidenceRow>; Relationships: [] };
-      ResearchFeedback: { Row: ResearchFeedbackRow; Insert: Partial<ResearchFeedbackRow> & { id: string; researchId: string; draftKey: string; rating: string }; Update: Partial<ResearchFeedbackRow>; Relationships: [] };
       Usage: { Row: UsageRow; Insert: Partial<UsageRow> & { feature: string; model: string }; Update: Partial<UsageRow>; Relationships: [] };
       Sop: { Row: SopRow; Insert: Partial<SopRow> & { slug: string; type: string; title: string; body: string; roleScope: string }; Update: Partial<SopRow>; Relationships: [] };
       ReferenceFormat: { Row: ReferenceFormatRow; Insert: Partial<ReferenceFormatRow> & { slug: string; name: string; description: string; beats: string }; Update: Partial<ReferenceFormatRow>; Relationships: [] };
@@ -532,12 +478,7 @@ export type Database = {
       ScriptEvent: { Row: ScriptEventRow; Insert: Partial<ScriptEventRow> & { id: string; projectId: string; eventType: string }; Update: Partial<ScriptEventRow>; Relationships: [] };
     };
     Views: Record<string, never>;
-    Functions: {
-      match_research_evidence: {
-        Args: { query_embedding: string; match_count?: number; filter_angle_slug?: string | null; filter_category?: string | null };
-        Returns: Array<Pick<ResearchEvidenceRow, "id" | "researchId" | "draftKey" | "category" | "text" | "sourceUrl" | "verificationStatus"> & { similarity: number }>;
-      };
-    };
+    Functions: Record<string, never>;
     Enums: Record<string, never>;
     CompositeTypes: Record<string, never>;
   };

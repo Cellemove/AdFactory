@@ -23,7 +23,6 @@ export default async function VerbatimsPage({
   let vbQuery = supabase
     .from("Verbatim")
     .select("*", { count: "exact" })
-    .like("researchId", "verified:%")
     .order("sourceWeight", { ascending: false })
     .order("id", { ascending: true })
     .range(from, from + PAGE_SIZE - 1);
@@ -33,7 +32,7 @@ export default async function VerbatimsPage({
   // Category-chip counts are scoped by the angle filter only (so the chips stay
   // useful while one of them is active).
   const catCount = (slug?: string) => {
-    let q = supabase.from("Verbatim").select("id", { head: true, count: "exact" }).like("researchId", "verified:%");
+    let q = supabase.from("Verbatim").select("id", { head: true, count: "exact" });
     if (angle) q = q.eq("angleSlug", angle);
     if (slug) q = q.eq("category", slug);
     return q;
@@ -68,8 +67,8 @@ export default async function VerbatimsPage({
         <header>
           <h1 className="text-2xl font-semibold tracking-tight">Verbatims</h1>
           <p className="text-sm text-ink-500">
-            Module 1 — verified customer voice collected directly from source APIs. Every usable quote has an
-            exact comment link and feeds avatars, deep dives, and the script pipeline.
+            Module 1 — the customer-voice corpus. Mine real comments, classified by category and weighted by
+            source &amp; engagement. Feeds avatars, deep dives, and the script pipeline.
           </p>
         </header>
       </section>

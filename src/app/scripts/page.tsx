@@ -1,20 +1,27 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireStrategist } from "@/lib/authorization";
-import { normalizeScriptWorkflowStatus, SCRIPT_STATUS_META } from "@/lib/cellumove/script-workflow";
-import type { AppUserRow, ProductRow, ScriptAssignmentRow, ScriptProjectRow } from "@/lib/database.types";
+import type { AppUserRow, ProductRow, ScriptProjectRow } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
 
 export const metadata: Metadata = { title: "Script Studio · AdFactory" };
 export const dynamic = "force-dynamic";
 
+const STATUS_STYLE: Record<string, string> = {
+  draft: "tag",
+  assigned: "tag tag-warn",
+  available: "tag tag-warn",
+  submitted: "tag tag-ok",
+  approved: "tag tag-ok",
+  changes_requested: "tag tag-danger",
+};
+
 export default async function ScriptsPage() {
   await requireStrategist();
-  const [projectsRes, usersRes, productsRes, assignmentsRes] = await Promise.all([
+  const [projectsRes, usersRes, productsRes] = await Promise.all([
     supabase.from("ScriptProject").select("*").order("updatedAt", { ascending: false }),
     supabase.from("AppUser").select("*").order("username"),
     supabase.from("Product").select("*").order("name"),
-    supabase.from("ScriptAssignment").select("*"),
   ]);
 
   if (projectsRes.error) {
@@ -40,7 +47,6 @@ export default async function ScriptsPage() {
   const projects = (projectsRes.data ?? []) as ScriptProjectRow[];
   const users = (usersRes.data ?? []) as AppUserRow[];
   const products = (productsRes.data ?? []) as ProductRow[];
-  const assignments = (assignmentsRes.data ?? []) as ScriptAssignmentRow[];
   const userById = new Map(users.map((user) => [user.id, user]));
   const productById = new Map(products.map((product) => [product.id, product]));
   const assigned = projects.filter((project) => Boolean(project.editorUserId)).length;
@@ -76,18 +82,16 @@ export default async function ScriptsPage() {
                 <tr><th className="px-4 py-3">Script</th><th className="px-4 py-3">Product</th><th className="px-4 py-3">Owner</th><th className="px-4 py-3">Editor</th><th className="px-4 py-3">Status</th><th className="px-4 py-3">Updated</th></tr>
               </thead>
               <tbody className="divide-y divide-ink-200">
-                {projects.map((project) => {
-                  const workflowStatus = normalizeScriptWorkflowStatus(project.status, assignmentByProject.get(project.id)?.status);
-                  const statusMeta = SCRIPT_STATUS_META[workflowStatus];
-                  return <tr key={project.id} className="hover:bg-ink-50">
+                {projects.map((project) => (
+                  <tr key={project.id} className="hover:bg-ink-50">
                     <td className="px-4 py-3"><Link href={`/scripts/${project.id}`} className="font-medium hover:underline">{project.title}</Link><div className="mt-0.5 max-w-lg truncate font-mono text-[10px] text-ink-400">{project.displayName}</div></td>
                     <td className="px-4 py-3 text-ink-600">{productById.get(project.productId)?.name ?? "—"}</td>
                     <td className="px-4 py-3 text-ink-600">@{userById.get(project.strategistUserId)?.username ?? "unknown"}</td>
                     <td className="px-4 py-3 text-ink-600">{project.editorUserId ? `@${userById.get(project.editorUserId)?.username ?? "unknown"}` : "Unassigned"}</td>
                     <td className="px-4 py-3"><span className={STATUS_STYLE[project.status] ?? "tag"}>{project.status.replaceAll("_", " ")}</span></td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-ink-500">{new Date(project.updatedAt).toLocaleDateString()}</td>
-                  </tr>;
-                })}
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>

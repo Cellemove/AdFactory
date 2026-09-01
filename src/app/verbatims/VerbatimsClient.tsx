@@ -36,6 +36,7 @@ export function VerbatimsClient({
   const [subAvatarId, setSubAvatarId] = useState("");
   const [focus, setFocus] = useState("");
   const [market, setMarket] = useState("");
+  const [platforms, setPlatforms] = useState<string[]>([]);
   const [count, setCount] = useState("24");
 
   // Browser filters live in the URL — the database applies them, so they cover
@@ -53,6 +54,9 @@ export function VerbatimsClient({
 
   const catLabel = useMemo(() => new Map(categories.map((c) => [c.slug, c.label])), [categories]);
 
+  const togglePlatform = (slug: string) =>
+    setPlatforms((p) => (p.includes(slug) ? p.filter((s) => s !== slug) : [...p, slug]));
+
   const mine = () => {
     setError(null);
     setNotice(null);
@@ -63,15 +67,13 @@ export function VerbatimsClient({
           subAvatarId: subAvatarId || null,
           focus: focus.trim() || null,
           market: market || null,
+          platforms: platforms.length ? platforms : undefined,
           targetCount: count ? Number(count) : undefined,
         });
         setNotice(
           `Mined ${res.count} new verbatim${res.count === 1 ? "" : "s"}` +
             (res.duplicatesSkipped
               ? ` · skipped ${res.duplicatesSkipped} duplicate${res.duplicatesSkipped === 1 ? "" : "s"}`
-              : "") +
-            (res.rejectedByQuality
-              ? ` · rejected ${res.rejectedByQuality} weak or off-topic comment${res.rejectedByQuality === 1 ? "" : "s"}`
               : "") +
             ".",
         );
@@ -95,7 +97,7 @@ export function VerbatimsClient({
     <div className="space-y-6">
       {/* Mining form */}
       <div className="card space-y-4">
-        <h2 className="text-sm font-semibold">Mine verified verbatims</h2>
+        <h2 className="text-sm font-semibold">Mine new verbatims</h2>
         <div className="grid-fields">
           <div>
             <label className="label">Angle</label>
@@ -129,24 +131,37 @@ export function VerbatimsClient({
             <input className="input" inputMode="numeric" value={count} onChange={(e) => setCount(e.target.value)} />
           </div>
         </div>
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-          Verification source: {sourceTypes.find((s) => s.slug === "youtube_comment")?.label ?? "YouTube comment"} via the YouTube Data API.
-          Quotes are copied directly from the API and linked to the exact comment. AI-generated and paraphrased quotes are rejected.
+        <div>
+          <label className="label">Prioritize sources (optional)</label>
+          <div className="mt-1 flex flex-wrap gap-2">
+            {sourceTypes.map((s) => (
+              <button
+                key={s.slug}
+                type="button"
+                onClick={() => togglePlatform(s.slug)}
+                className={`rounded-md border px-2.5 py-1 text-xs transition ${
+                  platforms.includes(s.slug) ? "border-ink-900 bg-ink-900 text-white" : "border-ink-200 text-ink-700 hover:bg-ink-100"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <button className="btn btn-primary" disabled={!canMine} onClick={mine}>
-            {isPending ? "Mining…" : "Mine verified verbatims"}
+            {isPending ? "Mining…" : "Mine verbatims"}
           </button>
           {notice && <span className="text-sm text-emerald-700">{notice}</span>}
           {error && <span className="text-sm text-red-700">{error}</span>}
         </div>
-        <p className="text-xs text-ink-400">Direct source collection — typically 10–30s. Pick an angle or a sub-avatar to enable.</p>
+        <p className="text-xs text-ink-400">Grounded web search — typically 20–60s. Pick an angle or a sub-avatar to enable.</p>
       </div>
 
       {/* Corpus browser */}
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-sm font-semibold">Verified corpus</h2>
+          <h2 className="text-sm font-semibold">Corpus</h2>
           <span className="text-xs text-ink-500">
             {total} match{total === 1 ? "" : "es"}
             {pageCount > 1 ? ` · page ${page}/${pageCount}` : ""}
@@ -194,7 +209,6 @@ export function VerbatimsClient({
                   <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs text-ink-500">
                     <span className="tag">{catLabel.get(v.category) ?? v.category}</span>
                     <span className="tag">{v.sourceType}</span>
-                    <span className="tag border-emerald-200 bg-emerald-50 text-emerald-700">✓ verified</span>
                     <span title="source weight">w {v.sourceWeight.toFixed(2)}</span>
                     <span title="engagement">· {v.engagementScore} eng</span>
                     {v.angleSlug && <span>· {v.angleSlug}</span>}
