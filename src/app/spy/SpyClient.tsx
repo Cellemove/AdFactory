@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { spyOnCompetitors, updateSpyAds, type SpyAd } from "../actions/spy";
 import { saveToBank } from "../actions/bank";
+import { youtubeThumb } from "@/lib/video-thumb";
 
 interface HistoryItem {
   id: string;
@@ -53,27 +54,6 @@ function hostOf(url: string): string {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
     return url;
-  }
-}
-
-// Derive a YouTube thumbnail from the video id so video tiles render even when
-// the stored sweep has no scraped image. Covers youtu.be / watch / shorts / embed.
-function youtubeThumb(url: string): string | null {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace(/^www\./, "");
-    let id: string | null = null;
-    if (host === "youtu.be") id = u.pathname.slice(1).split("/")[0] || null;
-    else if (host.endsWith("youtube.com")) {
-      if (u.pathname === "/watch") id = u.searchParams.get("v");
-      else {
-        const m = u.pathname.match(/^\/(?:shorts|embed|v)\/([^/?#]+)/);
-        if (m) id = m[1] ?? null;
-      }
-    }
-    return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : null;
-  } catch {
-    return null;
   }
 }
 

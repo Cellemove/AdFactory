@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { deleteBankedAd, updateBankedAd } from "../actions/bank";
 import { BANK_STATUSES, type BankStatus } from "@/lib/bank";
+import { youtubeThumb } from "@/lib/video-thumb";
 import type { BankedAdRow } from "@/lib/database.types";
 
 const STATUS_META: Record<BankStatus, { label: string; className: string }> = {
@@ -17,27 +18,6 @@ function hostOf(url: string): string {
     return new URL(url).hostname.replace(/^www\./, "");
   } catch {
     return url;
-  }
-}
-
-// Same YouTube-thumbnail derivation the Spy grid uses, so video entries saved
-// without a scraped og:image still render a preview here.
-function youtubeThumb(url: string): string | null {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace(/^www\./, "");
-    let id: string | null = null;
-    if (host === "youtu.be") id = u.pathname.slice(1).split("/")[0] || null;
-    else if (host.endsWith("youtube.com")) {
-      if (u.pathname === "/watch") id = u.searchParams.get("v");
-      else {
-        const m = u.pathname.match(/^\/(?:shorts|embed|v)\/([^/?#]+)/);
-        if (m) id = m[1] ?? null;
-      }
-    }
-    return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : null;
-  } catch {
-    return null;
   }
 }
 
