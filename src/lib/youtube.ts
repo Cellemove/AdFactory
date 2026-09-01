@@ -22,8 +22,11 @@ interface YTVideo {
   channel: string;
 }
 export interface YTComment {
+  id: string;
   text: string;
   likes: number;
+  author: string;
+  publishedAt: string | null;
 }
 export interface YTThread {
   videoId: string;
@@ -86,14 +89,33 @@ async function topComments(videoId: string, max = 8): Promise<YTComment[]> {
     textFormat: "plainText",
     maxResults: String(max),
   })) as {
-    items?: Array<{ snippet?: { topLevelComment?: { snippet?: { textDisplay?: string; likeCount?: number } } } }>;
+    items?: Array<{
+      snippet?: {
+        topLevelComment?: {
+          id?: string;
+          snippet?: {
+            textDisplay?: string;
+            likeCount?: number;
+            authorDisplayName?: string;
+            publishedAt?: string;
+          };
+        };
+      };
+    }>;
   } | null;
   return (json?.items ?? [])
     .map((it) => {
-      const c = it.snippet?.topLevelComment?.snippet;
-      return { text: (c?.textDisplay ?? "").trim(), likes: c?.likeCount ?? 0 };
+      const top = it.snippet?.topLevelComment;
+      const c = top?.snippet;
+      return {
+        id: top?.id ?? "",
+        text: (c?.textDisplay ?? "").trim(),
+        likes: c?.likeCount ?? 0,
+        author: c?.authorDisplayName ?? "",
+        publishedAt: c?.publishedAt ?? null,
+      };
     })
-    .filter((c) => c.text);
+    .filter((c) => c.id && c.text);
 }
 
 /**

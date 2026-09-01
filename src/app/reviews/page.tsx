@@ -1,7 +1,10 @@
 import { redirect } from "next/navigation";
 import { getSessionUser } from "@/lib/auth";
+import { parseScriptDocument } from "@/lib/cellumove/script-studio";
+import { normalizeScriptWorkflowStatus } from "@/lib/cellumove/script-workflow";
 import { supabase } from "@/lib/db";
-import type { AppUserRow, EditorClaimRow, ResearchRow, ScriptAssignmentRow, ScriptProjectRow } from "@/lib/database.types";
+import type { AppUserRow, EditorClaimRow, ProductRow, ResearchRow, ScriptAssignmentRow, ScriptProjectRow, ScriptSourceRow, ScriptVersionRow } from "@/lib/database.types";
+import { readShopifyProductMetadata } from "@/lib/shopify";
 import { ReviewsClient } from "./ReviewsClient";
 
 export const dynamic = "force-dynamic";
@@ -18,7 +21,7 @@ export default async function ReviewsPage() {
   const me = await getSessionUser();
   if (!me) redirect("/login");
 
-  const [claimsRes, runsRes, scriptAssignmentsRes, scriptProjectsRes, usersRes] = await Promise.all([
+  const [claimsRes, runsRes, scriptAssignmentsRes, scriptProjectsRes, usersRes, versionsRes, sourcesRes, productsRes] = await Promise.all([
     supabase.from("EditorClaim").select("*").order("updatedAt", { ascending: false }),
     supabase
       .from("Research")
@@ -29,6 +32,9 @@ export default async function ReviewsPage() {
     supabase.from("ScriptAssignment").select("*").order("updatedAt", { ascending: false }),
     supabase.from("ScriptProject").select("*").order("updatedAt", { ascending: false }),
     supabase.from("AppUser").select("*").order("username"),
+    supabase.from("ScriptVersion").select("*").eq("origin", "assigned").order("version", { ascending: false }),
+    supabase.from("ScriptSource").select("*").order("createdAt", { ascending: true }),
+    supabase.from("Product").select("*"),
   ]);
 
   const tableMissing = Boolean(claimsRes.error);
@@ -56,21 +62,46 @@ export default async function ReviewsPage() {
   const scriptProjects = (scriptTableMissing ? [] : scriptProjectsRes.data ?? []) as ScriptProjectRow[];
   const scriptAssignments = (scriptTableMissing ? [] : scriptAssignmentsRes.data ?? []) as ScriptAssignmentRow[];
   const users = (usersRes.data ?? []) as AppUserRow[];
+  const versions = (versionsRes.data ?? []) as ScriptVersionRow[];
+  const sources = (sourcesRes.data ?? []) as ScriptSourceRow[];
+  const products = (productsRes.data ?? []) as ProductRow[];
   const userById = new Map(users.map((user) => [user.id, user]));
   const projectById = new Map(scriptProjects.map((project) => [project.id, project]));
+  const productById = new Map(products.map((product) => [product.id, product]));
   const scriptPackages = scriptAssignments.flatMap((assignment) => {
     const project = projectById.get(assignment.projectId);
     if (!project) return [];
+    const handoff = versions.find((version) => version.projectId === project.id);
+    const document = parseScriptDocument(handoff?.document ?? project.document);
+    const product = productById.get(project.productId) ?? null;
+    const shopify = readShopifyProductMetadata(product?.context);
+    const imageCandidates = [
+      ...(product?.imagePath ? [{ url: product.imagePath, altText: product.name }] : []),
+      ...(shopify?.images ?? []).map((image) => ({ url: image.url, altText: image.altText ?? product?.name ?? document.product.name })),
+    ];
+    const productImages = imageCandidates.filter((image, index, all) => all.findIndex((candidate) => candidate.url === image.url) === index);
     return [{
       projectId: project.id,
       title: project.title,
       displayName: project.displayName,
-      document: project.document,
-      status: assignment.status,
+      document,
+      handoffVersion: handoff?.version ?? project.currentVersion,
+      status: normalizeScriptWorkflowStatus(project.status, assignment.status),
       editorUserId: assignment.editorUserId,
       editorName: assignment.editorUserId ? userById.get(assignment.editorUserId)?.username ?? null : null,
       deliveryUrl: assignment.deliveryUrl,
       reviewNote: assignment.reviewNote,
+      product: {
+        name: product?.name ?? document.product.name,
+        code: product?.code ?? document.product.code,
+        description: product?.description ?? null,
+        images: productImages,
+      },
+      sources: sources.filter((source) => source.projectId === project.id).map((source) => ({
+        type: source.sourceType,
+        title: source.title,
+        url: source.url,
+      })),
       updatedAt: assignment.updatedAt,
     }];
   });
