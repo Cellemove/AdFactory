@@ -1,15 +1,32 @@
 "use client";
 
+import Image from "next/image";
 import { useState, useTransition } from "react";
 import { claimRun, setDelivery, submitReview, releaseClaim } from "../actions/reviews";
 import { claimScriptProject, reviewScriptDelivery, submitScriptDelivery } from "../actions/scripts";
+import { renderScriptDownload, scriptDownloadFilename, type ScriptDocument } from "@/lib/cellumove/script-studio";
+import { SCRIPT_STATUS_META, type ScriptWorkflowStatus } from "@/lib/cellumove/script-workflow";
 import { ROLE_LABELS, type Role } from "@/lib/roles";
 import type { EditorClaimRow } from "@/lib/database.types";
 
 type Claim = EditorClaimRow & { deliverable: { creativeBriefs?: unknown; adScripts?: unknown } };
 type Me = { id: string; username: string; role: Role };
 type Claimable = { runId: string; label: string; createdAt: string };
-type ScriptPackage = { projectId: string; title: string; displayName: string; document: unknown; status: string; editorUserId: string | null; editorName: string | null; deliveryUrl: string | null; reviewNote: string | null; updatedAt: string };
+type ScriptPackage = {
+  projectId: string;
+  title: string;
+  displayName: string;
+  document: ScriptDocument;
+  handoffVersion: number;
+  status: ScriptWorkflowStatus;
+  editorUserId: string | null;
+  editorName: string | null;
+  deliveryUrl: string | null;
+  reviewNote: string | null;
+  product: { name: string; code: string | null; description: string | null; images: Array<{ url: string; altText: string }> };
+  sources: Array<{ type: string; title: string; url: string | null }>;
+  updatedAt: string;
+};
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   pending: { label: "Pending review", cls: "tag tag-warn" },
@@ -140,15 +157,86 @@ function ScriptPackageCard({ item, me, isEditor, run }: { item: ScriptPackage; m
   const [reviewStatus, setReviewStatus] = useState<"changes_requested" | "approved">("approved");
   const available = item.editorUserId === null;
   const mine = item.editorUserId === me.id;
-  const status = STATUS_META[item.status] ?? { label: item.status.replaceAll("_", " "), cls: "tag" };
+  const status = SCRIPT_STATUS_META[item.status];
+  const readyForMe = isEditor && item.status === "ready" && (available || mine);
+  const canDeliver = isEditor && mine && ["claimed", "changes_requested"].includes(item.status);
+  const totalDuration = item.document.modules.reduce((sum, module) => sum + module.durationSec, 0);
 
-  return <article className="card space-y-3">
-    <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><h3 className="font-semibold">{item.title}</h3><span className={status.cls}>{status.label}</span></div><div className="mt-1 break-all font-mono text-[10px] text-ink-400">{item.displayName}</div></div><div className="text-xs text-ink-500">{item.editorName ? `@${item.editorName}` : "Unassigned queue"} · {new Date(item.updatedAt).toLocaleString()}</div></div>
-    <details><summary className="cursor-pointer text-xs font-semibold uppercase tracking-wide text-ink-500">Structured script</summary><div className="mt-2 max-h-96 overflow-y-auto rounded-lg border border-ink-200 bg-ink-50 p-3"><Readable value={item.document} /></div></details>
-    {isEditor && available && <button className="btn btn-primary" onClick={() => run(() => claimScriptProject(item.projectId))}>Claim script →</button>}
-    {isEditor && mine && <div className="space-y-2"><label className="label">Delivered creative URL</label><div className="flex flex-col gap-2 sm:flex-row"><input className="input flex-1" placeholder="Drive, Frame.io, or other delivery link" value={deliveryUrl} onChange={(event) => setDeliveryUrl(event.target.value)} /><button className="btn btn-primary" onClick={() => run(() => submitScriptDelivery(item.projectId, deliveryUrl))}>Submit delivery</button></div>{item.reviewNote && <div className="rounded-lg bg-ink-50 p-3 text-sm"><span className="font-medium">Strategist feedback:</span> {item.reviewNote}</div>}</div>}
-    {!isEditor && <div className="space-y-2 border-t border-ink-200 pt-3"><label className="label">Review editor delivery</label>{item.deliveryUrl ? <a href={item.deliveryUrl} target="_blank" rel="noreferrer" className="block text-sm underline">{item.deliveryUrl}</a> : <p className="text-sm text-ink-400">No delivery submitted yet.</p>}<textarea className="input min-h-20" placeholder="Feedback for the editor…" value={note} onChange={(event) => setNote(event.target.value)} /><div className="flex gap-2"><select className="input max-w-56" value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value as typeof reviewStatus)}><option value="approved">Approve</option><option value="changes_requested">Request changes</option></select><button className="btn btn-primary" disabled={item.status !== "submitted"} onClick={() => run(() => reviewScriptDelivery(item.projectId, note, reviewStatus))}>Submit review</button></div>{item.status !== "submitted" && <p className="text-xs text-ink-400">Review unlocks after the editor submits a delivery.</p>}</div>}
+  const downloadScript = () => {
+    const blob = new Blob(["\uFEFF", renderScriptDownload(item.document)], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = window.document.createElement("a");
+    anchor.href = url;
+    anchor.download = scriptDownloadFilename(item.document);
+    window.document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  return <article className="overflow-hidden rounded-2xl border border-ink-200/80 bg-white shadow-card">
+    <header className="border-b border-ink-200 bg-gradient-to-r from-brand-purple/[0.07] via-white to-brand-pink/[0.08] p-5">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <div className="flex flex-wrap items-center gap-2"><h3 className="text-lg font-semibold">{item.title}</h3><span className={status.className}>{status.label}</span><span className="tag">v{item.handoffVersion} frozen</span></div>
+          <div className="mt-1 break-all font-mono text-[10px] text-ink-400">{item.displayName}</div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2"><div className="text-right text-xs text-ink-500">{item.editorName ? `@${item.editorName}` : "Unassigned queue"}<div>{totalDuration}s · {new Date(item.updatedAt).toLocaleString()}</div></div><button className="btn bg-white" onClick={downloadScript}>Download script</button></div>
+      </div>
+      <HandoffProgress status={item.status} />
+    </header>
+
+    <div className="space-y-6 p-5">
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)]">
+        <div>
+          <div className="label">Product</div>
+          <div className="mt-1 flex items-baseline gap-2"><h4 className="text-base font-semibold">{item.product.name}</h4>{item.product.code && <span className="tag">{item.product.code}</span>}</div>
+          {item.product.description && <p className="mt-2 line-clamp-4 text-sm leading-6 text-ink-600">{item.product.description}</p>}
+        </div>
+        <div>
+          <div className="label">Product media · {item.product.images.length}</div>
+          {item.product.images.length > 0 ? <div className="mt-2 flex gap-2 overflow-x-auto pb-2">{item.product.images.map((image, index) => <a key={image.url} href={image.url} target="_blank" rel="noreferrer" className="relative block h-24 w-24 shrink-0 overflow-hidden rounded-xl border border-ink-200 bg-ink-50 transition hover:border-ink-500"><Image src={image.url} alt={image.altText || `${item.product.name} image ${index + 1}`} fill sizes="96px" unoptimized className="object-cover" /></a>)}</div> : <p className="mt-2 text-sm text-ink-400">No product images stored.</p>}
+        </div>
+      </section>
+
+      <section>
+        <div className="mb-3 flex items-end justify-between gap-3"><div><h4 className="font-semibold">Production script</h4><p className="text-xs text-ink-500">Read in order; timing is cumulative.</p></div><span className="text-xs text-ink-400">{item.document.format} · {item.document.angle.name}</span></div>
+        <div className="divide-y divide-ink-200 rounded-xl border border-ink-200">{item.document.modules.map((module, index) => <ScriptBeat key={module.id} module={module} index={index} priorSeconds={item.document.modules.slice(0, index).reduce((sum, beat) => sum + beat.durationSec, 0)} />)}</div>
+      </section>
+
+      <section>
+        <h4 className="font-semibold">Source trail</h4>
+        <div className="mt-2 flex flex-wrap gap-2">{item.sources.length > 0 ? item.sources.map((source, index) => source.url ? <a key={`${source.type}-${source.title}-${index}`} className="tag hover:underline" href={source.url} target="_blank" rel="noreferrer"><span className="opacity-60">{source.type}</span> · {source.title} ↗</a> : <span key={`${source.type}-${source.title}-${index}`} className="tag"><span className="opacity-60">{source.type}</span> · {source.title}</span>) : <span className="text-sm text-ink-400">No sources attached.</span>}</div>
+      </section>
+
+      {readyForMe && <div className="rounded-xl border border-brand-purple/20 bg-brand-purple/5 p-4"><h4 className="font-semibold">Ready to start?</h4><p className="mt-1 text-sm text-ink-600">Claiming locks this package to your editor account.</p><button className="btn btn-primary mt-3" onClick={() => run(() => claimScriptProject(item.projectId))}>{available ? "Claim script" : "Start work"} →</button></div>}
+      {canDeliver && <div className="space-y-2 rounded-xl border border-ink-200 bg-ink-50 p-4"><label className="label">Delivered creative URL</label><div className="flex flex-col gap-2 sm:flex-row"><input className="input flex-1 bg-white" placeholder="Drive, Frame.io, or another delivery link" value={deliveryUrl} onChange={(event) => setDeliveryUrl(event.target.value)} /><button className="btn btn-primary" onClick={() => run(() => submitScriptDelivery(item.projectId, deliveryUrl))}>Submit delivery</button></div>{item.reviewNote && <div className="rounded-lg bg-white p-3 text-sm"><span className="font-medium">Strategist feedback:</span> {item.reviewNote}</div>}</div>}
+      {isEditor && mine && item.status === "submitted" && <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">Delivery submitted. Waiting for strategist review.</div>}
+      {!isEditor && <div className="space-y-2 border-t border-ink-200 pt-5"><label className="label">Review editor delivery</label>{item.deliveryUrl ? <a href={item.deliveryUrl} target="_blank" rel="noreferrer" className="block text-sm underline">{item.deliveryUrl}</a> : <p className="text-sm text-ink-400">No delivery submitted yet.</p>}<textarea className="input min-h-20" placeholder="Feedback for the editor…" value={note} onChange={(event) => setNote(event.target.value)} /><div className="flex gap-2"><select className="input max-w-56" value={reviewStatus} onChange={(event) => setReviewStatus(event.target.value as typeof reviewStatus)}><option value="approved">Approve</option><option value="changes_requested">Request changes</option></select><button className="btn btn-primary" disabled={item.status !== "submitted"} onClick={() => run(() => reviewScriptDelivery(item.projectId, note, reviewStatus))}>Submit review</button></div>{item.status !== "submitted" && <p className="text-xs text-ink-400">Review unlocks after the editor submits a delivery.</p>}</div>}
+    </div>
   </article>;
+}
+
+const HANDOFF_STEPS: Array<{ status: ScriptWorkflowStatus; label: string }> = [
+  { status: "ready", label: "Ready" },
+  { status: "claimed", label: "Claimed" },
+  { status: "submitted", label: "Submitted" },
+  { status: "approved", label: "Approved" },
+];
+
+function HandoffProgress({ status }: { status: ScriptWorkflowStatus }) {
+  const effectiveStatus = status === "changes_requested" ? "submitted" : status;
+  const currentIndex = HANDOFF_STEPS.findIndex((step) => step.status === effectiveStatus);
+  return <div className="mt-4 flex max-w-xl items-center" aria-label={`Handoff status: ${SCRIPT_STATUS_META[status].label}`}>{HANDOFF_STEPS.map((step, index) => <div key={step.status} className="flex min-w-0 flex-1 items-center last:flex-none"><div className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold ${index <= currentIndex ? "bg-ink-900 text-white" : "border border-ink-300 bg-white text-ink-400"}`}>{index + 1}</div><span className={`ml-1 hidden text-[10px] sm:inline ${index <= currentIndex ? "text-ink-700" : "text-ink-400"}`}>{step.label}</span>{index < HANDOFF_STEPS.length - 1 && <div className={`mx-2 h-px min-w-3 flex-1 ${index < currentIndex ? "bg-ink-900" : "bg-ink-200"}`} />}</div>)}</div>;
+}
+
+function scriptTime(seconds: number): string {
+  const safe = Math.max(0, Math.round(seconds));
+  return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
+}
+
+function ScriptBeat({ module, index, priorSeconds }: { module: ScriptDocument["modules"][number]; index: number; priorSeconds: number }) {
+  return <div className="grid gap-3 p-4 md:grid-cols-[7rem_minmax(0,1fr)]"><div><div className="text-xs font-semibold text-ink-700">{index + 1}. {module.label}</div><div className="mt-1 font-mono text-[10px] text-ink-400">{scriptTime(priorSeconds)}–{scriptTime(priorSeconds + module.durationSec)}</div><span className="tag mt-2">{module.kind}</span></div><div className="space-y-3"><div><div className="label">Spoken copy</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-900">{module.spokenText || "—"}</p></div>{module.onScreenText && <div className="border-l-2 border-brand-pink/40 pl-3"><div className="label">On-screen text</div><p className="mt-1 text-sm font-medium">{module.onScreenText}</p></div>}<div className="rounded-lg bg-ink-50 p-3"><div className="label">Visual direction</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-600">{module.visualDirection || "—"}</p></div>{module.brollRefs.length > 0 && <div><div className="label">Matched B-roll</div><div className="mt-1 flex flex-wrap gap-2">{module.brollRefs.map((clip) => clip.url ? <a key={`${module.id}-${clip.clipId}`} className="tag hover:underline" href={clip.url} target="_blank" rel="noreferrer">{clip.name} ↗</a> : <span key={`${module.id}-${clip.clipId}`} className="tag">{clip.name}</span>)}</div></div>}</div></div>;
 }
 
 function ClaimCard({
