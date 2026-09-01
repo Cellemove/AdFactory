@@ -1,6 +1,7 @@
 import { supabase } from "@/lib/db";
 import type { ResearchRow } from "@/lib/database.types";
 import type { SpyAd } from "../actions/spy";
+import { bankedSourceUrls } from "../actions/bank";
 import { SpyClient } from "./SpyClient";
 
 export const dynamic = "force-dynamic";
@@ -17,12 +18,15 @@ function parseAds(json: string): SpyAd[] {
 export default async function SpyPage() {
   // Past sweeps live in the Research table under type "competitor_spy". Show the
   // latest one's gallery immediately, plus a short history. Fail-soft on errors.
-  const res = await supabase
-    .from("Research")
-    .select("*")
-    .eq("type", "competitor_spy")
-    .order("createdAt", { ascending: false })
-    .limit(20);
+  const [res, banked] = await Promise.all([
+    supabase
+      .from("Research")
+      .select("*")
+      .eq("type", "competitor_spy")
+      .order("createdAt", { ascending: false })
+      .limit(20),
+    bankedSourceUrls(),
+  ]);
   const rows = res.error ? [] : (res.data as ResearchRow[]);
 
   const latest = rows[0]
@@ -37,5 +41,5 @@ export default async function SpyPage() {
     count: parseAds(r.drafts).length,
   }));
 
-  return <SpyClient latest={latest} history={history} />;
+  return <SpyClient latest={latest} history={history} bankedUrls={banked} />;
 }
