@@ -3,6 +3,7 @@ import test from "node:test";
 import { normalizeUnsignedIntegerInput } from "../numeric-input";
 import { parsePipelineRunSelection } from "./pipeline-selection";
 import { buildScriptDisplayName, createInitialScriptDocument, ensureScriptDurationPlan, inspectScriptQuality, renderScriptDownload, scriptDownloadFilename } from "./script-studio";
+import { canClaimScript, canEditScript, canSendScript, normalizeScriptWorkflowStatus } from "./script-workflow";
 
 test("removes leading zeroes while preserving a single zero", () => {
   assert.equal(normalizeUnsignedIntegerInput("060"), "60");

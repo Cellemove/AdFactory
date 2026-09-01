@@ -5,9 +5,16 @@ import { z } from "zod";
 import { requireEditor, requireStrategist } from "@/lib/authorization";
 import {
   buildScriptDisplayName,
+  inspectScriptQuality,
   parseScriptDocument,
   ScriptDocumentSchema,
 } from "@/lib/cellumove/script-studio";
+import {
+  canClaimScript,
+  canEditScript,
+  canSendScript,
+  normalizeScriptWorkflowStatus,
+} from "@/lib/cellumove/script-workflow";
 import { generateResourceGroundedScript } from "@/lib/cellumove/script-generation.server";
 import { createScriptProjectCore, type CreateScriptProjectInput } from "@/lib/cellumove/create-script-project.server";
 import { persistScriptSources } from "@/lib/cellumove/script-sources.server";
@@ -17,6 +24,10 @@ import { getTeardownDeconstruction, parseTeardownRecord } from "@/lib/teardown";
 
 function asJson(value: unknown): Json {
   return JSON.parse(JSON.stringify(value)) as Json;
+}
+
+function isStatusConstraintError(message: string): boolean {
+  return /status.*check|check constraint|violates check constraint/i.test(message);
 }
 
 export async function createScriptProject(input: CreateScriptProjectInput): Promise<{ id: string }> {
@@ -186,6 +197,107 @@ export async function snapshotScriptProject(input: { projectId: string; changeSu
   if (error) throw new Error(error.message);
   revalidatePath(`/scripts/${projectId}`);
   return { version };
+}
+
+export async function sendScriptProjectToEditor(input: {
+  projectId: string;
+  expectedRevision: number;
+  document: z.infer<typeof ScriptDocumentSchema>;
+}): Promise<{ revision: number; version: number; status: "ready" }> {
+  const actor = await requireStrategist();
+  const projectId = z.string().min(1).parse(input.projectId);
+  const expectedRevision = z.number().int().nonnegative().parse(input.expectedRevision);
+  const document = parseScriptDocument(input.document);
+  const [projectRaw, assignmentRaw] = await Promise.all([
+    unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()),
+    unwrapOpt(await supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle()),
+  ]);
+  const project = projectRaw as ScriptProjectRow | null;
+  const assignment = assignmentRaw as ScriptAssignmentRow | null;
+  if (!project) throw new Error("Script project not found.");
+  if (project.revision !== expectedRevision) throw new Error("This script changed in another session. Reload before sending it.");
+  if (!canSendScript(normalizeScriptWorkflowStatus(project.status, assignment?.status))) {
+    throw new Error("This script has already moved to the editor workflow.");
+  }
+  if (document.product.id !== project.productId || document.angle.id !== project.angleId) {
+    throw new Error("The open document does not match this script project. Reload and try again.");
+  }
+  const blockingIssues = inspectScriptQuality(document).filter((issue) => issue.severity === "error");
+  if (blockingIssues.length > 0) {
+    throw new Error(`Resolve the script's blocking claim check before sending: ${blockingIssues[0]?.message}`);
+  }
+
+  const now = new Date().toISOString();
+  const revision = expectedRevision + 1;
+  const version = project.currentVersion + 1;
+  const projectUpdate = {
+    document: asJson(document),
+    revision,
+    currentVersion: version,
+    status: "ready",
+    updatedAt: now,
+  };
+  let updated = await supabase
+    .from("ScriptProject")
+    .update(projectUpdate)
+    .eq("id", projectId)
+    .eq("revision", expectedRevision)
+    .select("id")
+    .maybeSingle();
+  if (updated.error && isStatusConstraintError(updated.error.message)) {
+    updated = await supabase
+      .from("ScriptProject")
+      .update({ ...projectUpdate, status: "review" })
+      .eq("id", projectId)
+      .eq("revision", expectedRevision)
+      .select("id")
+      .maybeSingle();
+  }
+  if (updated.error) throw new Error(updated.error.message);
+  if (!updated.data) throw new Error("This script changed in another session. Reload before sending it.");
+
+  unwrap(await supabase.from("ScriptVersion").insert({
+    id: newId(), projectId, version, document: asJson(document), origin: "assigned",
+    changeSummary: project.status === "changes_requested" ? "Updated script sent to editor" : "Script sent to editor",
+    createdByUserId: actor.id, createdAt: now,
+  }).select("id").single());
+
+  const assignmentValues = {
+    editorUserId: project.editorUserId,
+    status: "ready",
+    deliveryUrl: null,
+    reviewNote: null,
+    reviewedByUserId: null,
+    assignedAt: now,
+    claimedAt: null,
+    submittedAt: null,
+    reviewedAt: null,
+    updatedAt: now,
+  };
+  const legacyReadyStatus = project.editorUserId ? "assigned" : "available";
+  if (assignment) {
+    let assignmentUpdate = await supabase.from("ScriptAssignment").update(assignmentValues).eq("id", assignment.id);
+    if (assignmentUpdate.error && isStatusConstraintError(assignmentUpdate.error.message)) {
+      assignmentUpdate = await supabase.from("ScriptAssignment").update({ ...assignmentValues, status: legacyReadyStatus }).eq("id", assignment.id);
+    }
+    if (assignmentUpdate.error) throw new Error(assignmentUpdate.error.message);
+  } else {
+    const assignmentInsert = { id: newId(), projectId, ...assignmentValues, createdAt: now };
+    let assignmentCreate = await supabase.from("ScriptAssignment").insert(assignmentInsert);
+    if (assignmentCreate.error && isStatusConstraintError(assignmentCreate.error.message)) {
+      assignmentCreate = await supabase.from("ScriptAssignment").insert({ ...assignmentInsert, status: legacyReadyStatus });
+    }
+    if (assignmentCreate.error) throw new Error(assignmentCreate.error.message);
+  }
+
+  await supabase.from("ScriptEvent").insert({
+    id: newId(), projectId, actorUserId: actor.id, eventType: "ready_for_editor",
+    payload: asJson({ version, revision, editorUserId: project.editorUserId }), createdAt: now,
+  });
+  revalidatePath(`/scripts/${projectId}`);
+  revalidatePath("/scripts");
+  revalidatePath("/reviews");
+  return { revision, version, status: "ready" };
 }
 
 export async function assignScriptProjectToEditor(input: {

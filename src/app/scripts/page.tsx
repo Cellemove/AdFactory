@@ -44,6 +44,7 @@ export default async function ScriptsPage() {
   const assignments = (assignmentsRes.data ?? []) as ScriptAssignmentRow[];
   const userById = new Map(users.map((user) => [user.id, user]));
   const productById = new Map(products.map((product) => [product.id, product]));
+  const assignmentByProject = new Map(assignments.map((assignment) => [assignment.projectId, assignment]));
   const editors = users.filter((user) => user.role === "editor").map((user) => ({ id: user.id, username: user.username }));
   const assigned = projects.filter((project) => Boolean(project.editorUserId)).length;
   const approved = projects.filter((project) => project.status === "approved").length;
@@ -86,7 +87,7 @@ export default async function ScriptsPage() {
                     <td className="px-4 py-3 text-ink-600">{productById.get(project.productId)?.name ?? "—"}</td>
                     <td className="px-4 py-3 text-ink-600">@{userById.get(project.strategistUserId)?.username ?? "unknown"}</td>
                     <td className="px-4 py-3 text-ink-600">{project.editorUserId ? `@${userById.get(project.editorUserId)?.username ?? "unknown"}` : <AssignEditorControl projectId={project.id} editors={editors} compact />}</td>
-                    <td className="px-4 py-3"><span className={STATUS_STYLE[project.status] ?? "tag"}>{project.status.replaceAll("_", " ")}</span></td>
+                    <td className="px-4 py-3"><span className={statusMeta.className}>{statusMeta.label}</span></td>
                     <td className="whitespace-nowrap px-4 py-3 text-xs text-ink-500">{new Date(project.updatedAt).toLocaleDateString()}</td>
                   </tr>;
                 })}
