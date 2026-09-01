@@ -365,6 +365,27 @@ export type BrollClipRow = {
   lastUsedAt: string | null;
 };
 
+// BankedAd = one competitor creative a strategist chose to KEEP from a spy sweep
+// (Migration 012) — the idea bank / swipe file. Sweeps themselves are ephemeral
+// JSON blobs on a Research row; these rows are the durable library, annotated
+// with a note and a workflow status. sweepId is provenance only (not an FK), so
+// deleting old sweeps never removes banked ideas.
+export type BankedAdRow = {
+  id: string;
+  brand: string;
+  hook: string;
+  imageUrl: string | null;
+  platform: string | null;
+  sourceUrl: string;
+  mediaType: string;
+  note: string | null;
+  status: string; // 'new' | 'shortlisted' | 'used' | 'archived'
+  sweepId: string | null;
+  savedBy: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 // BrollSuggestion = one detected mention of a clip in a pipeline stage's output
 // (Migration 008). The counters on BrollClip are the fast path; this is the audit
 // trail ("suggested in run X on date Y").
@@ -524,6 +545,7 @@ export type Database = {
       EditorClaim: { Row: EditorClaimRow; Insert: Partial<EditorClaimRow> & { runId: string; label: string; claimedByEmail: string }; Update: Partial<EditorClaimRow>; Relationships: [] };
       AppUser: { Row: AppUserRow; Insert: Partial<AppUserRow> & { id: string; username: string; passwordHash: string }; Update: Partial<AppUserRow>; Relationships: [] };
       BrollClip: { Row: BrollClipRow; Insert: Partial<BrollClipRow> & { id: string; driveId: string; name: string; mimeType: string }; Update: Partial<BrollClipRow>; Relationships: [] };
+      BankedAd: { Row: BankedAdRow; Insert: Partial<BankedAdRow> & { id: string; sourceUrl: string }; Update: Partial<BankedAdRow>; Relationships: [] };
       BrollSuggestion: { Row: BrollSuggestionRow; Insert: Partial<BrollSuggestionRow> & { id: string; clipId: string; clipName: string; source: string }; Update: Partial<BrollSuggestionRow>; Relationships: [] };
       ScriptProject: { Row: ScriptProjectRow; Insert: Partial<ScriptProjectRow> & { id: string; title: string; strategistUserId: string; createdByUserId: string; productId: string; angleId: string; idea: string; adNumber: string; creativeName: string; format: string; document: Json; displayName: string }; Update: Partial<ScriptProjectRow>; Relationships: [] };
       ScriptVersion: { Row: ScriptVersionRow; Insert: Partial<ScriptVersionRow> & { id: string; projectId: string; version: number; document: Json; origin: string; changeSummary: string; createdByUserId: string }; Update: Partial<ScriptVersionRow>; Relationships: [] };

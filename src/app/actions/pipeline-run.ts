@@ -208,7 +208,10 @@ function priorStagesBlock(doc: PipelineDoc, needs: PipelineStageKey[]): string {
       const out = doc.stages[k];
       if (out == null) return "";
       const def = stageDef(k);
-      return `### ${def.code} — ${def.title} (output)\n${JSON.stringify(out, null, 2)}`;
+      // Compact JSON, not pretty-printed: the indentation is ~20-30% more input
+      // tokens the model gains nothing from, and heavy stages re-send upstream
+      // outputs on every call.
+      return `### ${def.code} — ${def.title} (output)\n${JSON.stringify(out)}`;
     })
     .filter(Boolean);
   if (blocks.length === 0) return "";
