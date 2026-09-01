@@ -1,5 +1,6 @@
 node_modules
 .next
+.next-stale-*
 out
 .env
 .env.local
@@ -18,5 +19,6 @@ public/generations/*
 public/uploads/*
 !public/uploads/.gitkeep
 .DS_Store
+~$*.xlsx
 *.tsbuildinfo
 .tsx-cache
