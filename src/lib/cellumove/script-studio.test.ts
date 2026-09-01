@@ -1,7 +1,23 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildScriptDisplayName, createInitialScriptDocument, inspectScriptQuality, renderScriptDownload, scriptDownloadFilename } from "./script-studio";
-import { canClaimScript, canEditScript, canSendScript, normalizeScriptWorkflowStatus } from "./script-workflow";
+import { normalizeUnsignedIntegerInput } from "../numeric-input";
+import { parsePipelineRunSelection } from "./pipeline-selection";
+import { buildScriptDisplayName, createInitialScriptDocument, ensureScriptDurationPlan, inspectScriptQuality, renderScriptDownload, scriptDownloadFilename } from "./script-studio";
+
+test("removes leading zeroes while preserving a single zero", () => {
+  assert.equal(normalizeUnsignedIntegerInput("060"), "60");
+  assert.equal(normalizeUnsignedIntegerInput("0005"), "5");
+  assert.equal(normalizeUnsignedIntegerInput("0"), "0");
+  assert.equal(normalizeUnsignedIntegerInput(""), "");
+});
+
+test("parses selectable pipeline runs and counts only completed stages", () => {
+  assert.deepEqual(
+    parsePipelineRunSelection(JSON.stringify({ subAvatarId: "avatar-1", angleSlug: "cellulite", stages: { rootCause: { ok: true }, brandDna: null, adScripts: { ok: true } } })),
+    { subAvatarId: "avatar-1", angleSlug: "cellulite", completedStages: 2 },
+  );
+  assert.equal(parsePipelineRunSelection("not-json"), null);
+});
 
 test("builds the agreed stable naming convention", () => {
   assert.equal(
@@ -33,6 +49,49 @@ test("seeds a structured script and always includes a CTA", () => {
   assert.equal(document.schemaVersion, 1);
   assert.ok(document.modules.some((module) => module.kind === "cta"));
   assert.ok(inspectScriptQuality(document).length > 0);
+});
+
+test("expands a four-beat framework to fill a 60-second production plan", () => {
+  const document = createInitialScriptDocument({
+    title: "Detailed 60-second script",
+    product: { id: "p1", name: "CelluMove", code: "V1" },
+    avatar: null,
+    angle: { id: "a1", name: "Cellulite" },
+    framework: null,
+    format: "UGC",
+    targetDurationSec: 60,
+    idea: "I stopped hiding my legs.",
+    teardown: null,
+  });
+
+  assert.equal(document.modules.length, 8);
+  assert.equal(document.modules.at(-1)?.kind, "cta");
+  assert.ok(document.modules.some((module) => module.label === "How It Works"));
+  assert.ok(document.modules.some((module) => module.label === "Proof & Demonstration"));
+  assert.equal(document.modules.reduce((sum, module) => sum + module.durationSec, 0), 60);
+  assert.ok(!inspectScriptQuality(document).some((issue) => issue.moduleId === "document"));
+});
+
+test("expands an existing short plan while preserving locked beat timing", () => {
+  const document = createInitialScriptDocument({
+    title: "Existing script",
+    product: { id: "p1", name: "CelluMove", code: "V1" },
+    avatar: null,
+    angle: { id: "a1", name: "Cellulite" },
+    framework: null,
+    format: "UGC",
+    targetDurationSec: 30,
+    idea: "I stopped hiding my legs.",
+    teardown: null,
+  });
+  document.targetDurationSec = 60;
+  document.modules[0] = { ...document.modules[0]!, durationSec: 5, locked: true };
+
+  const expanded = ensureScriptDurationPlan(document);
+  assert.equal(expanded.modules.length, 8);
+  assert.equal(expanded.modules[0]?.durationSec, 5);
+  assert.equal(expanded.modules[0]?.locked, true);
+  assert.equal(expanded.modules.reduce((sum, module) => sum + module.durationSec, 0), 60);
 });
 
 test("renders a readable production handoff with timing, B-roll, and sources", () => {
