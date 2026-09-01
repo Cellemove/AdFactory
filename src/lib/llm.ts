@@ -58,4 +58,18 @@ export function getLLM(): GoogleGenAI {
   return client;
 }
 
-export const DEFAULT_MODEL = "gemini-2.5-pro";
+// Model tiers. Pick per call site by what the task actually needs:
+//
+//   DEFAULT_MODEL (Pro)   — synthesis, copywriting, deep research. Reasoning that
+//                           genuinely benefits from thinking.
+//   FAST_MODEL (Flash)    — mechanical work: extraction, classification, JSON
+//                           reshaping, OCR-style reads. ~4x cheaper per token.
+//
+// The tier also decides whether thinking can be switched OFF at all: Gemini 2.5
+// Pro ALWAYS thinks (a thinkingBudget of 0 is ignored), while Flash and
+// Flash-Lite honour `thinkingBudget: 0`. Since thinking bills at the output rate,
+// a short-output mechanical task on Pro spends most of its cost on reasoning it
+// does not need — those belong on FAST_MODEL with thinking disabled.
+export const DEFAULT_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-pro";
+export const FAST_MODEL =
+  process.env.GEMINI_FAST_MODEL?.trim() || process.env.RESEARCH_FAST_MODEL?.trim() || "gemini-2.5-flash";

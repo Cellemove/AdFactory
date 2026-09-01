@@ -5,6 +5,9 @@ out
 .env
 .env.local
 .secrets/
+# Local MCP server config — machine/account specific, and its URL pins one
+# Supabase project ref. Each dev adds their own with `claude mcp add`.
+.mcp.json
 *-credentials*.json
 *service-account*.json
 *-*-*.json

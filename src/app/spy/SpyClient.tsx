@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { spyOnCompetitors, updateSpyAds, type SpyAd } from "../actions/spy";
+import { saveToBank } from "../actions/bank";
+import { youtubeThumb } from "@/lib/video-thumb";
 
 interface HistoryItem {
   id: string;
@@ -55,34 +57,22 @@ function hostOf(url: string): string {
   }
 }
 
-// Derive a YouTube thumbnail from the video id so video tiles render even when
-// the stored sweep has no scraped image. Covers youtu.be / watch / shorts / embed.
-function youtubeThumb(url: string): string | null {
-  try {
-    const u = new URL(url);
-    const host = u.hostname.replace(/^www\./, "");
-    let id: string | null = null;
-    if (host === "youtu.be") id = u.pathname.slice(1).split("/")[0] || null;
-    else if (host.endsWith("youtube.com")) {
-      if (u.pathname === "/watch") id = u.searchParams.get("v");
-      else {
-        const m = u.pathname.match(/^\/(?:shorts|embed|v)\/([^/?#]+)/);
-        if (m) id = m[1] ?? null;
-      }
-    }
-    return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : null;
-  } catch {
-    return null;
-  }
-}
-
 // The best image we can show for a creative: scraped image first, else a derived
 // YouTube thumbnail.
 function thumbFor(ad: SpyAd): string | null {
   return ad.imageUrl || youtubeThumb(ad.sourceUrl || "");
 }
 
-export function SpyClient({ latest, history }: { latest: LatestSweep | null; history: HistoryItem[] }) {
+export function SpyClient({
+  latest,
+  history,
+  bankedUrls = [],
+}: {
+  latest: LatestSweep | null;
+  history: HistoryItem[];
+  /** Source URLs already in the idea bank, so saved tiles render as saved. */
+  bankedUrls?: string[];
+}) {
   const [ads, setAds] = useState<SpyAd[] | null>(latest?.ads ?? null);
   const [sweepId, setSweepId] = useState<string | null>(latest?.id ?? null);
   const [meta, setMeta] = useState<{ focus: string | null; createdAt: string } | null>(
@@ -95,6 +85,30 @@ export function SpyClient({ latest, history }: { latest: LatestSweep | null; his
   const [, startTransition] = useTransition();
   const elapsed = useElapsedMs(isRunning);
   const autoRan = useRef(false);
+  // Which creatives are already banked, keyed by the same value the action uses
+  // as its dedupe key (sourceUrl, falling back to imageUrl).
+  const [banked, setBanked] = useState<Set<string>>(() => new Set(bankedUrls));
+  const [saving, setSaving] = useState<string | null>(null);
+
+  const bankKey = (ad: SpyAd) => (ad.sourceUrl || ad.imageUrl || "").trim();
+
+  const keepAd = (ad: SpyAd) => {
+    const key = bankKey(ad);
+    if (!key || banked.has(key)) return;
+    setError(null);
+    setSaving(key);
+    startTransition(async () => {
+      try {
+        const res = await saveToBank(ad, sweepId);
+        if (res.saved) setBanked((prev) => new Set(prev).add(key));
+        else setError(res.reason ?? "Couldn't save that creative.");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setSaving(null);
+      }
+    });
+  };
 
   const run = (focusOverride?: string | null) => {
     const f = focusOverride !== undefined ? focusOverride : focus || null;
@@ -227,7 +241,14 @@ export function SpyClient({ latest, history }: { latest: LatestSweep | null; his
 
       {/* The gallery */}
       {ads && ads.length > 0 ? (
-        <AdGallery items={visibleAds} onRemove={removeAd} />
+        <AdGallery
+          items={visibleAds}
+          onRemove={removeAd}
+          onKeep={keepAd}
+          isBanked={(ad) => banked.has(bankKey(ad))}
+          savingKey={saving}
+          bankKey={bankKey}
+        />
       ) : !isRunning ? (
         <section className="card text-sm text-ink-500">
           No creatives yet. Hit <span className="font-medium text-ink-700">Refresh trending ads</span> to
@@ -277,14 +298,29 @@ export function SpyClient({ latest, history }: { latest: LatestSweep | null; his
 function AdGallery({
   items,
   onRemove,
+  onKeep,
+  isBanked,
+  savingKey,
+  bankKey,
 }: {
   items: { ad: SpyAd; index: number }[];
   onRemove: (index: number) => void;
+  onKeep: (ad: SpyAd) => void;
+  isBanked: (ad: SpyAd) => boolean;
+  savingKey: string | null;
+  bankKey: (ad: SpyAd) => string;
 }) {
   return (
     <div className="gap-3 columns-2 sm:columns-3 lg:columns-4 [column-fill:_balance]">
       {items.map(({ ad, index }) => (
-        <AdTile key={`${ad.sourceUrl}-${index}`} ad={ad} onRemove={() => onRemove(index)} />
+        <AdTile
+          key={`${ad.sourceUrl}-${index}`}
+          ad={ad}
+          onRemove={() => onRemove(index)}
+          onKeep={() => onKeep(ad)}
+          banked={isBanked(ad)}
+          saving={savingKey !== null && savingKey === bankKey(ad)}
+        />
       ))}
     </div>
   );
@@ -308,27 +344,60 @@ function VerificationBadge({ ad }: { ad: SpyAd }) {
   );
 }
 
-function AdTile({ ad, onRemove }: { ad: SpyAd; onRemove: () => void }) {
+function AdTile({
+  ad,
+  onRemove,
+  onKeep,
+  banked,
+  saving,
+}: {
+  ad: SpyAd;
+  onRemove: () => void;
+  onKeep: () => void;
+  banked: boolean;
+  saving: boolean;
+}) {
   const [broken, setBroken] = useState(false);
   const href = ad.sourceUrl || ad.imageUrl;
   const img = thumbFor(ad);
 
   return (
     <div className="group relative mb-3 block break-inside-avoid overflow-hidden rounded-lg border border-ink-200 bg-white transition hover:border-ink-900 hover:shadow-md">
-      {/* Remove button */}
-      <button
-        type="button"
-        onClick={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          onRemove();
-        }}
-        aria-label="Remove this creative"
-        title="Remove"
-        className="absolute right-2 top-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-sm leading-none text-white opacity-0 transition hover:bg-black/80 group-hover:opacity-100"
-      >
-        ✕
-      </button>
+      {/* Keep + remove. A banked tile keeps its badge visible so you can see at a
+          glance what you've already taken from this sweep. */}
+      <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onKeep();
+          }}
+          disabled={banked || saving}
+          aria-label={banked ? "Already in the idea bank" : "Save to bank"}
+          title={banked ? "In the idea bank" : "Save to bank"}
+          className={`flex h-6 items-center rounded-full px-2 text-[10px] font-medium leading-none transition ${
+            banked
+              ? "bg-emerald-600/90 text-white opacity-100"
+              : "bg-black/60 text-white opacity-0 hover:bg-black/80 group-hover:opacity-100 disabled:opacity-60"
+          }`}
+        >
+          {banked ? "★ banked" : saving ? "saving…" : "★ save"}
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onRemove();
+          }}
+          aria-label="Remove this creative"
+          title="Remove"
+          className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-sm leading-none text-white opacity-0 transition hover:bg-black/80 group-hover:opacity-100"
+        >
+          ✕
+        </button>
+      </div>
 
       <a href={href || undefined} target="_blank" rel="noopener noreferrer" className="block">
         <div className="relative">
