@@ -8,7 +8,7 @@
 // caller owns load/merge/save (and revalidation, when in Next).
 
 import { randomUUID } from "node:crypto";
-import { getLLM } from "@/lib/llm";
+import { getLLM, FAST_MODEL } from "@/lib/llm";
 import { recordUsage } from "@/lib/usage";
 import { saveImage } from "@/lib/storage";
 import { harvestFbPost, downloadFbImage, isFbPostUrl } from "@/lib/fb-post";
@@ -48,9 +48,16 @@ export async function extractWinnerEnrichment(winner: SheetWinner): Promise<Shee
   });
 
   // 3. Gemini reads the creative (+ primary text) into library-style fields.
+  //
+  // This runs on the FAST tier with thinking OFF, and that pairing is deliberate:
+  // the task is a bounded read of one image into five fixed fields (~100 output
+  // tokens), with no reasoning step that thinking would improve. On Pro this was
+  // the single most expensive feature in the app — not from its output, but
+  // because thinking bills at the output rate and it spent ~6x more tokens
+  // reasoning than answering. Pro cannot switch thinking off; Flash can.
   const llm = getLLM();
   const resp = await llm.models.generateContent({
-    model: "gemini-2.5-pro",
+    model: FAST_MODEL,
     contents: [
       {
         role: "user",
@@ -68,11 +75,11 @@ export async function extractWinnerEnrichment(winner: SheetWinner): Promise<Shee
         ],
       },
     ],
-    config: { responseMimeType: "application/json", maxOutputTokens: 4096, thinkingConfig: { thinkingBudget: 1024 } },
+    config: { responseMimeType: "application/json", maxOutputTokens: 4096, thinkingConfig: { thinkingBudget: 0 } },
   });
   await recordUsage({
     feature: "winners_import_enrich",
-    model: "gemini-2.5-pro",
+    model: FAST_MODEL,
     usage: resp.usageMetadata,
     metadata: { key: sheetWinnerKey(winner) },
   });

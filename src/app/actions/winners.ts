@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { supabase, unwrap, unwrapOpt, newId } from "@/lib/db";
-import { getLLM } from "@/lib/llm";
+import { getLLM, FAST_MODEL } from "@/lib/llm";
 import { recordUsage } from "@/lib/usage";
 import { saveImage } from "@/lib/storage";
 
@@ -157,9 +157,11 @@ export async function extractWinnerFromImage(formData: FormData): Promise<Extrac
     contentType: file.type,
   });
 
+  // Bounded read of one creative into fixed fields — same shape as the sheet
+  // winners enricher, so it takes the same tier: fast model, thinking off.
   const llm = getLLM();
   const resp = await llm.models.generateContent({
-    model: "gemini-2.5-pro",
+    model: FAST_MODEL,
     contents: [
       {
         role: "user",
@@ -172,12 +174,12 @@ export async function extractWinnerFromImage(formData: FormData): Promise<Extrac
     config: {
       responseMimeType: "application/json",
       maxOutputTokens: 4096,
-      thinkingConfig: { thinkingBudget: 2048 },
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
   await recordUsage({
     feature: "extraction",
-    model: "gemini-2.5-pro",
+    model: FAST_MODEL,
     usage: resp.usageMetadata,
   });
 

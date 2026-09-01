@@ -1,9 +1,11 @@
 import { z } from "zod";
-import { getLLM, isLLMConfigured } from "@/lib/llm";
+import { getLLM, isLLMConfigured, FAST_MODEL } from "@/lib/llm";
 import { recordUsage } from "@/lib/usage";
 import type { ResearchQueryPlan, ResearchType } from "./research-evidence";
 
-const RESEARCH_FAST_MODEL = process.env.RESEARCH_FAST_MODEL?.trim() || "gemini-2.5-flash";
+// Kept as a named alias so this call site reads the same as before; the tier
+// (and its RESEARCH_FAST_MODEL env override) now lives in lib/llm.ts.
+const RESEARCH_FAST_MODEL = FAST_MODEL;
 
 const planSchema = z.object({
   facets: z.array(z.object({

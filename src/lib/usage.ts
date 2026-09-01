@@ -1,16 +1,40 @@
 // Usage tracking for Gemini calls. Each generateContent() call records one
 // Usage row; the /usage page aggregates them by day/feature.
 //
-// Prices are Gemini 2.5 Pro on Vertex AI as of mid-2026 — approximate, used
-// only to compute an estimated cost shown to the user. Adjust the constants
-// below if Google's pricing changes or you switch model.
+// Prices are Vertex AI as of mid-2026 — approximate, used only to compute an
+// estimated cost shown to the user. Adjust the table below if Google's pricing
+// changes. Prices are PER MODEL: costing a Flash call at Pro rates overstates it
+// ~4x and would make a model downgrade look like a bigger win than it is.
 
 import { supabase, newId } from "@/lib/db";
 
-// Per-token prices in USD. Vertex bills thinking tokens at the output rate.
-const PRICE_INPUT_USD_PER_TOKEN = 1.25 / 1_000_000;
-const PRICE_OUTPUT_USD_PER_TOKEN = 10 / 1_000_000;
-const PRICE_THINKING_USD_PER_TOKEN = 10 / 1_000_000;
+interface ModelPrice {
+  /** USD per input token. */
+  input: number;
+  /** USD per output token. Vertex bills thinking tokens at this same rate. */
+  output: number;
+}
+
+// Per-million-token list prices, converted to per-token.
+const PRO_PRICE: ModelPrice = { input: 1.25 / 1_000_000, output: 10 / 1_000_000 };
+const FLASH_PRICE: ModelPrice = { input: 0.3 / 1_000_000, output: 2.5 / 1_000_000 };
+const FLASH_LITE_PRICE: ModelPrice = { input: 0.1 / 1_000_000, output: 0.4 / 1_000_000 };
+
+// Longest prefix wins, so versioned ids ("gemini-2.5-flash-002") price correctly
+// and flash-lite is never mistaken for flash.
+const MODEL_PRICES: ReadonlyArray<readonly [string, ModelPrice]> = [
+  ["gemini-2.5-flash-lite", FLASH_LITE_PRICE],
+  ["gemini-2.5-flash", FLASH_PRICE],
+  ["gemini-2.5-pro", PRO_PRICE],
+];
+
+export function priceFor(model: string | null | undefined): ModelPrice {
+  const id = model?.trim();
+  if (!id) return PRO_PRICE;
+  // Unknown models fall back to Pro so a new model never silently under-reports.
+  return MODEL_PRICES.find(([prefix]) => id.startsWith(prefix))?.[1] ?? PRO_PRICE;
+}
+
 // Google Search grounding is billed per request — Gemini 2.5 = $35 / 1k.
 const PRICE_GROUNDED_REQUEST_USD = 0.035;
 
@@ -19,6 +43,10 @@ export interface GeminiUsageMetadata {
   candidatesTokenCount?: number;
   thoughtsTokenCount?: number;
   totalTokenCount?: number;
+  // Portion of promptTokenCount served from context cache. Without capturing
+  // this there is no way to tell whether caching is firing at all — a silent
+  // cache miss looks identical to no caching.
+  cachedContentTokenCount?: number;
 }
 
 export interface RecordUsageInput {
@@ -34,11 +62,15 @@ export function computeCostUsd(opts: {
   outputTokens: number;
   thinkingTokens: number;
   grounded?: boolean;
+  /** Defaults to Pro pricing when omitted, preserving the pre-tiering behaviour. */
+  model?: string | null;
 }): number {
+  const price = priceFor(opts.model);
   const cost =
-    opts.inputTokens * PRICE_INPUT_USD_PER_TOKEN +
-    opts.outputTokens * PRICE_OUTPUT_USD_PER_TOKEN +
-    opts.thinkingTokens * PRICE_THINKING_USD_PER_TOKEN +
+    opts.inputTokens * price.input +
+    // Thinking bills at the output rate — on Pro that is 8x the input rate, which
+    // is why a short-output call with a big thinking budget is so expensive.
+    (opts.outputTokens + opts.thinkingTokens) * price.output +
     (opts.grounded ? PRICE_GROUNDED_REQUEST_USD : 0);
   return Math.round(cost * 1_000_000) / 1_000_000; // 6 decimals
 }
@@ -52,6 +84,7 @@ export async function recordUsage(input: RecordUsageInput): Promise<void> {
     outputTokens,
     thinkingTokens,
     grounded: input.grounded,
+    model: input.model,
   });
   // Best-effort: don't crash the calling action if the Usage table doesn't
   // exist yet or the insert fails — log and move on.
@@ -64,7 +97,13 @@ export async function recordUsage(input: RecordUsageInput): Promise<void> {
       outputTokens,
       thinkingTokens,
       estimatedCostUsd,
-      metadata: input.metadata ? JSON.stringify(input.metadata) : null,
+      metadata: (() => {
+      // Fold the cache-hit count into metadata so /usage can show whether
+      // caching is working, without needing a schema migration.
+      const cached = input.usage?.cachedContentTokenCount ?? 0;
+      const meta = cached > 0 ? { ...(input.metadata ?? {}), cachedTokens: cached } : input.metadata;
+      return meta ? JSON.stringify(meta) : null;
+    })(),
       createdAt: new Date().toISOString(),
     });
     if (error) {
