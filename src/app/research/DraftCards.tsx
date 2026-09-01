@@ -8,9 +8,7 @@ import {
   type ResearchedAvatarDraft,
   type ResearchedConceptDraft,
 } from "../actions/research";
-import { submitResearchFeedback } from "../actions/research-feedback";
 import type { DraftVerification } from "@/lib/cellumove/verify-research";
-import type { ResearchEvidenceClaim, ResearchQualityReport } from "@/lib/cellumove/research-evidence";
 
 // Shared draft card components used by both the ResearchClient (live drafts
 // from the current session) and the detail page (drafts pulled from a past
@@ -20,12 +18,12 @@ export function AngleDraftCard({ draft }: { draft: ResearchedAngleDraft }) {
   const [saved, setSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const save = (overrideQuality = false) => {
+  const save = () => {
     setError(null);
     setIsSaving(true);
     (async () => {
       try {
-        await saveResearchedAngle(draft, overrideQuality);
+        await saveResearchedAngle(draft);
         setSaved(true);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -37,11 +35,11 @@ export function AngleDraftCard({ draft }: { draft: ResearchedAngleDraft }) {
   return (
     <div className="rounded-md border border-ink-200 bg-ink-50 p-2.5 text-xs">
       <div className="flex items-start justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-1.5"><span className="font-semibold text-ink-900">{draft.name}</span><QualityBadge quality={draft.quality} /></div>
+        <div className="font-semibold text-ink-900">{draft.name}</div>
         {saved ? (
           <span className="tag tag-ok">saved</span>
         ) : (
-          <button className="btn btn-ghost text-xs" onClick={() => save(false)} disabled={isSaving}>
+          <button className="btn btn-ghost text-xs" onClick={save} disabled={isSaving}>
             {isSaving ? "saving…" : "save as angle"}
           </button>
         )}
@@ -61,11 +59,6 @@ export function AngleDraftCard({ draft }: { draft: ResearchedAngleDraft }) {
           )).reduce<React.ReactNode[]>((acc, el, i) => acc.length === 0 ? [el] : [...acc, " ", el], [])}
         </div>
       )}
-      <ResearchEvidencePanel evidence={draft.evidence} verification={draft.verification} />
-      <ResearchFeedbackControls researchId={draft.researchId} draftKey={draft.draftKey} />
-      {draft.quality?.status === "reject" && !saved && (
-        <button className="mt-2 text-xs text-amber-800 underline" onClick={() => save(true)} disabled={isSaving}>Save anyway with quality override</button>
-      )}
       {error && <div className="mt-1 text-red-700">{error}</div>}
     </div>
   );
@@ -75,12 +68,12 @@ export function SubAvatarDraftCard({ draft, angleSlug }: { draft: ResearchedAvat
   const [saved, setSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const save = (overrideQuality = false) => {
+  const save = () => {
     setError(null);
     setIsSaving(true);
     (async () => {
       try {
-        await saveResearchedSubAvatar({ angleSlug, draft, overrideQuality });
+        await saveResearchedSubAvatar({ angleSlug, draft });
         setSaved(true);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -100,12 +93,11 @@ export function SubAvatarDraftCard({ draft, angleSlug }: { draft: ResearchedAvat
             </span>
           )}
           <VerificationBadges v={draft.verification} />
-          <QualityBadge quality={draft.quality} />
         </div>
         {saved ? (
           <span className="tag tag-ok">saved</span>
         ) : (
-          <button className="btn btn-ghost text-xs" onClick={() => save(false)} disabled={isSaving}>
+          <button className="btn btn-ghost text-xs" onClick={save} disabled={isSaving}>
             {isSaving ? "saving…" : "save as sub-avatar"}
           </button>
         )}
@@ -144,13 +136,8 @@ export function SubAvatarDraftCard({ draft, angleSlug }: { draft: ResearchedAvat
             </div>
           )}
           <VerificationDetails v={draft.verification} />
-          <ResearchEvidencePanel evidence={draft.evidence} verification={draft.verification} />
         </div>
       </details>
-      <ResearchFeedbackControls researchId={draft.researchId} draftKey={draft.draftKey} />
-      {draft.quality?.status === "reject" && !saved && (
-        <button className="mt-2 text-xs text-amber-800 underline" onClick={() => save(true)} disabled={isSaving}>Save anyway with quality override</button>
-      )}
       {error && <div className="mt-1 text-red-700">{error}</div>}
     </div>
   );
@@ -200,7 +187,7 @@ function VerificationDetails({ v }: { v?: DraftVerification | null }) {
 export function ConceptDraftCard({ draft }: { draft: ResearchedConceptDraft }) {
   return (
     <div className="rounded-md border border-ink-200 bg-ink-50 p-2.5 text-xs">
-      <div className="flex flex-wrap items-center gap-1.5"><span className="font-semibold text-ink-900">{draft.title}</span><QualityBadge quality={draft.quality} /></div>
+      <div className="font-semibold text-ink-900">{draft.title}</div>
       <div className="mt-1 text-ink-700"><span className="font-medium">Hook:</span> {draft.hook}</div>
       <div className="mt-0.5 text-ink-700"><span className="font-medium">Headline:</span> {draft.headline}</div>
       <div className="mt-0.5 text-ink-600"><span className="font-medium">Visual:</span> {draft.visualConcept}</div>
@@ -213,73 +200,6 @@ export function ConceptDraftCard({ draft }: { draft: ResearchedConceptDraft }) {
           ))}
         </div>
       )}
-      <ResearchEvidencePanel evidence={draft.evidence} verification={draft.verification} />
-      <ResearchFeedbackControls researchId={draft.researchId} draftKey={draft.draftKey} />
-    </div>
-  );
-}
-
-function QualityBadge({ quality }: { quality?: ResearchQualityReport }) {
-  if (!quality) return null;
-  const cls = quality.status === "pass" ? "tag tag-ok" : quality.status === "review" ? "tag tag-warn" : "tag tag-danger";
-  return <span className={cls} title={[...quality.blockers, ...quality.warnings].join(" ")}>evidence {quality.score}/100 · {quality.status}</span>;
-}
-
-function ResearchEvidencePanel({ evidence, verification }: { evidence?: ResearchEvidenceClaim[]; verification?: DraftVerification | null }) {
-  const items = evidence ?? verification?.evidence ?? [];
-  if (items.length === 0) return null;
-  return (
-    <details className="mt-2 rounded-md border border-ink-200 bg-white p-2">
-      <summary className="cursor-pointer font-medium text-ink-700">Evidence ledger · {items.length} items</summary>
-      <ul className="mt-2 space-y-2">
-        {items.map((item, index) => {
-          const status = item.verificationStatus ?? "unverified";
-          const statusClass = status === "verified" || status === "source_checked" ? "text-emerald-700" : status === "inference" ? "text-blue-700" : "text-amber-700";
-          return (
-            <li key={`${item.category}-${index}`} className="border-l-2 border-ink-200 pl-2">
-              <div className="flex flex-wrap gap-1"><span className="tag">{item.category}</span><span className="tag">{item.type}</span><span className={statusClass}>{status.replace("_", " ")}</span></div>
-              <div className="mt-0.5 text-ink-700">{item.type === "verbatim" ? `“${item.text}”` : item.text}</div>
-              {item.sourceUrl && <a href={item.sourceUrl} target="_blank" rel="noreferrer" className="break-all text-ink-500 underline">source</a>}
-            </li>
-          );
-        })}
-      </ul>
-    </details>
-  );
-}
-
-function ResearchFeedbackControls({ researchId, draftKey }: { researchId?: string; draftKey?: string }) {
-  const [sent, setSent] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  if (!researchId || !draftKey) return null;
-  const send = async (rating: string) => {
-    setPending(true);
-    setError(null);
-    try {
-      await submitResearchFeedback({ researchId, draftKey, rating });
-      setSent(rating);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setPending(false);
-    }
-  };
-  return (
-    <div className="mt-2 border-t border-ink-200 pt-2">
-      <div className="text-[11px] font-medium text-ink-500">Strategist feedback</div>
-      <div className="mt-1 flex flex-wrap gap-1">
-        {[
-          ["useful", "Useful"],
-          ["generic", "Too generic"],
-          ["incorrect", "Incorrect"],
-          ["duplicate", "Duplicate"],
-          ["used_in_script", "Used in script"],
-        ].map(([rating, label]) => (
-          <button key={rating} className={`btn btn-ghost text-[11px] ${sent === rating ? "border-emerald-500 text-emerald-700" : ""}`} disabled={pending} onClick={() => send(rating!)}>{label}</button>
-        ))}
-      </div>
-      {error && <div className="mt-1 text-red-700">{error}</div>}
     </div>
   );
 }
