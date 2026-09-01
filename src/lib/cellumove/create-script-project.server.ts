@@ -171,7 +171,7 @@ export async function createScriptProjectCore(
     unwrap(await supabase.from("ScriptProject").insert({
       id: projectId,
       title: parsed.title,
-      status: editor ? "assigned" : "available",
+      status: "draft",
       strategistUserId: strategist.id,
       editorUserId: editor?.id ?? null,
       createdByUserId: options.actor.id,
@@ -207,7 +207,7 @@ export async function createScriptProjectCore(
       status: editor ? "assigned" : "available", assignedAt: editor ? createdAt : null,
       createdAt, updatedAt: createdAt,
     }).select("id").single());
-    await reportScriptGenerationProgress(progress, { stage: "persistence", level: "success", message: editor ? "Editor assignment saved" : "Added to the unassigned editor queue" });
+    await reportScriptGenerationProgress(progress, { stage: "persistence", level: "success", message: editor ? "Video editor reserved; draft remains with the strategist" : "Video editor can be assigned later" });
 
     await persistScriptSources(projectId, generated.sources, createdAt);
     await reportScriptGenerationProgress(progress, { stage: "persistence", level: "success", message: `${generated.sources.length} source receipts saved` });

@@ -8,6 +8,7 @@ import {
   inspectScriptQuality,
   parseScriptDocument,
   ScriptDocumentSchema,
+  ScriptModuleSchema,
 } from "@/lib/cellumove/script-studio";
 import {
   canClaimScript,
@@ -16,6 +17,7 @@ import {
   normalizeScriptWorkflowStatus,
 } from "@/lib/cellumove/script-workflow";
 import { generateResourceGroundedScript } from "@/lib/cellumove/script-generation.server";
+import { rewriteScriptModuleWithAI } from "@/lib/cellumove/script-module-assist.server";
 import { createScriptProjectCore, type CreateScriptProjectInput } from "@/lib/cellumove/create-script-project.server";
 import { persistScriptSources } from "@/lib/cellumove/script-sources.server";
 import type { AngleRow, AppUserRow, Json, ProductRow, ReferenceFormatRow, ScriptAssignmentRow, ScriptProjectRow, SubAvatarRow } from "@/lib/database.types";
@@ -52,7 +54,7 @@ export async function generateScriptProjectDraft(input: {
   if (!project) throw new Error("Script project not found.");
   if (project.revision !== expectedRevision) throw new Error("This script changed in another session. Reload before generating again.");
   if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
-    throw new Error("This script is frozen for the editor. Request changes before editing the handed-off version.");
+    throw new Error("This script cannot be edited in its current state.");
   }
 
   const [productRaw, angleRaw, avatarRaw, frameworkRaw, pipelineSourceRaw] = await Promise.all([
@@ -153,7 +155,7 @@ export async function saveScriptDocument(input: {
   ) as ScriptProjectRow | null;
   if (!project) throw new Error("Script project not found.");
   if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
-    throw new Error("This script is frozen for the editor. Request changes before editing the handed-off version.");
+    throw new Error("This script cannot be edited in its current state.");
   }
   const now = new Date().toISOString();
   const nextRevision = expectedRevision + 1;
@@ -177,6 +179,47 @@ export async function saveScriptDocument(input: {
   return { revision: nextRevision };
 }
 
+export async function assistScriptModule(input: {
+  projectId: string;
+  expectedRevision: number;
+  moduleId: string;
+  notes: string;
+  document: z.infer<typeof ScriptDocumentSchema>;
+}): Promise<{ module: z.infer<typeof ScriptModuleSchema> }> {
+  await requireStrategist();
+  const parsed = z.object({
+    projectId: z.string().min(1),
+    expectedRevision: z.number().int().nonnegative(),
+    moduleId: z.string().min(1),
+    notes: z.string().trim().min(2, "Add a short note describing the change you want.").max(2000),
+    document: ScriptDocumentSchema,
+  }).parse(input);
+  const project = unwrapOpt(
+    await supabase.from("ScriptProject").select("*").eq("id", parsed.projectId).maybeSingle(),
+  ) as ScriptProjectRow | null;
+  if (!project) throw new Error("Script project not found.");
+  if (project.revision !== parsed.expectedRevision) {
+    throw new Error("This script changed in another session. Reload before using AI Assist.");
+  }
+  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
+    throw new Error("This script cannot be edited in its current state.");
+  }
+  if (parsed.document.product.id !== project.productId || parsed.document.angle.id !== project.angleId) {
+    throw new Error("The open document does not match this script project. Reload and try again.");
+  }
+  const selectedModule = parsed.document.modules.find((item) => item.id === parsed.moduleId);
+  if (!selectedModule) throw new Error("The selected module no longer exists.");
+  if (selectedModule.locked) throw new Error("Unlock this module before using AI Assist.");
+
+  return {
+    module: await rewriteScriptModuleWithAI({
+      document: parsed.document,
+      module: selectedModule,
+      notes: parsed.notes,
+    }),
+  };
+}
+
 export async function snapshotScriptProject(input: { projectId: string; changeSummary: string }): Promise<{ version: number }> {
   const actor = await requireStrategist();
   const projectId = z.string().min(1).parse(input.projectId);
@@ -184,7 +227,7 @@ export async function snapshotScriptProject(input: { projectId: string; changeSu
   const project = unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()) as ScriptProjectRow | null;
   if (!project) throw new Error("Script project not found.");
   if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
-    throw new Error("This script is frozen for the editor. Request changes before creating another version.");
+    throw new Error("This script cannot create another version in its current state.");
   }
   const version = project.currentVersion + 1;
   const now = new Date().toISOString();
@@ -217,7 +260,7 @@ export async function sendScriptProjectToEditor(input: {
   if (!project) throw new Error("Script project not found.");
   if (project.revision !== expectedRevision) throw new Error("This script changed in another session. Reload before sending it.");
   if (!canSendScript(normalizeScriptWorkflowStatus(project.status, assignment?.status))) {
-    throw new Error("This script has already moved to the editor workflow.");
+    throw new Error("The video editor has already started production. Request changes before updating the handoff.");
   }
   if (document.product.id !== project.productId || document.angle.id !== project.angleId) {
     throw new Error("The open document does not match this script project. Reload and try again.");
@@ -321,7 +364,7 @@ export async function assignScriptProjectToEditor(input: {
   if (!project || !assignment) throw new Error("Script assignment not found.");
   if (!editor || editor.role !== "editor") throw new Error("Choose a valid Editor account.");
   if (project.editorUserId || assignment.editorUserId) throw new Error("This script has already been assigned. Reload the page.");
-  if (assignment.status !== "available") throw new Error("This script is not available for assignment in its current state.");
+  if (!["available", "ready"].includes(assignment.status)) throw new Error("This script is not available for assignment in its current state.");
 
   const [productRaw, angleRaw, strategistRaw] = await Promise.all([
     unwrapOpt(await supabase.from("Product").select("*").eq("id", project.productId).maybeSingle()),
@@ -349,13 +392,13 @@ export async function assignScriptProjectToEditor(input: {
     status: "assigned",
     assignedAt: now,
     updatedAt: now,
-  }).eq("id", assignment.id).eq("status", "available").is("editorUserId", null).select("id").maybeSingle();
+  }).eq("id", assignment.id).eq("status", assignment.status).is("editorUserId", null).select("id").maybeSingle();
   if (assignmentUpdate.error) throw new Error(assignmentUpdate.error.message);
   if (!assignmentUpdate.data) throw new Error("Another editor claimed or received this script first. Reload the page.");
 
   const projectUpdate = await supabase.from("ScriptProject").update({
     editorUserId: editor.id,
-    status: "assigned",
+    status: project.status === "draft" ? "draft" : "assigned",
     displayName,
     updatedAt: now,
   }).eq("id", projectId).is("editorUserId", null).select("id").maybeSingle();
