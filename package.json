@@ -18,6 +18,7 @@
     "test:research-architecture": "tsx --test src/lib/cellumove/research-architecture.test.ts",
     "test:verified-verbatims": "tsx --test src/lib/cellumove/verified-verbatims.test.ts",
     "verbatims:rebuild-verified": "tsx --env-file=.env scripts/rebuild-verified-verbatims.ts",
+    "baseline:e2e": "tsx --env-file=.env scripts/baseline-end-to-end.ts",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
     "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts"
   },
