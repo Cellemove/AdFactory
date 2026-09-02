@@ -17,6 +17,8 @@ import {
   normalizeScriptWorkflowStatus,
 } from "@/lib/cellumove/script-workflow";
 import { generateResourceGroundedScript } from "@/lib/cellumove/script-generation.server";
+import { appendHookAlternatives, MAX_SCRIPT_HOOK_ALTERNATIVES } from "@/lib/cellumove/script-hook-alternatives";
+import { generateMoreHookAlternatives } from "@/lib/cellumove/script-hook-alternatives.server";
 import { rewriteScriptModuleWithAI } from "@/lib/cellumove/script-module-assist.server";
 import { createScriptProjectCore, type CreateScriptProjectInput } from "@/lib/cellumove/create-script-project.server";
 import { persistScriptSources } from "@/lib/cellumove/script-sources.server";
@@ -217,6 +219,54 @@ export async function assistScriptModule(input: {
       module: selectedModule,
       notes: parsed.notes,
     }),
+  };
+}
+
+// Tops up document.hookAlternatives. Like assistScriptModule this writes
+// nothing: the client appends the returned texts to its local document and the
+// strategist persists them with Save changes.
+export async function suggestScriptHookAlternatives(input: {
+  projectId: string;
+  expectedRevision: number;
+  document: z.infer<typeof ScriptDocumentSchema>;
+}): Promise<{ hooks: string[]; generatedCount: number; skippedDuplicate: number; skippedClaimFlagged: number }> {
+  await requireStrategist();
+  const parsed = z.object({
+    projectId: z.string().min(1),
+    expectedRevision: z.number().int().nonnegative(),
+    document: ScriptDocumentSchema,
+  }).parse(input);
+  const project = unwrapOpt(
+    await supabase.from("ScriptProject").select("*").eq("id", parsed.projectId).maybeSingle(),
+  ) as ScriptProjectRow | null;
+  if (!project) throw new Error("Script project not found.");
+  if (project.revision !== parsed.expectedRevision) {
+    throw new Error("This script changed in another session. Reload before asking for more hooks.");
+  }
+  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
+    throw new Error("This script cannot be edited in its current state.");
+  }
+  if (parsed.document.product.id !== project.productId || parsed.document.angle.id !== project.angleId) {
+    throw new Error("The open document does not match this script project. Reload and try again.");
+  }
+  // Checked before the model call so a raced click costs nothing.
+  if (parsed.document.hookAlternatives.length >= MAX_SCRIPT_HOOK_ALTERNATIVES) {
+    throw new Error(`This script already has the maximum of ${MAX_SCRIPT_HOOK_ALTERNATIVES} hook options.`);
+  }
+
+  // Returns text, not ids: the client re-runs appendHookAlternatives against its
+  // own (possibly newer) document so id allocation always sees the freshest pool.
+  // The skip counts are computed HERE, against the raw model output, because
+  // that's the only place they're still meaningful — by the time the client
+  // re-runs the same filter on an already-filtered list, the reason for a drop
+  // is long gone.
+  const generated = await generateMoreHookAlternatives({ document: parsed.document });
+  const result = appendHookAlternatives(parsed.document.hookAlternatives, generated);
+  return {
+    hooks: result.added.map((hook) => hook.text),
+    generatedCount: generated.length,
+    skippedDuplicate: result.skippedDuplicate,
+    skippedClaimFlagged: result.skippedClaimFlagged,
   };
 }
 

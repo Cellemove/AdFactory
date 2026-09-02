@@ -14,6 +14,9 @@ out
 !package-lock.json
 !tsconfig*.json
 !postcss.config.json
+# Local run output: verbatim backups and baseline timing artifacts. The stamped
+# filenames already match *-*-*.json, but latest.json does not.
+backups/
 dev.db
 dev.db-journal
 prisma/migrations

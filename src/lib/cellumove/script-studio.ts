@@ -80,10 +80,11 @@ export function parseScriptDocument(value: unknown): ScriptDocument {
 
 function kindFromLabel(label: string): ScriptModule["kind"] {
   const normalized = label.toLowerCase();
-  if (/hook|dream outcome|one change|regret|test|frustration/.test(normalized)) return "hook";
-  if (/problem|spiral|old way|why not me/.test(normalized)) return "problem";
+  if (/hook|dream outcome|one change|regret|test|frustration|doubt|myth/.test(normalized)) return "hook";
+  if (/problem|spiral|old way|why not me|why they fail|isn't for|not for/.test(normalized)) return "problem";
+  if (/agitat/.test(normalized)) return "agitation";
   if (/solution|turning point|alternative|new way|mechanism|why it works/.test(normalized)) return "solution";
-  if (/proof|reaction/.test(normalized)) return "proof";
+  if (/proof|reaction|objection/.test(normalized)) return "proof";
   if (/offer/.test(normalized)) return "offer";
   if (/cta|relief/.test(normalized)) return "cta";
   return "custom";
