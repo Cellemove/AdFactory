@@ -12,6 +12,17 @@ TEARDOWN_API_BASE_URL=http://127.0.0.1:8011/api/v1
 TEARDOWN_INTERNAL_TOKEN=<same value as Teardown ADFACTORY_SHARED_SECRET>
 ```
 
+For the deployed AdFactory app, use the public Cloud Run endpoint instead of localhost:
+
+```dotenv
+TEARDOWN_API_BASE_URL=https://teardown-api-67886675912.us-central1.run.app/api/v1
+TEARDOWN_INTERNAL_TOKEN=<same value as Teardown ADFACTORY_SHARED_SECRET>
+```
+
+Set both values for Production, Preview, and Development in Vercel, then redeploy. A
+`127.0.0.1` or `localhost` URL points back to the Vercel runtime and cannot reach a
+Teardown server running on a developer computer.
+
 Restart AdFactory after changing its environment. The Script Studio source selector is
 enabled only when both values exist and the Teardown API returns completed records.
 

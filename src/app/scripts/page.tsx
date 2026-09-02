@@ -24,7 +24,7 @@ export default async function ScriptsPage() {
       <div className="space-y-6">
         <header>
           <h1 className="text-2xl font-semibold tracking-tight">Script Studio</h1>
-          <p className="mt-1 text-sm text-ink-500">Structured ad scripts from strategy through editor handoff.</p>
+          <p className="mt-1 text-sm text-ink-500">Creative Strategists author scripts, then hand approved versions to video editors for production.</p>
         </header>
         <div className="card border-amber-300 bg-amber-50">
           <h2 className="font-semibold text-amber-900">{missingMigration ? "Database setup required" : "Could not load scripts"}</h2>

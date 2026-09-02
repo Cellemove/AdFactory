@@ -72,7 +72,10 @@ export default async function ReviewsPage() {
     const project = projectById.get(assignment.projectId);
     if (!project) return [];
     const handoff = versions.find((version) => version.projectId === project.id);
-    const document = parseScriptDocument(handoff?.document ?? project.document);
+    // Video editors only receive explicit, immutable handoff snapshots. The
+    // strategist's live working document never appears in the production queue.
+    if (!handoff) return [];
+    const document = parseScriptDocument(handoff.document);
     const product = productById.get(project.productId) ?? null;
     const shopify = readShopifyProductMetadata(product?.context);
     const imageCandidates = [
@@ -85,7 +88,7 @@ export default async function ReviewsPage() {
       title: project.title,
       displayName: project.displayName,
       document,
-      handoffVersion: handoff?.version ?? project.currentVersion,
+      handoffVersion: handoff.version,
       status: normalizeScriptWorkflowStatus(project.status, assignment.status),
       editorUserId: assignment.editorUserId,
       editorName: assignment.editorUserId ? userById.get(assignment.editorUserId)?.username ?? null : null,

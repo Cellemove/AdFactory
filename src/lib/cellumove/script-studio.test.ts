@@ -122,13 +122,19 @@ test("renders a readable production handoff with timing, B-roll, and sources", (
 
 test("normalizes the explicit editor handoff lifecycle", () => {
   assert.equal(normalizeScriptWorkflowStatus("draft", null), "draft");
+  assert.equal(normalizeScriptWorkflowStatus("draft", "assigned"), "draft");
   assert.equal(normalizeScriptWorkflowStatus("review", "assigned"), "ready");
   assert.equal(normalizeScriptWorkflowStatus("assigned", "claimed"), "claimed");
   assert.equal(normalizeScriptWorkflowStatus("submitted", "submitted"), "submitted");
   assert.equal(normalizeScriptWorkflowStatus("changes_requested", "changes_requested"), "changes_requested");
   assert.equal(normalizeScriptWorkflowStatus("approved", "approved"), "approved");
   assert.equal(canEditScript("draft"), true);
-  assert.equal(canEditScript("ready"), false);
+  assert.equal(canEditScript("ready"), true);
+  assert.equal(canEditScript("claimed"), true);
+  assert.equal(canEditScript("submitted"), true);
+  assert.equal(canEditScript("approved"), true);
+  assert.equal(canSendScript("ready"), true);
+  assert.equal(canSendScript("claimed"), false);
   assert.equal(canSendScript("changes_requested"), true);
   assert.equal(canClaimScript("ready"), true);
 });

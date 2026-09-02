@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, useTransition, type TextareaHTMLAttributes } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition, type TextareaHTMLAttributes } from "react";
 import { useRouter } from "next/navigation";
-import { generateScriptProjectDraft, saveScriptDocument, sendScriptProjectToEditor, snapshotScriptProject } from "@/app/actions/scripts";
+import { assistScriptModule, generateScriptProjectDraft, saveScriptDocument, sendScriptProjectToEditor, snapshotScriptProject } from "@/app/actions/scripts";
 import { inspectScriptQuality, renderScriptDownload, scriptDownloadFilename, type ScriptDocument, type ScriptModule } from "@/lib/cellumove/script-studio";
 import { canEditScript, canSendScript, SCRIPT_STATUS_META, type ScriptWorkflowStatus } from "@/lib/cellumove/script-workflow";
 
@@ -35,19 +35,34 @@ function AutoResizeTextarea({ className = "", onInput, value, ...props }: Textar
   );
 }
 
-export function ScriptStudioClient({ projectId, initialDocument, initialRevision, initialVersion, initialStatus, editorName }: { projectId: string; initialDocument: ScriptDocument; initialRevision: number; initialVersion: number; initialStatus: ScriptWorkflowStatus; editorName: string | null }) {
+export function ScriptStudioClient({ projectId, initialDocument, initialRevision, initialVersion, initialHandoffVersion, initialStatus, editorName }: { projectId: string; initialDocument: ScriptDocument; initialRevision: number; initialVersion: number; initialHandoffVersion: number | null; initialStatus: ScriptWorkflowStatus; editorName: string | null }) {
   const router = useRouter();
   const [document, setDocument] = useState(initialDocument);
   const [revision, setRevision] = useState(initialRevision);
   const [version, setVersion] = useState(initialVersion);
+  const [handoffVersion, setHandoffVersion] = useState(initialHandoffVersion);
   const [status, setStatus] = useState(initialStatus);
   const [view, setView] = useState<View>("modules");
   const [pending, startTransition] = useTransition();
   const [message, setMessage] = useState<string | null>(null);
+  const [assistModuleId, setAssistModuleId] = useState<string | null>(null);
+  const [assistNotes, setAssistNotes] = useState("");
+  const [assistError, setAssistError] = useState<string | null>(null);
+  const [assistPending, setAssistPending] = useState(false);
   const issues = useMemo(() => inspectScriptQuality(document), [document]);
   const totalDuration = document.modules.reduce((sum, module) => sum + module.durationSec, 0);
   const editable = canEditScript(status);
   const sendable = canSendScript(status);
+  const assistModule = document.modules.find((module) => module.id === assistModuleId) ?? null;
+
+  useEffect(() => {
+    if (!assistModuleId) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !assistPending) setAssistModuleId(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [assistModuleId, assistPending]);
 
   const updateModule = (id: string, patch: Partial<ScriptModule>) => {
     setDocument((current) => ({ ...current, modules: current.modules.map((module) => module.id === id ? { ...module, ...patch } : module) }));
@@ -67,6 +82,43 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
   const removeModule = (id: string) => {
     if (document.modules.length === 1 || !confirm("Remove this beat?")) return;
     setDocument((current) => ({ ...current, modules: current.modules.filter((module) => module.id !== id) }));
+  };
+  const openModuleAssist = (moduleId: string) => {
+    setAssistModuleId(moduleId);
+    setAssistNotes("");
+    setAssistError(null);
+  };
+  const closeModuleAssist = () => {
+    if (assistPending) return;
+    setAssistModuleId(null);
+    setAssistNotes("");
+    setAssistError(null);
+  };
+  const applyModuleAssist = async () => {
+    if (!assistModule || assistNotes.trim().length < 2) return;
+    const originalLabel = assistModule.label;
+    setAssistPending(true);
+    setAssistError(null);
+    try {
+      const result = await assistScriptModule({
+        projectId,
+        expectedRevision: revision,
+        moduleId: assistModule.id,
+        notes: assistNotes,
+        document,
+      });
+      setDocument((current) => ({
+        ...current,
+        modules: current.modules.map((module) => module.id === result.module.id ? result.module : module),
+      }));
+      setMessage(`AI revised “${originalLabel}”. Review the module, then save your changes.`);
+      setAssistModuleId(null);
+      setAssistNotes("");
+    } catch (error) {
+      setAssistError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setAssistPending(false);
+    }
   };
   const save = () => {
     setMessage(null);
@@ -123,23 +175,28 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
     URL.revokeObjectURL(url);
   };
   const sendToEditor = () => {
-    const destination = editorName ? `@${editorName}` : "the unassigned editor queue";
-    if (!confirm(`Send the current script to ${destination}? This freezes version ${version + 1} for the editor.`)) return;
+    const destination = editorName ? `@${editorName}` : "the unassigned video editor queue";
+    if (!confirm(`Send the current script to ${destination}? This creates frozen handoff version ${version + 1}. You can continue editing the working script afterward.`)) return;
     setMessage(null);
     startTransition(async () => {
       try {
         const result = await sendScriptProjectToEditor({ projectId, expectedRevision: revision, document });
         setRevision(result.revision);
         setVersion(result.version);
+        setHandoffVersion(result.version);
         setStatus(result.status);
-        setMessage(`Version ${result.version} is ready for ${editorName ? `@${editorName}` : "the editor queue"}.`);
+        setMessage(`Version ${result.version} is ready for ${editorName ? `@${editorName}` : "the video editor queue"}. Your working script remains editable.`);
         router.refresh();
       } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
     });
   };
 
   const statusMeta = SCRIPT_STATUS_META[status];
-  const sendLabel = status === "changes_requested" ? "Send updated version" : "Send to editor";
+  const sendLabel = status === "changes_requested"
+    ? "Send updated version"
+    : status === "ready" && handoffVersion !== null
+      ? "Update editor handoff"
+      : "Send to video editor";
 
   return (
     <div className="space-y-4">
@@ -148,7 +205,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
         <div className="flex flex-wrap gap-2"><button className="btn" onClick={generateDraft} disabled={pending || !editable}>{pending ? "Generating…" : "AI fill all"}</button><button className="btn" onClick={downloadScript}>Download script</button><button className="btn" onClick={snapshot} disabled={pending || !editable}>Create version</button><button className="btn" onClick={save} disabled={pending || !editable}>{pending ? "Working…" : "Save changes"}</button><button className="btn btn-primary" onClick={sendToEditor} disabled={pending || !sendable}>{sendLabel}</button></div>
       </div>
       {message && <div className={`rounded-lg border p-3 text-sm ${/changed|error|could not/i.test(message) ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`}>{message}</div>}
-      {!editable && <div className="rounded-xl border border-brand-purple/20 bg-brand-purple/5 px-4 py-3 text-sm text-ink-700"><span className="font-semibold">Editor handoff is frozen at version {version}.</span> The editor sees that saved version while this project moves through review.</div>}
+      {handoffVersion !== null && <div className="rounded-xl border border-brand-purple/20 bg-brand-purple/5 px-4 py-3 text-sm text-ink-700"><span className="font-semibold">Video editor handoff is frozen at version {handoffVersion}.</span> Your working script remains editable. Saved changes do not alter the video editor's copy until you explicitly send an updated handoff.</div>}
 
       {document.hookAlternatives.length > 0 && <section className="card space-y-3"><div><h2 className="font-semibold">AI hook options</h2><p className="text-xs text-ink-500">Apply an option to the hook module, then edit it normally.</p></div><div className="grid gap-2 lg:grid-cols-3">{document.hookAlternatives.map((hook) => <button key={hook.id} type="button" disabled={!editable} className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${document.selectedHookId === hook.id ? "border-brand-purple bg-brand-purple/5" : "border-ink-200 hover:border-ink-400"}`} onClick={() => applyHook(hook.id, hook.text)}>{hook.text}</button>)}</div></section>}
 
@@ -157,7 +214,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
           {document.modules.map((module, index) => {
             const moduleIssues = issues.filter((issue) => issue.moduleId === module.id);
             return <section key={module.id} className={`card space-y-3 ${module.locked ? "bg-ink-50" : ""}`}>
-              <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink-900 text-xs text-white">{index + 1}</span><input aria-label="Beat label" className="input max-w-xs font-semibold" value={module.label} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { label: event.target.value })} /><span className="tag">{module.kind}</span></div><div className="flex gap-1"><button className="btn btn-ghost px-2" onClick={() => move(index, -1)} disabled={!editable || index === 0}>↑</button><button className="btn btn-ghost px-2" onClick={() => move(index, 1)} disabled={!editable || index === document.modules.length - 1}>↓</button><button className="btn btn-ghost" disabled={!editable} onClick={() => updateModule(module.id, { locked: !module.locked })}>{module.locked ? "Unlock" : "Lock"}</button><button className="btn btn-ghost text-red-700" disabled={!editable} onClick={() => removeModule(module.id)}>Remove</button></div></div>
+              <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2"><span className="flex h-7 w-7 items-center justify-center rounded-full bg-ink-900 text-xs text-white">{index + 1}</span><input aria-label="Beat label" className="input max-w-xs font-semibold" value={module.label} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { label: event.target.value })} /><span className="tag">{module.kind}</span></div><div className="flex flex-wrap gap-1"><button className="btn btn-ghost" disabled={!editable || module.locked || pending || assistPending} onClick={() => openModuleAssist(module.id)}>AI Assist</button><button className="btn btn-ghost px-2" onClick={() => move(index, -1)} disabled={!editable || index === 0}>↑</button><button className="btn btn-ghost px-2" onClick={() => move(index, 1)} disabled={!editable || index === document.modules.length - 1}>↓</button><button className="btn btn-ghost" disabled={!editable} onClick={() => updateModule(module.id, { locked: !module.locked })}>{module.locked ? "Unlock" : "Lock"}</button><button className="btn btn-ghost text-red-700" disabled={!editable} onClick={() => removeModule(module.id)}>Remove</button></div></div>
               <div className="grid grid-cols-1 gap-3 lg:grid-cols-[1fr_1fr_8rem]"><div><label className="label">Spoken copy</label><AutoResizeTextarea className="input min-h-11" value={module.spokenText} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { spokenText: event.target.value })} /></div><div><label className="label">Visual direction</label><AutoResizeTextarea className="input min-h-11" value={module.visualDirection} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { visualDirection: event.target.value })} /></div><div><label className="label">Seconds</label><input className="input" type="number" min={0} max={600} value={module.durationSec} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { durationSec: Number(event.target.value) })} /></div></div>
               <div><label className="label">On-screen text</label><input className="input" value={module.onScreenText} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { onScreenText: event.target.value })} /></div>
               {module.brollRefs.length > 0 && <div><div className="label">Matched B-roll</div><div className="flex flex-wrap gap-2">{module.brollRefs.map((clip) => clip.url ? <a key={`${module.id}-${clip.clipId}`} className="tag hover:underline" href={clip.url} target="_blank" rel="noreferrer">{clip.name} ↗</a> : <span key={`${module.id}-${clip.clipId}`} className="tag">{clip.name}</span>)}</div></div>}
@@ -169,9 +226,10 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
       ) : (
         <section className="card mx-auto max-w-4xl space-y-6 p-6 sm:p-10">
           <div><p className="label">Continuous document · same canonical modules</p><h2 className="text-xl font-semibold">{document.title}</h2><p className="mt-1 text-sm text-ink-500">{document.product.name} · {document.angle.name} · {document.format}</p></div>
-          {document.modules.map((module, index) => <div key={module.id} className="grid grid-cols-[4rem_1fr] gap-4 border-t border-ink-200 pt-5"><div className="text-xs text-ink-500"><div>{index + 1}. {module.label}</div><div>{module.durationSec}s</div></div><div className="space-y-3"><AutoResizeTextarea aria-label={`${module.label} spoken copy`} className="min-h-7 w-full bg-transparent text-base leading-7 outline-none placeholder:text-ink-300" placeholder="Spoken copy…" value={module.spokenText} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { spokenText: event.target.value })} /><input aria-label={`${module.label} on-screen text`} className="w-full border-l-2 border-brand-pink/40 bg-transparent pl-3 text-sm font-medium outline-none" placeholder="On-screen text…" value={module.onScreenText} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { onScreenText: event.target.value })} /><AutoResizeTextarea aria-label={`${module.label} visual direction`} className="min-h-10 w-full bg-ink-50 p-3 text-sm leading-6 text-ink-600 outline-none" placeholder="Visual direction…" value={module.visualDirection} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { visualDirection: event.target.value })} /></div></div>)}
+          {document.modules.map((module, index) => <div key={module.id} className="grid grid-cols-[5.5rem_1fr] gap-4 border-t border-ink-200 pt-5"><div className="space-y-2 text-xs text-ink-500"><div>{index + 1}. {module.label}</div><div>{module.durationSec}s</div><button className="btn btn-ghost h-8 px-2 text-xs" disabled={!editable || module.locked || pending || assistPending} onClick={() => openModuleAssist(module.id)}>AI Assist</button></div><div className="space-y-3"><AutoResizeTextarea aria-label={`${module.label} spoken copy`} className="min-h-7 w-full bg-transparent text-base leading-7 outline-none placeholder:text-ink-300" placeholder="Spoken copy…" value={module.spokenText} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { spokenText: event.target.value })} /><input aria-label={`${module.label} on-screen text`} className="w-full border-l-2 border-brand-pink/40 bg-transparent pl-3 text-sm font-medium outline-none" placeholder="On-screen text…" value={module.onScreenText} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { onScreenText: event.target.value })} /><AutoResizeTextarea aria-label={`${module.label} visual direction`} className="min-h-10 w-full bg-ink-50 p-3 text-sm leading-6 text-ink-600 outline-none" placeholder="Visual direction…" value={module.visualDirection} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { visualDirection: event.target.value })} /></div></div>)}
         </section>
       )}
+      {assistModule && <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/45 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModuleAssist(); }}><section role="dialog" aria-modal="true" aria-labelledby="module-assist-title" className="w-full max-w-2xl rounded-2xl border border-ink-200 bg-white p-5 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="label">Module AI Assist</p><h2 id="module-assist-title" className="text-xl font-semibold">Revise “{assistModule.label}”</h2><p className="mt-1 text-sm text-ink-500">Describe what should change. AI will update only this module and preserve its matched B-roll.</p></div><button type="button" className="btn btn-ghost px-3" aria-label="Close AI Assist" disabled={assistPending} onClick={closeModuleAssist}>×</button></div><div className="mt-5"><label className="label" htmlFor="module-assist-notes">Change notes</label><textarea id="module-assist-notes" className="input min-h-36" autoFocus placeholder="Example: Make the spoken copy more conversational, remove repeated filler, and show the compression fabric in use." value={assistNotes} disabled={assistPending} onChange={(event) => setAssistNotes(event.target.value)} /></div>{assistError && <div className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">{assistError}</div>}<div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-ink-400">The rewrite is not saved until you click Save changes.</p><div className="flex gap-2"><button type="button" className="btn" disabled={assistPending} onClick={closeModuleAssist}>Cancel</button><button type="button" className="btn btn-primary" disabled={assistPending || assistNotes.trim().length < 2} onClick={applyModuleAssist}>{assistPending ? "Revising module…" : "Apply AI changes"}</button></div></div></section></div>}
       {issues.some((issue) => issue.moduleId === "document") && <div className="card border-amber-300 bg-amber-50"><h3 className="text-sm font-semibold text-amber-900">Document checks</h3>{issues.filter((issue) => issue.moduleId === "document").map((issue) => <p key={issue.message} className="mt-1 text-sm text-amber-800">{issue.message}</p>)}</div>}
       <p className="text-xs text-ink-400">Working revision {revision} · named version {version}. Locked modules remain editable only after unlocking.</p>
     </div>

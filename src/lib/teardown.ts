@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 import { ParsedTeardownWorkbookSchema } from "@/lib/cellumove/teardown-brief";
+import { resolveTeardownConfiguration } from "@/lib/teardown-config";
 
 const TeardownSummarySchema = z.object({
   id: z.string(),
@@ -42,25 +43,36 @@ export function parseTeardownRecord(value: unknown): TeardownRecord | null {
   return parsed.success ? parsed.data : null;
 }
 
-function configuration(): { baseUrl: string; token: string } | null {
-  const baseUrl = process.env.TEARDOWN_API_BASE_URL?.trim().replace(/\/$/, "");
-  const token = process.env.TEARDOWN_INTERNAL_TOKEN?.trim();
-  return baseUrl && token ? { baseUrl, token } : null;
+export function isTeardownConfigured(): boolean {
+  return resolveTeardownConfiguration().configuration !== null;
 }
 
-export function isTeardownConfigured(): boolean {
-  return configuration() !== null;
+export function getTeardownConfigurationIssue(): string | null {
+  return resolveTeardownConfiguration().issue;
 }
 
 async function teardownFetch(path: string): Promise<unknown> {
-  const config = configuration();
-  if (!config) throw new Error("TEARDOWN_API_BASE_URL and TEARDOWN_INTERNAL_TOKEN are required.");
+  const status = resolveTeardownConfiguration();
+  if (!status.configuration) {
+    throw new Error(
+      status.issue ?? "TEARDOWN_API_BASE_URL and TEARDOWN_INTERNAL_TOKEN are required.",
+    );
+  }
+  const config = status.configuration;
 
-  const response = await fetch(`${config.baseUrl}/integrations/adfactory${path}`, {
-    cache: "no-store",
-    headers: { Accept: "application/json", "X-AdFactory-Token": config.token },
-    signal: AbortSignal.timeout(10_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${config.baseUrl}/integrations/adfactory${path}`, {
+      cache: "no-store",
+      headers: { Accept: "application/json", "X-AdFactory-Token": config.token },
+      signal: AbortSignal.timeout(10_000),
+    });
+  } catch (error) {
+    const detail = error instanceof Error && error.name === "TimeoutError"
+      ? "The request timed out."
+      : "The API could not be reached.";
+    throw new Error(`Could not connect to Teardown2 at ${new URL(config.baseUrl).origin}. ${detail}`);
+  }
   if (!response.ok) {
     if (response.status === 401) throw new Error("Teardown2 rejected the AdFactory token.");
     if (response.status === 503) throw new Error("Teardown2 has not enabled the AdFactory integration.");
