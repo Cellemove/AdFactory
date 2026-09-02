@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { normalizeUnsignedIntegerInput } from "../numeric-input";
 import { parsePipelineRunSelection } from "./pipeline-selection";
+import { REFERENCE_FORMATS } from "./reference-formats";
 import { buildScriptDisplayName, createInitialScriptDocument, ensureScriptDurationPlan, inspectScriptQuality, renderScriptDownload, scriptDownloadFilename } from "./script-studio";
 import { canClaimScript, canEditScript, canSendScript, normalizeScriptWorkflowStatus } from "./script-workflow";
 
@@ -50,6 +51,53 @@ test("seeds a structured script and always includes a CTA", () => {
   assert.equal(document.schemaVersion, 1);
   assert.ok(document.modules.some((module) => module.kind === "cta"));
   assert.ok(inspectScriptQuality(document).length > 0);
+});
+
+// Guards the seeded framework library against silent drift: every beat label has
+// to map to a real module kind, and every format has to carry enough beats for
+// its own duration or ensureScriptDurationPlan pads it with generic filler.
+for (const framework of REFERENCE_FORMATS) {
+  test(`seeds the ${framework.slug} framework into a clean module plan`, () => {
+    const document = createInitialScriptDocument({
+      title: framework.name,
+      product: { id: "p1", name: "CelluMove", code: "V1" },
+      avatar: null,
+      angle: { id: "a1", name: "Cellulite" },
+      framework: { id: "f1", name: framework.name, beats: framework.beats },
+      format: "UGC",
+      targetDurationSec: framework.optimalDurationSec,
+      idea: "I stopped hiding my legs.",
+      teardown: null,
+    });
+
+    const custom = document.modules.filter((module) => module.kind === "custom");
+    assert.deepEqual(custom.map((module) => module.label), [], `unmapped beat labels in ${framework.slug}`);
+    assert.equal(document.modules.length, framework.beats.length, `${framework.slug} was padded with filler beats`);
+    assert.deepEqual(document.modules.map((module) => module.label), framework.beats.map((beat) => beat.label));
+    assert.ok(document.modules.some((module) => module.kind === "cta"), `${framework.slug} has no CTA beat`);
+    assert.equal(
+      document.modules.reduce((sum, module) => sum + module.durationSec, 0),
+      framework.optimalDurationSec,
+    );
+  });
+}
+
+test("maps a framework beat onto every non-custom module kind", () => {
+  const kinds = new Set(REFERENCE_FORMATS.flatMap((framework) => createInitialScriptDocument({
+    title: framework.name,
+    product: { id: "p1", name: "CelluMove", code: "V1" },
+    avatar: null,
+    angle: { id: "a1", name: "Cellulite" },
+    framework: { id: "f1", name: framework.name, beats: framework.beats },
+    format: "UGC",
+    targetDurationSec: framework.optimalDurationSec,
+    idea: "I stopped hiding my legs.",
+    teardown: null,
+  }).modules.map((module) => module.kind)));
+
+  for (const kind of ["hook", "problem", "agitation", "solution", "proof", "offer", "cta"]) {
+    assert.ok(kinds.has(kind as never), `no seeded framework produces a ${kind} module`);
+  }
 });
 
 test("expands a four-beat framework to fill a 60-second production plan", () => {
