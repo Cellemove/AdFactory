@@ -35,6 +35,9 @@ export interface RunAgentOptions {
   // genuinely different outputs from the same brief (e.g. hook alternatives) —
   // Gemini 2.5 Pro's thinking otherwise tends to converge on one "best" answer.
   temperature?: number;
+  // When present, an editable SOP with this slug replaces the built-in task
+  // instruction. The in-code instruction remains the safe fallback.
+  promptSopSlug?: string;
 }
 
 // Best-effort SOP load. Tolerates a not-yet-migrated DB (returns nothing) so the
@@ -100,7 +103,11 @@ export function extractJsonObject<T>(text: string): T {
 export async function runAgent(opts: RunAgentOptions): Promise<string> {
   const roles = [...new Set([opts.role, ...(opts.additionalRoles ?? [])])];
   const sops = await loadRoleSops(roles, opts.marketCode);
-  const system = `${opts.instruction}${renderSops(sops)}`;
+  const promptOverride = opts.promptSopSlug
+    ? sops.find((sop) => sop.slug === opts.promptSopSlug && sop.body.trim())
+    : undefined;
+  const standingSops = promptOverride ? sops.filter((sop) => sop.id !== promptOverride.id) : sops;
+  const system = `${promptOverride?.body.trim() || opts.instruction}${renderSops(standingSops)}`;
 
   const llm = getLLM();
   const resp = await llm.models.generateContent({
@@ -124,7 +131,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
     model: DEFAULT_MODEL,
     usage: resp.usageMetadata,
     grounded: opts.grounded,
-    metadata: { role: opts.role, sopRoles: roles, market: opts.marketCode ?? undefined, sopCount: sops.length, ...opts.metadata },
+    metadata: { role: opts.role, sopRoles: roles, market: opts.marketCode ?? undefined, sopCount: sops.length, promptSopSlug: promptOverride?.slug, ...opts.metadata },
   });
 
   const text = resp.text;

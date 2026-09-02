@@ -43,6 +43,8 @@ export const CreateScriptProjectSchema = z.object({
   targetDurationSec: z.number().int().min(5).max(600),
   teardownRecordId: z.string().nullable().optional(),
   pipelineRunId: z.string().nullable().optional(),
+  spySweepId: z.string().nullable().optional(),
+  spyAdIndex: z.number().int().nonnegative().nullable().optional(),
 });
 
 export type CreateScriptProjectInput = z.infer<typeof CreateScriptProjectSchema>;
@@ -72,7 +74,7 @@ export async function createScriptProjectCore(
     level: "info",
     message: "Loading the selected product, angle, avatar, framework, and source records",
   });
-  const [productRaw, angleRaw, strategistRaw, editorRaw, avatarRaw, frameworkRaw, pipelineRunRaw] = await Promise.all([
+  const [productRaw, angleRaw, strategistRaw, editorRaw, avatarRaw, frameworkRaw, pipelineRunRaw, spySweepRaw] = await Promise.all([
     unwrapOpt(await supabase.from("Product").select("*").eq("id", parsed.productId).maybeSingle()),
     unwrapOpt(await supabase.from("Angle").select("*").eq("id", parsed.angleId).maybeSingle()),
     unwrapOpt(await supabase.from("AppUser").select("*").eq("id", parsed.strategistUserId).maybeSingle()),
@@ -80,6 +82,7 @@ export async function createScriptProjectCore(
     parsed.subAvatarId ? unwrapOpt(await supabase.from("SubAvatar").select("*").eq("id", parsed.subAvatarId).maybeSingle()) : null,
     parsed.referenceFormatId ? unwrapOpt(await supabase.from("ReferenceFormat").select("*").eq("id", parsed.referenceFormatId).maybeSingle()) : null,
     parsed.pipelineRunId ? unwrapOpt(await supabase.from("Research").select("*").eq("id", parsed.pipelineRunId).eq("type", "pipeline").maybeSingle()) : null,
+    parsed.spySweepId ? unwrapOpt(await supabase.from("Research").select("*").eq("id", parsed.spySweepId).eq("type", "competitor_spy").maybeSingle()) : null,
   ]);
   const product = productRaw as ProductRow | null;
   const angle = angleRaw as AngleRow | null;
@@ -88,6 +91,7 @@ export async function createScriptProjectCore(
   const avatar = avatarRaw as SubAvatarRow | null;
   const framework = frameworkRaw as ReferenceFormatRow | null;
   const pipelineRun = pipelineRunRaw as ResearchRow | null;
+  const spySweep = spySweepRaw as ResearchRow | null;
 
   if (!product) throw new Error("Product not found.");
   if (!product.code?.trim()) throw new Error("Assign the product a naming code before creating a script.");
@@ -102,6 +106,7 @@ export async function createScriptProjectCore(
     throw new Error("The selected pipeline run does not match this angle and avatar.");
   }
   if (pipelineDoc && pipelineDoc.completedStages === 0) throw new Error("The selected pipeline run has no completed stages yet.");
+  if (parsed.spySweepId && !spySweep) throw new Error("The selected Spy sweep is unavailable.");
 
   await reportScriptGenerationProgress(progress, {
     stage: "resources",
@@ -160,6 +165,20 @@ export async function createScriptProjectCore(
     onProgress: progress,
   });
   const document = generated.document;
+  if (spySweep && parsed.spyAdIndex != null) {
+    let ad: unknown = null;
+    try { ad = JSON.parse(spySweep.drafts)?.[parsed.spyAdIndex] ?? null; } catch { /* validated below */ }
+    if (!ad) throw new Error("The selected Spy creative no longer exists.");
+    const spySource = {
+      sourceType: "research" as const,
+      sourceId: spySweep.id,
+      title: `Spy creative · item ${parsed.spyAdIndex + 1}`,
+      url: (ad as { sourceUrl?: string }).sourceUrl ?? null,
+      snapshot: { sweepId: spySweep.id, adIndex: parsed.spyAdIndex, ad },
+    };
+    generated.sources.push(spySource);
+    document.sourceRefs.push({ type: spySource.sourceType, id: spySource.sourceId, title: spySource.title, url: spySource.url });
+  }
 
   const projectId = newId();
   await reportScriptGenerationProgress(progress, {
@@ -218,6 +237,8 @@ export async function createScriptProjectCore(
         editorUserId: editor?.id ?? null,
         teardownRecordId: teardown?.id ?? null,
         pipelineRunId: pipelineRun?.id ?? null,
+        spySweepId: spySweep?.id ?? null,
+        spyAdIndex: parsed.spyAdIndex ?? null,
         generation: {
           model: generated.model,
           promptVersion: generated.promptVersion,

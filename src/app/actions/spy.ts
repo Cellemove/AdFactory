@@ -8,11 +8,12 @@ import { fetchThroughProxy, extractReadableText } from "@/lib/scraper";
 import { quoteFoundIn, normalizeForMatch } from "@/lib/cellumove/verify-research";
 import { exclusionBlock } from "@/lib/cellumove/novelty";
 import { dedupeNovel } from "@/lib/cellumove/embeddings";
+import { DEFAULT_SPY_NICHE_SLUG, getSpyNiche, type SpyNiche } from "@/lib/cellumove/spy-niches";
 
 // ─── COMPETITOR SPY ──────────────────────────────────────────────────────────
 // "Google Images, but for ads." A grounded Gemini sweep finds the trending ad
-// creatives / social posts that OTHER 3D-shaping / sculpting / compression
-// legging brands (not CelluMove) are running right now — ads & social posts, not
+// creatives / social posts that OTHER brands in a user-selected niche (not
+// CelluMove) are running right now — ads & social posts, not
 // storefront pages. We then scrape each post's og:image so the creative renders —
 // model-guessed image URLs mostly hotlink-block, but og:images are CDN-hosted and
 // meant to be embedded. Persisted to the Research table (type: "competitor_spy"),
@@ -33,29 +34,32 @@ export interface SpyAd {
 export interface SpySweep {
   id: string;               // the Research row id (use it to curate via updateSpyAds)
   ads: SpyAd[];
+  niche: SpyNiche;
 }
 
-const SPY_SYSTEM_PROMPT = [
-  "You are a DTC competitive-intelligence scout for CelluMove, a brand selling 3D-shaping / sculpting compression leggings.",
-  "Your job: surface the most TRENDING ad creatives and social posts that OTHER brands in the 3D-shaping / sculpting / 'snatching' / tummy-control / compression legging space are running RIGHT NOW. Think of the output as a visual feed of their ADVERTISING — each item is one ad/post creative we can look at.",
-  "NEVER include CelluMove itself. Only competitors.",
+function buildSpySystemPrompt(niche: SpyNiche): string {
+  return [
+  `You are a DTC competitive-intelligence scout researching the ${niche.name} niche for CelluMove.`,
+  `Your job: surface the most TRENDING ad creatives and social posts that OTHER brands in this niche are running RIGHT NOW. Think of the output as a visual feed of their ADVERTISING — each item is one ad/post creative we can look at.`,
+  "Obey every reject rule below. Only competitors.",
   "",
   "════════════════════════════════════════════════════════════════════════",
-  "THE CATEGORY (find whoever is actually advertising — not an allowlist)",
+  `THE NICHE: ${niche.name.toUpperCase()} (examples are not an allowlist)`,
   "════════════════════════════════════════════════════════════════════════",
-  "Brands like: FitSlim, Peach Pump, Trysoviren, Ionix Labs, Honeylove, Shapermint, Yvette, FeelinGirl, AYBL, plus the many TikTok-Shop / Meta-ad dropship brands running 'butt-lift' / 'snatched' / 'anti-cellulite' / '3D shaping' leggings.",
+  `Category search terms: ${niche.categoryTerms.join(", ")}.`,
+  `Example brands: ${niche.brandExamples.join(", ") || "Find the active advertisers in this niche"}.`,
   "",
   "════════════════════════════════════════════════════════════════════════",
   "WHERE TO LOOK — ad creatives and social posts only (NOT brand storefronts)",
   "════════════════════════════════════════════════════════════════════════",
-  "We want the actual ADS and SOCIAL POSTS, not product/store pages. Do NOT return brand .com / Shopify storefront or product-detail pages. Run 8+ grounded searches mixing the category terms (3d shaping leggings, sculpting leggings, butt lift leggings, snatched leggings, anti-cellulite leggings, tummy control leggings) with these AD/SOCIAL sources:",
+  `We want the actual ADS and SOCIAL POSTS, not product/store pages. Run 8+ grounded searches mixing these category terms (${niche.categoryTerms.join(", ")}) with these AD/SOCIAL sources:`,
   "  • Meta Ads Library entries (facebook.com/ads/library) — live running ads",
   "  • site:tiktok.com brand posts / Spark ads and #shapingleggings / #buttliftleggings",
   "  • site:instagram.com brand reels & sponsored posts",
   "  • site:youtube.com ad-style Shorts and video ads",
   "READ with url-context where useful to confirm the brand and the creative's copy. Point sourceUrl at the EXACT ad / post, so its preview image is the creative itself.",
   "",
-  "REJECT: brand storefronts and product pages, SEO 'top 10' listicles, affiliate roundups, press releases, AI content farms. We want the brand's actual ad / social creative, not a shop page or an article.",
+  `REJECT: ${niche.rejectRules.join("; ")}. We want the brand's actual ad / social creative, not a shop page or an article.`,
   "",
   "════════════════════════════════════════════════════════════════════════",
   "OUTPUT",
@@ -77,6 +81,7 @@ const SPY_SYSTEM_PROMPT = [
   ]
 }`,
 ].join("\n");
+}
 
 function parseAds(text: string): SpyAd[] {
   const candidates: string[] = [];
@@ -236,22 +241,27 @@ async function enrichAndVerify(ad: SpyAd): Promise<SpyAd> {
  * Run a grounded sweep of trending competitor ad/social creatives, enrich each
  * with its post preview image, and persist the sweep. Returns the row id so the
  * caller can curate it via updateSpyAds().
- * `focus` optionally narrows the lens (e.g. "butt-lift angle", "TikTok Shop brands").
+ * `focus` optionally narrows the lens; `nicheSlug` selects the persisted category definition.
  */
-export async function spyOnCompetitors(focus?: string | null): Promise<SpySweep> {
+export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlug?: string | null }): Promise<SpySweep> {
+  const focus = input?.focus?.trim() || null;
+  const niche = getSpyNiche(input?.nicheSlug ?? DEFAULT_SPY_NICHE_SLUG);
   const llm = getLLM();
   // Brands/captions already surfaced in recent sweeps — so we find fresh ones.
   const recent = (
     await supabase
       .from("Research")
-      .select("drafts")
+      .select("drafts, queryPlan")
       .eq("type", "competitor_spy")
       .order("createdAt", { ascending: false })
       .limit(5)
   ).data ?? [];
   const seenAds: string[] = [];
-  for (const r of recent as { drafts: string }[]) {
+  for (const r of recent as { drafts: string; queryPlan?: unknown }[]) {
     try {
+      const plan = typeof r.queryPlan === "string" ? JSON.parse(r.queryPlan) : r.queryPlan;
+      const previousSlug = (plan as { niche?: { slug?: string } } | null)?.niche?.slug ?? DEFAULT_SPY_NICHE_SLUG;
+      if (previousSlug !== niche.slug) continue;
       for (const a of JSON.parse(r.drafts) as SpyAd[]) {
         if (a?.brand || a?.caption) seenAds.push(`${a.brand}: ${a.caption}`.trim());
       }
@@ -263,7 +273,7 @@ export async function spyOnCompetitors(focus?: string | null): Promise<SpySweep>
   const userPrompt = [
     focus
       ? `FOCUS FROM USER: ${focus}`
-      : "FOCUS: open sweep — the trending creatives across the whole 3D-shaping / sculpting / compression legging category.",
+      : `FOCUS: open sweep — the trending creatives across the whole ${niche.name} niche.`,
     "",
     "Search the web NOW. Find the most trending ad creatives / social posts competitor brands are running (ads & social — not storefront pages).",
     "Return 10-16 distinct creatives following the schema in the system prompt. Do NOT include CelluMove.",
@@ -282,7 +292,7 @@ export async function spyOnCompetitors(focus?: string | null): Promise<SpySweep>
     model: DEFAULT_MODEL,
     contents: userPrompt,
     config: {
-      systemInstruction: SPY_SYSTEM_PROMPT,
+      systemInstruction: buildSpySystemPrompt(niche),
       tools: [{ googleSearch: {} }, { urlContext: {} }],
       maxOutputTokens: 16384,
       thinkingConfig: { thinkingBudget: 4096 },
@@ -293,7 +303,7 @@ export async function spyOnCompetitors(focus?: string | null): Promise<SpySweep>
     model: DEFAULT_MODEL,
     usage: resp.usageMetadata,
     grounded: true,
-    metadata: { focus: focus ?? undefined },
+    metadata: { focus: focus ?? undefined, nicheSlug: niche.slug },
   });
 
   const text = resp.text ?? "";
@@ -315,11 +325,12 @@ export async function spyOnCompetitors(focus?: string | null): Promise<SpySweep>
     angleSlug: null,
     focus: focus ?? null,
     drafts: JSON.stringify(ads),
+    queryPlan: { niche },
     status: "pending",
     createdAt: new Date().toISOString(),
   });
   revalidatePath("/spy");
-  return { id, ads };
+  return { id, ads, niche };
 }
 
 /**

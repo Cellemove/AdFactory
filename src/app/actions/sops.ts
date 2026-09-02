@@ -96,6 +96,7 @@ export async function deleteSop(id: string) {
 const SOP_TYPES = new Set([
   "verbatim_classification", "source_weighting", "hook_taxonomy", "hook_rules_market",
   "deep_dive_template", "reference_format", "compliance", "block_taxonomy", "naming", "other",
+  "role_prompt",
 ]);
 const ROLE_SCOPES = new Set(["all", "strategist", "copywriter", "researcher", "designer", "compliance"]);
 const MAX_PDF_BYTES = 10 * 1024 * 1024;
