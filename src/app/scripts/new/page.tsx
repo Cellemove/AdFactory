@@ -5,7 +5,11 @@ import { PIPELINE_STAGES } from "@/lib/cellumove/pipeline-stages";
 import { parsePipelineRunSelection } from "@/lib/cellumove/pipeline-selection";
 import type { ResearchRow } from "@/lib/database.types";
 import { supabase, unwrap } from "@/lib/db";
-import { isTeardownConfigured, listTeardownDeconstructions } from "@/lib/teardown";
+import {
+  getTeardownConfigurationIssue,
+  isTeardownConfigured,
+  listTeardownDeconstructions,
+} from "@/lib/teardown";
 import { ScriptProjectForm } from "./ScriptProjectForm";
 
 export const metadata: Metadata = { title: "New Script · AdFactory" };
@@ -56,8 +60,9 @@ export default async function NewScriptPage() {
   });
 
   let teardowns: Awaited<ReturnType<typeof listTeardownDeconstructions>> = [];
-  let teardownWarning: string | null = null;
-  if (isTeardownConfigured()) {
+  const teardownConfigured = isTeardownConfigured();
+  let teardownWarning: string | null = getTeardownConfigurationIssue();
+  if (teardownConfigured) {
     try {
       teardowns = await listTeardownDeconstructions();
     } catch (error) {
@@ -87,7 +92,7 @@ export default async function NewScriptPage() {
         }))}
         formats={[...SCRIPT_FORMATS]}
         currentUserId={currentUser.id}
-        teardownConfigured={isTeardownConfigured()}
+        teardownConfigured={teardownConfigured}
         teardownWarning={teardownWarning}
       />
     </div>

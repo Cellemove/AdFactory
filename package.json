@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test:script-studio": "tsx --test src/lib/cellumove/script-studio.test.ts",
     "test:teardown": "tsx --test src/lib/cellumove/teardown-brief.test.ts",
+    "test:teardown-config": "tsx --test src/lib/teardown-config.test.ts",
     "test:script-generation": "tsx --test src/lib/cellumove/script-generation.test.ts",
     "test:script-rag": "tsx --test src/lib/cellumove/script-rag.test.ts",
     "test:module-assist": "tsx --test src/lib/cellumove/script-module-assist.test.ts",
