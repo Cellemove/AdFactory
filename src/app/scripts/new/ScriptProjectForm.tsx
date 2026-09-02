@@ -33,9 +33,11 @@ export function ScriptProjectForm(props: Props) {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [generationEvents, setGenerationEvents] = useState<ScriptGenerationProgressEvent[]>([]);
   const [avatarOptions, setAvatarOptions] = useState(props.avatars);
+  const initialAngleId = props.angles[0]?.id ?? "";
+  const initialAvatars = props.avatars.filter((item) => item.angleId === initialAngleId);
   const [form, setForm] = useState({
     title: "", idea: "", adNumber: "", creativeName: "", productId: props.products[0]?.id ?? "",
-    angleId: props.angles[0]?.id ?? "", subAvatarId: "", referenceFormatId: props.frameworks[0]?.id ?? "",
+    angleId: initialAngleId, subAvatarId: initialAvatars[0]?.id ?? "", referenceFormatId: props.frameworks[0]?.id ?? "",
     strategistUserId: props.strategists.some((item) => item.id === props.currentUserId) ? props.currentUserId : props.strategists[0]?.id ?? "",
     editorUserId: "", format: props.formats[0] ?? "UGC", targetDurationSec: "30", teardownRecordId: "", pipelineRunId: "",
   });
@@ -112,7 +114,8 @@ export function ScriptProjectForm(props: Props) {
   };
 
   const targetDuration = Number(form.targetDurationSec);
-  const ready = form.title.trim().length >= 2 && form.idea.trim().length >= 5 && form.adNumber && form.creativeName && form.productId && selectedProduct?.code && form.angleId && form.strategistUserId && Number.isInteger(targetDuration) && targetDuration >= 5 && targetDuration <= 600;
+  const hasAvatarsForAngle = avatars.length > 0;
+  const ready = form.title.trim().length >= 2 && form.idea.trim().length >= 5 && form.adNumber && form.creativeName && form.productId && selectedProduct?.code && form.angleId && hasAvatarsForAngle && form.subAvatarId && form.strategistUserId && Number.isInteger(targetDuration) && targetDuration >= 5 && targetDuration <= 600;
   const handleTargetDurationChange = (event: ChangeEvent<HTMLInputElement>) => {
     const targetDurationSec = normalizeUnsignedIntegerInput(event.currentTarget.value);
     setForm((current) => ({ ...current, targetDurationSec }));
@@ -122,7 +125,9 @@ export function ScriptProjectForm(props: Props) {
     setForm((current) => ({ ...current, subAvatarId: avatar.id, pipelineRunId: "" }));
   }, []);
   const handleAngleChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    setForm((current) => ({ ...current, angleId: event.currentTarget.value, subAvatarId: "", pipelineRunId: "" }));
+    const angleId = event.currentTarget.value;
+    const nextAvatars = avatarOptions.filter((item) => item.angleId === angleId);
+    setForm((current) => ({ ...current, angleId, subAvatarId: nextAvatars[0]?.id ?? "", pipelineRunId: "" }));
   };
   const handleAvatarChange = (event: ChangeEvent<HTMLSelectElement>) => {
     setForm((current) => ({ ...current, subAvatarId: event.currentTarget.value, pipelineRunId: "" }));
@@ -144,7 +149,20 @@ export function ScriptProjectForm(props: Props) {
         <div className="sm:col-span-2"><label className="label">Core idea / opening brief</label><textarea className="input min-h-28" value={form.idea} onChange={(event) => setForm({ ...form, idea: event.target.value })} placeholder="What is the ad saying, and why should this avatar care?" /></div>
         <div><label className="label">Product</label><ProductCombobox products={props.products} value={form.productId} onChange={(productId) => setForm({ ...form, productId })} /></div>
         <div><label className="label">Angle</label><select className="input" value={form.angleId} onChange={handleAngleChange}>{props.angles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
-        <div><label className="label">Avatar</label><select className="input" value={form.subAvatarId} onChange={handleAvatarChange}><option value="">No specific avatar</option>{avatars.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><InlineAvatarCreator key={form.angleId} angle={selectedAngle} onCreated={handleAvatarCreated} /></div>
+        <div>
+          <label className="label">Avatar</label>
+          <select className="input" disabled={!hasAvatarsForAngle} value={form.subAvatarId} onChange={handleAvatarChange}>
+            {hasAvatarsForAngle
+              ? avatars.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)
+              : <option value="">No avatars researched for this angle</option>}
+          </select>
+          <InlineAvatarCreator key={form.angleId} angle={selectedAngle} onCreated={handleAvatarCreated} />
+          {!hasAvatarsForAngle && selectedAngle && (
+            <p className="mt-1 text-sm text-red-700">
+              No avatars have been researched for {selectedAngle.name} yet. Research one on the <Link href="/research" className="underline">Research page</Link>, or create one now with the button above.
+            </p>
+          )}
+        </div>
         <div><label className="label">Pipeline run <span className="font-normal text-ink-400">(optional)</span></label><select className="input" value={form.pipelineRunId} onChange={handlePipelineRunChange}><option value="">Use latest run for selected avatar</option>{props.pipelineRuns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">Selecting a run also selects its angle and avatar.</p></div>
         <div><label className="label">Reference framework</label><select className="input" value={form.referenceFormatId} onChange={(event) => { const selected = props.frameworks.find((item) => item.id === event.target.value); setForm({ ...form, referenceFormatId: event.target.value, targetDurationSec: selected?.duration == null ? form.targetDurationSec : String(selected.duration) }); }}><option value="">Standard Hook → CTA</option>{props.frameworks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
         <div><label className="label">Production format</label><select className="input" value={form.format} onChange={(event) => setForm({ ...form, format: event.target.value })}>{props.formats.map((item) => <option key={item}>{item}</option>)}</select></div>
