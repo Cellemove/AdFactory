@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition, type TextareaHTMLAttributes } from "react";
 import { useRouter } from "next/navigation";
-import { assistScriptModule, generateScriptProjectDraft, saveScriptDocument, sendScriptProjectToEditor, snapshotScriptProject } from "@/app/actions/scripts";
+import { assistScriptModule, generateScriptProjectDraft, saveScriptDocument, sendScriptProjectToEditor, snapshotScriptProject, suggestScriptHookAlternatives } from "@/app/actions/scripts";
+import { appendHookAlternatives, MAX_SCRIPT_HOOK_ALTERNATIVES } from "@/lib/cellumove/script-hook-alternatives";
 import { inspectScriptQuality, renderScriptDownload, scriptDownloadFilename, type ScriptDocument, type ScriptModule } from "@/lib/cellumove/script-studio";
 import { canEditScript, canSendScript, SCRIPT_STATUS_META, type ScriptWorkflowStatus } from "@/lib/cellumove/script-workflow";
 
@@ -49,6 +50,20 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
   const [assistNotes, setAssistNotes] = useState("");
   const [assistError, setAssistError] = useState<string | null>(null);
   const [assistPending, setAssistPending] = useState(false);
+  const [hooksPending, setHooksPending] = useState(false);
+  // hooksPending (state) only blocks the button once React re-renders it as
+  // disabled. This ref blocks synchronously, so a second click that lands
+  // before that re-render can't start a concurrent request that would dedupe
+  // against a stale document and wrongly report "nothing new" after the first
+  // request already added hooks.
+  const hooksInFlightRef = useRef(false);
+  // Mirrors `document` for async callbacks that need the latest pool AND need to
+  // act on the merge result in the same tick. React only runs a setState updater
+  // at render time, so anything a callback assigns from inside one is still
+  // unset on the next line.
+  const documentRef = useRef(document);
+  documentRef.current = document;
+  const hooksAtCap = document.hookAlternatives.length >= MAX_SCRIPT_HOOK_ALTERNATIVES;
   const issues = useMemo(() => inspectScriptQuality(document), [document]);
   const totalDuration = document.modules.reduce((sum, module) => sum + module.durationSec, 0);
   const editable = canEditScript(status);
@@ -163,6 +178,44 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
       modules: current.modules.map((module) => module.id === hookModule.id ? { ...module, spokenText: text } : module),
     }));
   };
+  // Plain async like applyModuleAssist, not startTransition, so a slow hook
+  // request does not grey out the whole toolbar.
+  const requestMoreHooks = async () => {
+    if (hooksInFlightRef.current || hooksAtCap) return;
+    hooksInFlightRef.current = true;
+    setHooksPending(true);
+    setMessage(null);
+    try {
+      const result = await suggestScriptHookAlternatives({ projectId, expectedRevision: revision, document });
+      // Re-run against the freshest local pool so ids, dedupe and the cap all
+      // account for anything that changed while the request was in flight.
+      // result.hooks already passed this same filter server-side, so this pass
+      // should normally add all of them unchanged. Merge OUTSIDE the updater:
+      // the reported count has to be readable right here, and a setState
+      // updater does not run until React renders.
+      const merged = appendHookAlternatives(documentRef.current.hookAlternatives, result.hooks);
+      const addedCount = merged.added.length;
+      if (addedCount > 0) {
+        setDocument((current) => ({ ...current, hookAlternatives: [...current.hookAlternatives, ...merged.added] }));
+        setMessage(`Added ${addedCount} new hook option${addedCount === 1 ? "" : "s"}. Click Save changes to keep them.`);
+      } else if (result.hooks.length > 0) {
+        // The server wrote usable hooks but this document already holds them —
+        // only reachable if the pool changed under an in-flight request.
+        setMessage("Those hook options are already in this script. Try again for a fresh batch.");
+      } else if (result.skippedClaimFlagged > 0 && result.skippedDuplicate === 0) {
+        setMessage(`All ${result.generatedCount} suggestions were removed by the compliance check (banned words or claims). Try More hooks again — wording varies each request.`);
+      } else if (result.skippedClaimFlagged > 0) {
+        setMessage(`Of ${result.generatedCount} suggestions, ${result.skippedDuplicate} repeated an existing hook and ${result.skippedClaimFlagged} were removed by the compliance check. Try again for a fresh batch.`);
+      } else {
+        setMessage("Every suggestion repeated an existing hook, so nothing new was added. Try again for a fresh batch.");
+      }
+    } catch (error) {
+      setMessage(`More hooks could not run: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      hooksInFlightRef.current = false;
+      setHooksPending(false);
+    }
+  };
   const downloadScript = () => {
     const blob = new Blob(["\uFEFF", renderScriptDownload(document)], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -202,12 +255,20 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
     <div className="space-y-4">
       <div className="sticky top-20 z-20 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-ink-200/70 bg-white/90 p-3 shadow-card backdrop-blur-xl">
         <div className="flex flex-wrap items-center gap-2"><div className="rounded-full bg-ink-100 p-1"><button className={`rounded-full px-3 py-1 text-sm ${view === "modules" ? "bg-white shadow-sm" : "text-ink-500"}`} onClick={() => setView("modules")}>Modules</button><button className={`rounded-full px-3 py-1 text-sm ${view === "document" ? "bg-white shadow-sm" : "text-ink-500"}`} onClick={() => setView("document")}>Document</button></div><span className={statusMeta.className}>{statusMeta.label}</span><span className="text-xs text-ink-500">{totalDuration}s / {document.targetDurationSec}s · {issues.length} checks</span></div>
-        <div className="flex flex-wrap gap-2"><button className="btn" onClick={generateDraft} disabled={pending || !editable}>{pending ? "Generating…" : "AI fill all"}</button><button className="btn" onClick={downloadScript}>Download script</button><button className="btn" onClick={snapshot} disabled={pending || !editable}>Create version</button><button className="btn" onClick={save} disabled={pending || !editable}>{pending ? "Working…" : "Save changes"}</button><button className="btn btn-primary" onClick={sendToEditor} disabled={pending || !sendable}>{sendLabel}</button></div>
+        <div className="flex flex-wrap gap-2"><button className="btn" onClick={generateDraft} disabled={pending || hooksPending || !editable}>{pending ? "Generating…" : "AI fill all"}</button><button className="btn" onClick={downloadScript}>Download script</button><button className="btn" onClick={snapshot} disabled={pending || !editable}>Create version</button><button className="btn" onClick={save} disabled={pending || !editable}>{pending ? "Working…" : "Save changes"}</button><button className="btn btn-primary" onClick={sendToEditor} disabled={pending || !sendable}>{sendLabel}</button></div>
       </div>
       {message && <div className={`rounded-lg border p-3 text-sm ${/changed|error|could not/i.test(message) ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`}>{message}</div>}
       {handoffVersion !== null && <div className="rounded-xl border border-brand-purple/20 bg-brand-purple/5 px-4 py-3 text-sm text-ink-700"><span className="font-semibold">Video editor handoff is frozen at version {handoffVersion}.</span> Your working script remains editable. Saved changes do not alter the video editor's copy until you explicitly send an updated handoff.</div>}
 
-      {document.hookAlternatives.length > 0 && <section className="card space-y-3"><div><h2 className="font-semibold">AI hook options</h2><p className="text-xs text-ink-500">Apply an option to the hook module, then edit it normally.</p></div><div className="grid gap-2 lg:grid-cols-3">{document.hookAlternatives.map((hook) => <button key={hook.id} type="button" disabled={!editable} className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${document.selectedHookId === hook.id ? "border-brand-purple bg-brand-purple/5" : "border-ink-200 hover:border-ink-400"}`} onClick={() => applyHook(hook.id, hook.text)}>{hook.text}</button>)}</div></section>}
+      <section className="card space-y-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 className="font-semibold">AI hook options</h2><p className="text-xs text-ink-500">Apply an option to the hook module, then edit it normally.</p></div>
+          <button type="button" className="btn" disabled={!editable || pending || assistPending || hooksPending || hooksAtCap} onClick={requestMoreHooks}>{hooksPending ? "Writing hooks…" : hooksAtCap ? "Hook limit reached" : "More hooks"}</button>
+        </div>
+        {document.hookAlternatives.length > 0
+          ? <div className="grid gap-2 lg:grid-cols-3">{document.hookAlternatives.map((hook) => <button key={hook.id} type="button" disabled={!editable} className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${document.selectedHookId === hook.id ? "border-brand-purple bg-brand-purple/5" : "border-ink-200 hover:border-ink-400"}`} onClick={() => applyHook(hook.id, hook.text)}>{hook.text}</button>)}</div>
+          : <p className="text-xs text-ink-500">No hook options yet. Use More hooks, or AI fill all for a complete draft.</p>}
+      </section>
 
       {view === "modules" ? (
         <div className="space-y-3">

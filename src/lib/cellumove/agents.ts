@@ -31,6 +31,10 @@ export interface RunAgentOptions {
   metadata?: Record<string, unknown>;
   maxOutputTokens?: number;
   thinkingBudget?: number;
+  // Omit to use Vertex's model default. Raise for tasks that need several
+  // genuinely different outputs from the same brief (e.g. hook alternatives) —
+  // Gemini 2.5 Pro's thinking otherwise tends to converge on one "best" answer.
+  temperature?: number;
 }
 
 // Best-effort SOP load. Tolerates a not-yet-migrated DB (returns nothing) so the
@@ -112,6 +116,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
           ? { responseMimeType: "application/json" }
           : {}),
       thinkingConfig: { thinkingBudget: opts.thinkingBudget ?? 2048 },
+      ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
     },
   });
   await recordUsage({
