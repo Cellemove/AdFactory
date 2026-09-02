@@ -12,7 +12,11 @@ import {
 } from "@/lib/cellumove/avatar-profile";
 import {
   applyGeneratedScriptDraft,
+  buildScriptCorrectionContext,
   buildScriptGenerationContext,
+  mergeScriptDraftCorrection,
+  planScriptDraftCorrection,
+  SCRIPT_DRAFT_CORRECTION_INSTRUCTION,
   hardClaimFlags,
   SCRIPT_DRAFT_PROMPT_VERSION,
   SCRIPT_DRAFT_SYSTEM_INSTRUCTION,
@@ -596,9 +600,9 @@ export async function generateResourceGroundedScript(input: {
     ragHybridMode: moduleRetrieval.mode === "hybrid" ? 1 : 0,
   };
 
-  let correction: string | null = null;
   let lastError: unknown = null;
   let previousDraft: unknown = null;
+  let correctionPlan: ReturnType<typeof planScriptDraftCorrection> | null = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
       await reportScriptGenerationProgress(input.onProgress, {
@@ -607,30 +611,30 @@ export async function generateResourceGroundedScript(input: {
         message: `Generating complete structured draft · attempt ${attempt}/3`,
         detail: `${scaffold.modules.length} modules · ${scaffold.targetDurationSec}s target · ${DEFAULT_MODEL}`,
       });
+      const isTargetedCorrection = Boolean(correctionPlan && previousDraft);
       const text = await runAgent({
         role: "copywriter",
         additionalRoles: ["strategist", "designer"],
-        instruction: SCRIPT_DRAFT_SYSTEM_INSTRUCTION,
-        context: buildScriptGenerationContext({
-          scaffold,
-          idea: input.idea,
-          resources,
-          allowedBrollClipIds: mappedBroll.map((clip) => clip.id),
-          correction,
-        }),
+        instruction: isTargetedCorrection ? SCRIPT_DRAFT_CORRECTION_INSTRUCTION : SCRIPT_DRAFT_SYSTEM_INSTRUCTION,
+        promptSopSlug: isTargetedCorrection ? undefined : "creative-strategist-script-maker",
+        context: isTargetedCorrection
+          ? buildScriptCorrectionContext({ scaffold, idea: input.idea, resources, allowedBrollClipIds: mappedBroll.map((clip) => clip.id), plan: correctionPlan! })
+          : buildScriptGenerationContext({ scaffold, idea: input.idea, resources, allowedBrollClipIds: mappedBroll.map((clip) => clip.id) }),
         json: true,
         feature: "script_studio_draft",
-        metadata: { promptVersion: SCRIPT_DRAFT_PROMPT_VERSION, attempt, resourceCounts },
+        metadata: { promptVersion: SCRIPT_DRAFT_PROMPT_VERSION, attempt, resourceCounts, correctionModuleIds: correctionPlan?.moduleIds },
         maxOutputTokens: 16384,
         thinkingBudget: 3072,
       });
-      const draft = extractJsonObject<unknown>(text);
+      const raw = extractJsonObject<unknown>(text);
+      const draft = isTargetedCorrection ? mergeScriptDraftCorrection(previousDraft, raw, correctionPlan!) : raw;
       await reportScriptGenerationProgress(input.onProgress, {
         stage: "model",
         level: "success",
         message: `Model response received · attempt ${attempt}/3`,
       });
       previousDraft = draft;
+      correctionPlan = null;
       const baseRefs = sources.map(sourceRef);
       const document = applyGeneratedScriptDraft({
         scaffold,
@@ -676,18 +680,19 @@ export async function generateResourceGroundedScript(input: {
       };
     } catch (error) {
       lastError = error;
-      const reason = truncate(error instanceof Error ? error.message : String(error), 1200);
-      const rejected = previousDraft ? truncate(JSON.stringify(previousDraft), 8000) : null;
-      correction = [
-        `The previous JSON was rejected: ${reason}`,
-        "Rewrite the complete JSON and correct every reported issue. Never repeat a forbidden word, even in a negated phrase.",
-        rejected ? `Rejected JSON to correct: ${rejected}` : "",
-      ].filter(Boolean).join("\n");
+      const reason = truncate(error instanceof Error ? error.message : String(error), 1200) ?? "Unknown validation error";
+      correctionPlan = previousDraft
+        ? planScriptDraftCorrection({ scaffold, draft: previousDraft, allowedBrollClipIds: mappedBroll.map((clip) => clip.id), reason })
+        : null;
       await reportScriptGenerationProgress(input.onProgress, {
         stage: "validation",
         level: attempt < 3 ? "warning" : "error",
-        message: attempt < 3 ? `Draft rejected; preparing correction attempt ${attempt + 1}/3` : "Draft rejected after the final attempt",
-        detail: reason ?? undefined,
+        message: attempt < 3
+          ? correctionPlan
+            ? `Draft rejected; regenerating only ${correctionPlan.moduleIds.length} rejected module${correctionPlan.moduleIds.length === 1 ? "" : "s"}`
+            : `Draft rejected; preparing correction attempt ${attempt + 1}/3`
+          : "Draft rejected after the final attempt",
+        detail: correctionPlan ? `${reason} · IDs: ${correctionPlan.moduleIds.join(", ") || "5D/hooks only"}` : reason,
       });
     }
   }

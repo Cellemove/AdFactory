@@ -42,6 +42,14 @@ export const ScriptModuleSchema = z.object({
   claimFlags: z.array(z.string()),
 });
 
+export const ScriptFiveDSchema = z.object({
+  avatar: z.string().trim().min(1),
+  angle: z.string().trim().min(1),
+  videoFormat: z.string().trim().min(1),
+  identityLevel: z.string().trim().min(1),
+  dynamismLevel: z.string().trim().min(1),
+}).strict();
+
 export const ScriptDocumentSchema = z.object({
   schemaVersion: z.literal(1),
   title: z.string(),
@@ -51,6 +59,7 @@ export const ScriptDocumentSchema = z.object({
   framework: z.object({ id: z.string(), name: z.string() }).nullable(),
   format: z.string(),
   targetDurationSec: z.number().min(5).max(600),
+  fiveD: ScriptFiveDSchema.optional(),
   sourceRefs: z.array(z.object({ type: z.string(), id: z.string().nullable(), title: z.string(), url: z.string().nullable() })),
   teardownBrief: TeardownBriefSchema.nullable().optional(),
   hookAlternatives: z.array(z.object({ id: z.string(), text: z.string() })),
@@ -293,6 +302,7 @@ export function createInitialScriptDocument(input: {
     framework: input.framework ? { id: input.framework.id, name: input.framework.name } : null,
     format: input.format,
     targetDurationSec: input.targetDurationSec,
+    fiveD: undefined,
     sourceRefs: input.teardown ? [{ type: "teardown", id: input.teardown.id, title: input.teardown.title, url: input.teardown.url }] : [],
     teardownBrief: input.teardown?.brief ?? null,
     hookAlternatives: (input.teardown?.brief.hook ?? []).slice(0, 5).map((insight, index) => ({
@@ -408,6 +418,19 @@ export function renderScriptDownload(document: ScriptDocument): string {
     `Target duration: ${document.targetDurationSec} seconds`,
     `Script duration: ${totalDuration} seconds`,
   ];
+
+  if (document.fiveD) {
+    lines.push(
+      "",
+      "5D CREATIVE STRATEGY",
+      "--------------------",
+      `Avatar: ${downloadValue(document.fiveD.avatar)}`,
+      `Angle: ${downloadValue(document.fiveD.angle)}`,
+      `Video format: ${downloadValue(document.fiveD.videoFormat)}`,
+      `Identity level: ${downloadValue(document.fiveD.identityLevel)}`,
+      `Dynamism level: ${downloadValue(document.fiveD.dynamismLevel)}`,
+    );
+  }
 
   if (document.hookAlternatives.length > 0) {
     lines.push("", "HOOK OPTIONS", "------------");

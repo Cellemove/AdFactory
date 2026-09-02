@@ -15,7 +15,8 @@ import { ScriptProjectForm } from "./ScriptProjectForm";
 export const metadata: Metadata = { title: "New Script · AdFactory" };
 export const dynamic = "force-dynamic";
 
-export default async function NewScriptPage() {
+export default async function NewScriptPage({ searchParams }: { searchParams: Promise<{ spySweepId?: string; spyAdIndex?: string }> }) {
+  const query = await searchParams;
   const currentUser = await requireStrategist();
   const [products, angles, avatars, frameworks, users, pipelineRunsRaw] = await Promise.all([
     supabase
@@ -70,6 +71,34 @@ export default async function NewScriptPage() {
     }
   }
 
+  let spyIdea: { sweepId: string; adIndex: number; idea: string; title: string; creativeName: string; productId?: string; angleId?: string } | null = null;
+  if (query.spySweepId && /^\d+$/.test(query.spyAdIndex ?? "")) {
+    const row = await supabase.from("Research").select("id, drafts, queryPlan").eq("id", query.spySweepId).eq("type", "competitor_spy").maybeSingle();
+    if (row.data) {
+      try {
+        const adIndex = Number(query.spyAdIndex);
+        const ad = JSON.parse(row.data.drafts)?.[adIndex] as { brand?: string; caption?: string } | undefined;
+        if (ad?.caption?.trim()) {
+          const haystack = `${ad.brand ?? ""} ${ad.caption}`.toLocaleLowerCase();
+          const score = (value: string) => value.toLocaleLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 3 && haystack.includes(word)).length;
+          const product = [...products].sort((a, b) => score(b.name) - score(a.name))[0];
+          const angle = [...angles].sort((a, b) => score(`${b.name} ${b.requiredKeyword ?? ""}`) - score(`${a.name} ${a.requiredKeyword ?? ""}`))[0];
+          spyIdea = {
+            sweepId: row.data.id,
+            adIndex,
+            idea: ad.caption.trim(),
+            title: `${ad.brand?.trim() || "Competitor"} inspired concept`,
+            creativeName: `${ad.brand?.trim() || "SPY"} IDEA`.toUpperCase().slice(0, 120),
+            productId: product && score(product.name) > 0 ? product.id : undefined,
+            angleId: angle && score(`${angle.name} ${angle.requiredKeyword ?? ""}`) > 0 ? angle.id : undefined,
+          };
+        }
+      } catch {
+        // Invalid or legacy sweep data simply opens an empty form.
+      }
+    }
+  }
+
   return (
     <div className="space-y-6">
       <header>
@@ -94,6 +123,7 @@ export default async function NewScriptPage() {
         currentUserId={currentUser.id}
         teardownConfigured={teardownConfigured}
         teardownWarning={teardownWarning}
+        initialValues={spyIdea}
       />
     </div>
   );

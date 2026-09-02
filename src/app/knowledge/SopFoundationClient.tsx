@@ -35,6 +35,7 @@ interface Market {
 const SOP_TYPES = [
   "verbatim_classification", "source_weighting", "hook_taxonomy", "hook_rules_market",
   "deep_dive_template", "reference_format", "compliance", "block_taxonomy", "naming", "other",
+  "role_prompt",
 ];
 const ROLE_SCOPES = ["all", "strategist", "copywriter", "researcher", "designer", "compliance"];
 

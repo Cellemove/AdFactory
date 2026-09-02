@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { spyOnCompetitors, updateSpyAds, type SpyAd } from "../actions/spy";
 import { saveToBank } from "../actions/bank";
 import { youtubeThumb } from "@/lib/video-thumb";
+import { DEFAULT_SPY_NICHE_SLUG, type SpyNiche } from "@/lib/cellumove/spy-niches";
 
 interface HistoryItem {
   id: string;
@@ -11,6 +12,7 @@ interface HistoryItem {
   drafts: string; // JSON-stringified SpyAd[]
   createdAt: string;
   count: number;
+  niche: SpyNiche;
 }
 
 interface LatestSweep {
@@ -18,6 +20,7 @@ interface LatestSweep {
   ads: SpyAd[];
   focus: string | null;
   createdAt: string;
+  niche: SpyNiche;
 }
 
 // Live elapsed timer — same pattern as the Research page.
@@ -67,11 +70,13 @@ export function SpyClient({
   latest,
   history,
   bankedUrls = [],
+  niches,
 }: {
   latest: LatestSweep | null;
   history: HistoryItem[];
   /** Source URLs already in the idea bank, so saved tiles render as saved. */
   bankedUrls?: string[];
+  niches: SpyNiche[];
 }) {
   const [ads, setAds] = useState<SpyAd[] | null>(latest?.ads ?? null);
   const [sweepId, setSweepId] = useState<string | null>(latest?.id ?? null);
@@ -79,6 +84,7 @@ export function SpyClient({
     latest ? { focus: latest.focus, createdAt: latest.createdAt } : null,
   );
   const [focus, setFocus] = useState("");
+  const [nicheSlug, setNicheSlug] = useState(latest?.niche.slug ?? DEFAULT_SPY_NICHE_SLUG);
   const [hideUnverified, setHideUnverified] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
@@ -116,10 +122,11 @@ export function SpyClient({
     setIsRunning(true);
     startTransition(async () => {
       try {
-        const result = await spyOnCompetitors(f);
+        const result = await spyOnCompetitors({ focus: f, nicheSlug });
         setAds(result.ads);
         setSweepId(result.id);
         setMeta({ focus: f, createdAt: new Date().toISOString() });
+        setNicheSlug(result.niche.slug);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
@@ -162,6 +169,7 @@ export function SpyClient({
         setAds(parsed);
         setSweepId(h.id);
         setMeta({ focus: h.focus, createdAt: h.createdAt });
+        setNicheSlug(h.niche.slug);
         setError(null);
         window.scrollTo({ top: 0, behavior: "smooth" });
       }
@@ -182,8 +190,7 @@ export function SpyClient({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Spy</h1>
           <p className="text-sm text-ink-500">
-            What competitor 3D-shaping legging brands are posting right now — a live feed of their
-            trending ad creatives. Click a tile to open the source; hit ✕ to remove ones you don&apos;t need.
+            A live, niche-specific feed of competitor ads and social creatives. Choose a niche before each sweep.
           </p>
         </div>
         {meta && (
@@ -196,6 +203,17 @@ export function SpyClient({
 
       <section className="card">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <select
+            className="input sm:w-72"
+            value={nicheSlug}
+            onChange={(event) => setNicheSlug(event.target.value)}
+            disabled={isRunning}
+            aria-label="Competitor niche"
+          >
+            {niches.map((niche) => (
+              <option key={niche.slug} value={niche.slug}>{niche.name}</option>
+            ))}
+          </select>
           <input
             className="input flex-1"
             placeholder="Focus (optional) — e.g. 'butt-lift angle' or 'TikTok Shop brands'"
@@ -243,6 +261,7 @@ export function SpyClient({
       {ads && ads.length > 0 ? (
         <AdGallery
           items={visibleAds}
+          sweepId={sweepId}
           onRemove={removeAd}
           onKeep={keepAd}
           isBanked={(ad) => banked.has(bankKey(ad))}
@@ -273,6 +292,7 @@ export function SpyClient({
                   <div className="min-w-0">
                     <div className="text-sm font-medium">
                       <span className="tag">Spy</span>
+                      <span className="ml-2">{h.niche.name}</span>
                       {h.focus ? (
                         <span className="ml-2">focus: “{h.focus}”</span>
                       ) : (
@@ -297,6 +317,7 @@ export function SpyClient({
 // ─── Masonry gallery ─────────────────────────────────────────────────────────
 function AdGallery({
   items,
+  sweepId,
   onRemove,
   onKeep,
   isBanked,
@@ -304,6 +325,7 @@ function AdGallery({
   bankKey,
 }: {
   items: { ad: SpyAd; index: number }[];
+  sweepId: string | null;
   onRemove: (index: number) => void;
   onKeep: (ad: SpyAd) => void;
   isBanked: (ad: SpyAd) => boolean;
@@ -316,6 +338,7 @@ function AdGallery({
         <AdTile
           key={`${ad.sourceUrl}-${index}`}
           ad={ad}
+          useIdeaHref={sweepId ? `/scripts/new?spySweepId=${encodeURIComponent(sweepId)}&spyAdIndex=${index}` : null}
           onRemove={() => onRemove(index)}
           onKeep={() => onKeep(ad)}
           banked={isBanked(ad)}
@@ -346,12 +369,14 @@ function VerificationBadge({ ad }: { ad: SpyAd }) {
 
 function AdTile({
   ad,
+  useIdeaHref,
   onRemove,
   onKeep,
   banked,
   saving,
 }: {
   ad: SpyAd;
+  useIdeaHref: string | null;
   onRemove: () => void;
   onKeep: () => void;
   banked: boolean;
@@ -440,6 +465,11 @@ function AdTile({
           {ad.caption && <p className="mt-0.5 line-clamp-2 text-xs text-ink-600">{ad.caption}</p>}
         </div>
       </a>
+      {useIdeaHref && (
+        <div className="px-2.5 pb-2.5">
+          <a href={useIdeaHref} className="btn btn-primary w-full text-xs">Use this idea →</a>
+        </div>
+      )}
     </div>
   );
 }
