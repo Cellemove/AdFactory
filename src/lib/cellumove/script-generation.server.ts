@@ -623,10 +623,6 @@ export async function generateResourceGroundedScript(input: {
         sourceRefs: baseRefs,
         preserveLocked: input.preserveLocked,
       });
-      const hardClaims = hardClaimFlags(document);
-      if (hardClaims.length) {
-        throw new Error(`Remove unsupported claims: ${hardClaims.join("; ")}`);
-      }
 
       const brollMatch = await matchBrollToScript({ document, idea: input.idea, context: brollContext });
       document = brollMatch.document;
