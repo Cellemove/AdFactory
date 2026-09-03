@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useState, useTransition } from "react";
 import { claimRun, setDelivery, submitReview, releaseClaim } from "../actions/reviews";
-import { claimScriptProject, reviewScriptDelivery, submitScriptDelivery } from "../actions/scripts";
+import { claimScriptProject, confirmScriptBrollUsed, reviewScriptDelivery, submitScriptDelivery } from "../actions/scripts";
 import { renderScriptDownload, scriptDownloadFilename, type ScriptDocument } from "@/lib/cellumove/script-studio";
 import { SCRIPT_STATUS_META, type ScriptWorkflowStatus } from "@/lib/cellumove/script-workflow";
 import { ROLE_LABELS, type Role } from "@/lib/roles";
@@ -25,6 +25,7 @@ type ScriptPackage = {
   reviewNote: string | null;
   product: { name: string; code: string | null; description: string | null; images: Array<{ url: string; altText: string }> };
   sources: Array<{ type: string; title: string; url: string | null }>;
+  usedBrollClipIds: string[];
   updatedAt: string;
 };
 
@@ -155,12 +156,18 @@ function ScriptPackageCard({ item, me, isEditor, run }: { item: ScriptPackage; m
   const [deliveryUrl, setDeliveryUrl] = useState(item.deliveryUrl ?? "");
   const [note, setNote] = useState(item.reviewNote ?? "");
   const [reviewStatus, setReviewStatus] = useState<"changes_requested" | "approved">("approved");
+  const [usedBrollClipIds, setUsedBrollClipIds] = useState(() => new Set(item.usedBrollClipIds));
   const available = item.editorUserId === null;
   const mine = item.editorUserId === me.id;
   const status = SCRIPT_STATUS_META[item.status];
   const readyForMe = isEditor && item.status === "ready" && (available || mine);
   const canDeliver = isEditor && mine && ["claimed", "changes_requested"].includes(item.status);
   const totalDuration = item.document.modules.reduce((sum, module) => sum + module.durationSec, 0);
+  const canConfirmBroll = isEditor && mine && ["claimed", "changes_requested", "submitted", "approved"].includes(item.status);
+  const confirmBroll = (clipId: string) => run(async () => {
+    await confirmScriptBrollUsed({ projectId: item.projectId, clipId });
+    setUsedBrollClipIds((current) => new Set(current).add(clipId));
+  });
 
   const downloadScript = () => {
     const blob = new Blob(["\uFEFF", renderScriptDownload(item.document)], { type: "text/plain;charset=utf-8" });
@@ -201,7 +208,7 @@ function ScriptPackageCard({ item, me, isEditor, run }: { item: ScriptPackage; m
 
       <section>
         <div className="mb-3 flex items-end justify-between gap-3"><div><h4 className="font-semibold">Production script</h4><p className="text-xs text-ink-500">Read in order; timing is cumulative.</p></div><span className="text-xs text-ink-400">{item.document.format} · {item.document.angle.name}</span></div>
-        <div className="divide-y divide-ink-200 rounded-xl border border-ink-200">{item.document.modules.map((module, index) => <ScriptBeat key={module.id} module={module} index={index} priorSeconds={item.document.modules.slice(0, index).reduce((sum, beat) => sum + beat.durationSec, 0)} />)}</div>
+        <div className="divide-y divide-ink-200 rounded-xl border border-ink-200">{item.document.modules.map((module, index) => <ScriptBeat key={module.id} module={module} index={index} priorSeconds={item.document.modules.slice(0, index).reduce((sum, beat) => sum + beat.durationSec, 0)} canConfirmBroll={canConfirmBroll} usedBrollClipIds={usedBrollClipIds} onConfirmBroll={confirmBroll} />)}</div>
       </section>
 
       <section>
@@ -235,8 +242,8 @@ function scriptTime(seconds: number): string {
   return `${Math.floor(safe / 60)}:${String(safe % 60).padStart(2, "0")}`;
 }
 
-function ScriptBeat({ module, index, priorSeconds }: { module: ScriptDocument["modules"][number]; index: number; priorSeconds: number }) {
-  return <div className="grid gap-3 p-4 md:grid-cols-[7rem_minmax(0,1fr)]"><div><div className="text-xs font-semibold text-ink-700">{index + 1}. {module.label}</div><div className="mt-1 font-mono text-[10px] text-ink-400">{scriptTime(priorSeconds)}–{scriptTime(priorSeconds + module.durationSec)}</div><span className="tag mt-2">{module.kind}</span></div><div className="space-y-3"><div><div className="label">Spoken copy</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-900">{module.spokenText || "—"}</p></div>{module.onScreenText && <div className="border-l-2 border-brand-pink/40 pl-3"><div className="label">On-screen text</div><p className="mt-1 text-sm font-medium">{module.onScreenText}</p></div>}<div className="rounded-lg bg-ink-50 p-3"><div className="label">Visual direction</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-600">{module.visualDirection || "—"}</p></div>{module.brollRefs.length > 0 && <div><div className="label">Matched B-roll</div><div className="mt-1 flex flex-wrap gap-2">{module.brollRefs.map((clip) => clip.url ? <a key={`${module.id}-${clip.clipId}`} className="tag hover:underline" href={clip.url} target="_blank" rel="noreferrer">{clip.name} ↗</a> : <span key={`${module.id}-${clip.clipId}`} className="tag">{clip.name}</span>)}</div></div>}</div></div>;
+function ScriptBeat({ module, index, priorSeconds, canConfirmBroll, usedBrollClipIds, onConfirmBroll }: { module: ScriptDocument["modules"][number]; index: number; priorSeconds: number; canConfirmBroll: boolean; usedBrollClipIds: Set<string>; onConfirmBroll: (clipId: string) => void }) {
+  return <div className="grid gap-3 p-4 md:grid-cols-[7rem_minmax(0,1fr)]"><div><div className="text-xs font-semibold text-ink-700">{index + 1}. {module.label}</div><div className="mt-1 font-mono text-[10px] text-ink-400">{scriptTime(priorSeconds)}–{scriptTime(priorSeconds + module.durationSec)}</div><span className="tag mt-2">{module.kind}</span></div><div className="space-y-3"><div><div className="label">Spoken copy</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-900">{module.spokenText || "—"}</p></div>{module.onScreenText && <div className="border-l-2 border-brand-pink/40 pl-3"><div className="label">On-screen text</div><p className="mt-1 text-sm font-medium">{module.onScreenText}</p></div>}<div className="rounded-lg bg-ink-50 p-3"><div className="label">Visual direction</div><p className="mt-1 whitespace-pre-wrap text-sm leading-6 text-ink-600">{module.visualDirection || "—"}</p></div>{module.brollRefs.length > 0 && <div><div className="label">Matched B-roll</div><div className="mt-1 flex flex-wrap gap-2">{module.brollRefs.map((clip) => { const used = Boolean(clip.clipId && usedBrollClipIds.has(clip.clipId)); return <span key={`${module.id}-${clip.clipId}`} className="inline-flex items-center gap-1">{clip.url ? <a className="tag hover:underline" href={clip.url} target="_blank" rel="noreferrer">{clip.name} ↗</a> : <span className="tag">{clip.name}</span>}{clip.clipId && canConfirmBroll && <button type="button" disabled={used} className={`tag ${used ? "tag-ok" : "hover:border-ink-600"}`} onClick={() => onConfirmBroll(clip.clipId!)}>{used ? "✓ Used" : "Mark used"}</button>}</span>; })}</div></div>}</div></div>;
 }
 
 function ClaimCard({

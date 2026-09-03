@@ -22,7 +22,8 @@ import { generateMoreHookAlternatives } from "@/lib/cellumove/script-hook-altern
 import { rewriteScriptModuleWithAI } from "@/lib/cellumove/script-module-assist.server";
 import { createScriptProjectCore, type CreateScriptProjectInput } from "@/lib/cellumove/create-script-project.server";
 import { persistScriptSources } from "@/lib/cellumove/script-sources.server";
-import type { AngleRow, AppUserRow, Json, ProductRow, ReferenceFormatRow, ScriptAssignmentRow, ScriptProjectRow, SubAvatarRow } from "@/lib/database.types";
+import { recordConfirmedScriptBrollUse, recordScriptBrollSuggestions } from "@/lib/cellumove/broll-tracking.server";
+import type { AngleRow, AppUserRow, Json, ProductRow, ReferenceFormatRow, ScriptAssignmentRow, ScriptProjectRow, ScriptVersionRow, SubAvatarRow } from "@/lib/database.types";
 import { newId, supabase, unwrap, unwrapOpt } from "@/lib/db";
 import { getTeardownDeconstruction, parseTeardownRecord } from "@/lib/teardown";
 
@@ -126,6 +127,11 @@ export async function generateScriptProjectDraft(input: {
     await persistScriptSources(projectId, generated.sources, now);
   } catch (error) {
     console.warn(`AI draft saved, but source traceability could not be refreshed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  try {
+    await recordScriptBrollSuggestions(projectId, generated.document);
+  } catch (error) {
+    console.warn(`AI draft saved, but B-roll suggestion counters could not be refreshed: ${error instanceof Error ? error.message : String(error)}`);
   }
   await supabase.from("ScriptEvent").insert({
     id: newId(), projectId, actorUserId: actor.id, eventType: "ai_draft_generated",
@@ -525,6 +531,29 @@ export async function claimScriptProject(projectIdInput: string): Promise<void> 
   await supabase.from("ScriptEvent").insert({ id: newId(), projectId, actorUserId: editor.id, eventType: "editor_claimed", payload: {}, createdAt: now });
   revalidatePath("/reviews");
   revalidatePath("/scripts");
+}
+
+export async function confirmScriptBrollUsed(input: { projectId: string; clipId: string }): Promise<{ recorded: boolean }> {
+  const editor = await requireEditor();
+  const parsed = z.object({ projectId: z.string().min(1), clipId: z.string().min(1) }).parse(input);
+  const [assignmentRaw, handoffRaw] = await Promise.all([
+    unwrapOpt(await supabase.from("ScriptAssignment").select("*").eq("projectId", parsed.projectId).maybeSingle()),
+    unwrapOpt(await supabase.from("ScriptVersion").select("*").eq("projectId", parsed.projectId).eq("origin", "assigned").order("version", { ascending: false }).limit(1).maybeSingle()),
+  ]);
+  const assignment = assignmentRaw as ScriptAssignmentRow | null;
+  const handoff = handoffRaw as ScriptVersionRow | null;
+  if (!assignment || assignment.editorUserId !== editor.id) throw new Error("This script is not assigned to you.");
+  if (!["claimed", "changes_requested", "submitted", "approved"].includes(assignment.status)) {
+    throw new Error("Claim this script before confirming footage usage.");
+  }
+  if (!handoff) throw new Error("The video editor handoff is unavailable.");
+  const document = parseScriptDocument(handoff.document);
+  const clip = document.modules.flatMap((module) => module.brollRefs).find((ref) => ref.clipId === parsed.clipId);
+  if (!clip) throw new Error("That clip is not part of the current video editor handoff.");
+  const recorded = await recordConfirmedScriptBrollUse(parsed.projectId, parsed.clipId, clip.name);
+  revalidatePath("/reviews");
+  revalidatePath("/broll");
+  return { recorded };
 }
 
 export async function submitScriptDelivery(projectIdInput: string, deliveryUrlInput: string): Promise<void> {

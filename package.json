@@ -13,6 +13,7 @@
     "test:teardown-config": "tsx --test src/lib/teardown-config.test.ts",
     "test:script-generation": "tsx --test src/lib/cellumove/script-generation.test.ts",
     "test:script-rag": "tsx --test src/lib/cellumove/script-rag.test.ts",
+    "test:script-broll": "tsx --test src/lib/cellumove/script-broll.test.ts",
     "test:module-assist": "tsx --test src/lib/cellumove/script-module-assist.test.ts",
     "test:hook-alternatives": "tsx --test src/lib/cellumove/script-hook-alternatives.test.ts",
     "test:product-overrides": "tsx --test src/lib/product-overrides.test.ts",

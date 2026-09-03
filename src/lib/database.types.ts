@@ -340,7 +340,7 @@ export type EditorClaimRow = {
 };
 
 // BrollClip = one video clip indexed from the team's Google Drive b-roll folder
-// (Migration 007). Fed into the Designer / Creative-Briefs stages so b-roll
+// (Migration 007). Fed into the generation and handoff workflows so B-roll
 // suggestions map to real files.
 export type BrollClipRow = {
   id: string;
@@ -393,7 +393,7 @@ export type BrollSuggestionRow = {
   id: string;
   clipId: string;
   clipName: string;
-  source: string; // 'designer' | 'creative_briefs'
+  source: string; // 'designer' | 'creative_briefs' | 'script_studio' | 'script_studio_used'
   refId: string | null;
   createdAt: string;
 };
