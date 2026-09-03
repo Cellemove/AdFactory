@@ -13,6 +13,7 @@ import {
   type ScriptGenerationProgressSink,
 } from "@/lib/cellumove/script-generation-progress";
 import { persistScriptSources } from "@/lib/cellumove/script-sources.server";
+import { recordScriptBrollSuggestions } from "@/lib/cellumove/broll-tracking.server";
 import { parsePipelineRunSelection } from "@/lib/cellumove/pipeline-selection";
 import type { ReferenceFormatBeat } from "@/lib/cellumove/reference-formats";
 import { createTeardownBrief } from "@/lib/cellumove/teardown-brief";
@@ -230,6 +231,13 @@ export async function createScriptProjectCore(
 
     await persistScriptSources(projectId, generated.sources, createdAt);
     await reportScriptGenerationProgress(progress, { stage: "persistence", level: "success", message: `${generated.sources.length} source receipts saved` });
+
+    try {
+      const suggestionCount = await recordScriptBrollSuggestions(projectId, document);
+      await reportScriptGenerationProgress(progress, { stage: "persistence", level: "success", message: `${suggestionCount} new B-roll suggestions recorded` });
+    } catch (trackingError) {
+      await reportScriptGenerationProgress(progress, { stage: "persistence", level: "warning", message: "Script saved, but B-roll suggestion counters could not be updated", detail: trackingError instanceof Error ? trackingError.message : String(trackingError) });
+    }
 
     unwrap(await supabase.from("ScriptEvent").insert({
       id: newId(), projectId, actorUserId: options.actor.id, eventType: "project_created",

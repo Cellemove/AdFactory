@@ -295,7 +295,7 @@ export const SCRIPT_DRAFT_SYSTEM_INSTRUCTION = [
   "If evidence is missing, use accurate non-specific language and a low-pressure CTA such as 'See the available options'.",
   "Aim for each module's targetSpokenWords and natural spoken delivery. Do not omit essential proof, mechanism, or context merely to force an unrealistically short beat; AdFactory will expand the beat timing when complete copy needs more room. Keep on-screen text concise, ideally eight words or fewer.",
   "Visual direction must be executable: subject, action, framing, product moment, overlays, and transitions where relevant.",
-  "Use only IDs from allowed_broll_clip_ids. Use an empty brollClipIds array when no real clip fits; describe the required new shot in visualDirection.",
+  "Always return an empty brollClipIds array. AdFactory's deterministic matcher attaches relevant indexed clips after validating the finished module; visualDirection must still describe the exact shot needed.",
   "Avoid cure/medical promises and banned claims. Preserve the angle's required mechanism and never use its banned mechanism.",
   "Return only JSON matching this exact shape:",
   '{"fiveD":{"avatar":"specific audience","angle":"specific persuasion angle","videoFormat":"production format","identityLevel":"identity transformation or self-concept","dynamismLevel":"visual pacing and energy"},"hookAlternatives":["string","string","string"],"modules":[{"id":"module ID","spokenText":"complete spoken copy","onScreenText":"complete overlay","visualDirection":"complete shoot direction","brollClipIds":["known clip ID"]}]}',

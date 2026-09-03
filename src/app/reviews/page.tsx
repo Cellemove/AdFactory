@@ -3,7 +3,7 @@ import { getSessionUser } from "@/lib/auth";
 import { parseScriptDocument } from "@/lib/cellumove/script-studio";
 import { normalizeScriptWorkflowStatus } from "@/lib/cellumove/script-workflow";
 import { supabase } from "@/lib/db";
-import type { AppUserRow, EditorClaimRow, ProductRow, ResearchRow, ScriptAssignmentRow, ScriptProjectRow, ScriptSourceRow, ScriptVersionRow } from "@/lib/database.types";
+import type { AppUserRow, BrollSuggestionRow, EditorClaimRow, ProductRow, ResearchRow, ScriptAssignmentRow, ScriptProjectRow, ScriptSourceRow, ScriptVersionRow } from "@/lib/database.types";
 import { readShopifyProductMetadata } from "@/lib/shopify";
 import { ReviewsClient } from "./ReviewsClient";
 
@@ -21,7 +21,7 @@ export default async function ReviewsPage() {
   const me = await getSessionUser();
   if (!me) redirect("/login");
 
-  const [claimsRes, runsRes, scriptAssignmentsRes, scriptProjectsRes, usersRes, versionsRes, sourcesRes, productsRes] = await Promise.all([
+  const [claimsRes, runsRes, scriptAssignmentsRes, scriptProjectsRes, usersRes, versionsRes, sourcesRes, productsRes, brollUsageRes] = await Promise.all([
     supabase.from("EditorClaim").select("*").order("updatedAt", { ascending: false }),
     supabase
       .from("Research")
@@ -35,6 +35,7 @@ export default async function ReviewsPage() {
     supabase.from("ScriptVersion").select("*").eq("origin", "assigned").order("version", { ascending: false }),
     supabase.from("ScriptSource").select("*").order("createdAt", { ascending: true }),
     supabase.from("Product").select("*"),
+    supabase.from("BrollSuggestion").select("*").eq("source", "script_studio_used"),
   ]);
 
   const tableMissing = Boolean(claimsRes.error);
@@ -65,6 +66,7 @@ export default async function ReviewsPage() {
   const versions = (versionsRes.data ?? []) as ScriptVersionRow[];
   const sources = (sourcesRes.data ?? []) as ScriptSourceRow[];
   const products = (productsRes.data ?? []) as ProductRow[];
+  const brollUsage = (brollUsageRes.data ?? []) as BrollSuggestionRow[];
   const userById = new Map(users.map((user) => [user.id, user]));
   const projectById = new Map(scriptProjects.map((project) => [project.id, project]));
   const productById = new Map(products.map((product) => [product.id, product]));
@@ -105,6 +107,7 @@ export default async function ReviewsPage() {
         title: source.title,
         url: source.url,
       })),
+      usedBrollClipIds: brollUsage.filter((usage) => usage.refId === project.id).map((usage) => usage.clipId),
       updatedAt: assignment.updatedAt,
     }];
   });

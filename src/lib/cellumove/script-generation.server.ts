@@ -20,11 +20,11 @@ import {
   hardClaimFlags,
   SCRIPT_DRAFT_PROMPT_VERSION,
   SCRIPT_DRAFT_SYSTEM_INSTRUCTION,
-  type ScriptGenerationBrollClip,
   type ScriptGenerationSourceRef,
 } from "@/lib/cellumove/script-generation";
 import { SCRIPT_RAG_VERSION, type ScriptRagCandidate } from "@/lib/cellumove/script-rag";
 import { retrieveScriptModuleEvidence } from "@/lib/cellumove/script-rag.server";
+import { loadScriptBrollMatchingContext, matchBrollToScript } from "@/lib/cellumove/script-broll.server";
 import { reportScriptGenerationProgress, type ScriptGenerationProgressSink } from "@/lib/cellumove/script-generation-progress";
 import { ensureScriptDurationPlan, type ScriptDocument } from "@/lib/cellumove/script-studio";
 import { createTeardownBrief } from "@/lib/cellumove/teardown-brief";
@@ -32,7 +32,6 @@ import { PIPELINE_STAGES } from "@/lib/cellumove/pipeline-stages";
 import type {
   AngleRow,
   AvatarResearchRow,
-  BrollClipRow,
   CopyPrincipleRow,
   KnowledgeNoteRow,
   ProductRow,
@@ -324,7 +323,7 @@ export async function generateResourceGroundedScript(input: {
     angleVerbatims,
     knowledgeNotes,
     copyPrinciples,
-    brollClips,
+    brollContext,
     winningAds,
     pipelineRows,
   ] = await Promise.all([
@@ -371,15 +370,7 @@ export async function generateResourceGroundedScript(input: {
       "copy principles",
       supabase.from("CopyPrinciple").select("*").eq("category", "writing").order("order").limit(20),
     ),
-    optionalRows<BrollClipRow>(
-      "B-roll library",
-      supabase
-        .from("BrollClip")
-        .select("*")
-        .order("timesSuggested", { ascending: true })
-        .order("indexedAt", { ascending: false })
-        .limit(40),
-    ),
+    loadScriptBrollMatchingContext(),
     optionalRows<WinningAdRow>(
       "winning ads",
       supabase.from("WinningAd").select("*").eq("angleId", input.angle.id).order("createdAt", { ascending: false }).limit(8),
@@ -401,7 +392,7 @@ export async function generateResourceGroundedScript(input: {
     stage: "resources",
     level: "success",
     message: "Resource stores loaded",
-    detail: `${avatarResearch ? 1 : 0} avatar profile · ${avatarVerbatims.length + angleVerbatims.length} verified verbatim matches · ${knowledgeNotes.length} knowledge notes · ${copyPrinciples.length} copy principles · ${winningAds.length} winning ads · ${brollClips.length} B-roll clips`,
+    detail: `${avatarResearch ? 1 : 0} avatar profile · ${avatarVerbatims.length + angleVerbatims.length} verified verbatim matches · ${knowledgeNotes.length} knowledge notes · ${copyPrinciples.length} copy principles · ${winningAds.length} winning ads · ${brollContext.clips.length} analyzed B-roll clips`,
   });
 
   const verbatims = uniqueById([...avatarVerbatims, ...angleVerbatims]).slice(0, 36);
@@ -409,20 +400,6 @@ export async function generateResourceGroundedScript(input: {
   const pipelineContext = latestPipelineContext(pipelineRows, input.avatar?.id ?? null);
   const shopify = readShopifyProductMetadata(input.product.context);
   const teardownBrief = input.teardown ? createTeardownBrief(input.teardown.parsed_output) : null;
-
-  const brollResources = brollClips.map((clip) => ({
-    id: clip.id,
-    name: clip.name,
-    folderPath: clip.folderPath,
-    description: truncate(clip.aiDescription || clip.description, 500),
-    tags: truncate(clip.tags, 300),
-    timesSuggested: clip.timesSuggested,
-  }));
-  const mappedBroll: ScriptGenerationBrollClip[] = brollClips.map((clip) => ({
-    id: clip.id,
-    name: clip.name,
-    url: clip.webViewLink,
-  }));
 
   const strategistProfile = renderStrategistProfile(profile);
   const copywriterProfile = renderCopywriterProfile(profile);
@@ -530,7 +507,11 @@ export async function generateResourceGroundedScript(input: {
       retrievalMode: moduleRetrieval.mode,
       packs: moduleEvidence,
     },
-    broll: brollResources,
+    broll: {
+      selectionMode: "deterministic per-module hybrid retrieval after copy generation",
+      instruction: "Return an empty brollClipIds array. AdFactory attaches clips after validating the finished module.",
+      analyzedClipCount: brollContext.clips.length,
+    },
   };
 
   const sources: GeneratedScriptSource[] = [{
@@ -593,7 +574,7 @@ export async function generateResourceGroundedScript(input: {
     teardownInsights: teardownBrief
       ? Object.values(teardownBrief).filter(Array.isArray).reduce((sum, value) => sum + value.length, 0)
       : 0,
-    brollClips: brollClips.length,
+    brollClips: brollContext.clips.length,
     ragCandidates: ragCandidates.length,
     ragModules: moduleEvidence.length,
     ragEvidenceItems: selectedEvidenceCount,
@@ -618,8 +599,8 @@ export async function generateResourceGroundedScript(input: {
         instruction: isTargetedCorrection ? SCRIPT_DRAFT_CORRECTION_INSTRUCTION : SCRIPT_DRAFT_SYSTEM_INSTRUCTION,
         promptSopSlug: isTargetedCorrection ? undefined : "creative-strategist-script-maker",
         context: isTargetedCorrection
-          ? buildScriptCorrectionContext({ scaffold, idea: input.idea, resources, allowedBrollClipIds: mappedBroll.map((clip) => clip.id), plan: correctionPlan! })
-          : buildScriptGenerationContext({ scaffold, idea: input.idea, resources, allowedBrollClipIds: mappedBroll.map((clip) => clip.id) }),
+          ? buildScriptCorrectionContext({ scaffold, idea: input.idea, resources, allowedBrollClipIds: [], plan: correctionPlan! })
+          : buildScriptGenerationContext({ scaffold, idea: input.idea, resources, allowedBrollClipIds: [] }),
         json: true,
         feature: "script_studio_draft",
         metadata: { promptVersion: SCRIPT_DRAFT_PROMPT_VERSION, attempt, resourceCounts, correctionModuleIds: correctionPlan?.moduleIds },
@@ -636,10 +617,10 @@ export async function generateResourceGroundedScript(input: {
       previousDraft = draft;
       correctionPlan = null;
       const baseRefs = sources.map(sourceRef);
-      const document = applyGeneratedScriptDraft({
+      let document = applyGeneratedScriptDraft({
         scaffold,
         draft,
-        brollClips: mappedBroll,
+        brollClips: [],
         sourceRefs: baseRefs,
         preserveLocked: input.preserveLocked,
       });
@@ -647,6 +628,15 @@ export async function generateResourceGroundedScript(input: {
       if (hardClaims.length) {
         throw new Error(`Remove unsupported claims: ${hardClaims.join("; ")}`);
       }
+
+      const brollMatch = await matchBrollToScript({ document, idea: input.idea, context: brollContext });
+      document = brollMatch.document;
+      await reportScriptGenerationProgress(input.onProgress, {
+        stage: "retrieval",
+        level: brollMatch.matchedCount ? "success" : "warning",
+        message: brollMatch.matchedCount ? "Per-module B-roll matching completed" : "No B-roll cleared the balanced relevance threshold",
+        detail: `${brollMatch.matchedCount} unique clips matched · ${brollMatch.candidateCount} shortlisted from ${brollContext.clips.length} analyzed clips · ${brollMatch.mode} scoring`,
+      });
 
       const timingExpansions = document.modules.filter((module) => module.claimFlags.some((flag) => flag.startsWith("timing:")));
       await reportScriptGenerationProgress(input.onProgress, {
@@ -659,14 +649,14 @@ export async function generateResourceGroundedScript(input: {
       });
 
       const usedBrollIds = new Set(document.modules.flatMap((module) => module.brollRefs.map((ref) => ref.clipId)).filter(Boolean));
-      for (const clip of brollClips) {
+      for (const clip of brollContext.clips) {
         if (!usedBrollIds.has(clip.id)) continue;
         const brollSource: GeneratedScriptSource = {
           sourceType: "broll",
           sourceId: clip.id,
           title: clip.name,
-          url: clip.webViewLink,
-          snapshot: clip,
+          url: clip.url,
+          snapshot: { id: clip.id, name: clip.name, url: clip.url, folderPath: clip.folderPath, description: clip.description, tags: clip.tags },
         };
         sources.push(brollSource);
         document.sourceRefs.push(sourceRef(brollSource));
@@ -682,7 +672,7 @@ export async function generateResourceGroundedScript(input: {
       lastError = error;
       const reason = truncate(error instanceof Error ? error.message : String(error), 1200) ?? "Unknown validation error";
       correctionPlan = previousDraft
-        ? planScriptDraftCorrection({ scaffold, draft: previousDraft, allowedBrollClipIds: mappedBroll.map((clip) => clip.id), reason })
+        ? planScriptDraftCorrection({ scaffold, draft: previousDraft, allowedBrollClipIds: [], reason })
         : null;
       await reportScriptGenerationProgress(input.onProgress, {
         stage: "validation",
