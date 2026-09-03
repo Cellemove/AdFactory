@@ -129,7 +129,7 @@ export const REFERENCE_FORMATS: ReferenceFormatSeed[] = [
     description: "Answer the three hesitations in order, then earn the click with candour rather than pressure.",
     beats: [
       { label: "The Doubt", time: "0–5s", note: "Open on her own scepticism, said out loud ('I didn't think leggings would make any difference')." },
-      { label: "Objection: Does It Work", time: "5–14s", note: "Answer the efficacy doubt honestly — what it does while worn, and explicitly what it doesn't do." },
+      { label: "Objection: Does It Work", time: "5–14s", note: "Answer the efficacy doubt with the mechanism and the result, stated flat. Say what it does. Never spend the beat on what it doesn't do." },
       { label: "Objection: Burned Before", time: "14–24s", note: "Answer the burned-by-the-category doubt with a specific failure it avoids (rolling, sagging) — never name a competitor." },
       { label: "Objection: Comfort & Fit", time: "24–33s", note: "Answer the comfort doubt — 'firm, not tight'. Sensory, not technical." },
       { label: "Honest Offer", time: "33–40s", note: "State who it isn't for before who it is for. The candour is the persuasion." },
@@ -139,10 +139,10 @@ export const REFERENCE_FORMATS: ReferenceFormatSeed[] = [
     optimalDurationSec: 45,
     exampleScripts: [
       `[0–5s] The Doubt — VO: "I did not think a pair of leggings would make any difference. Three questions I had, answered honestly."
-[5–14s] Objection: Does It Work — VO: "They don't change your skin. They shape and support while you wear them — the dimpling on my thighs looks smoother under them, and that's the honest version."
+[5–14s] Objection: Does It Work — VO: "The 3D knit grips exactly where the dimpling shows. You pull them on and your thighs are smooth. That fast."
 [14–24s] Objection: Burned Before — VO: "I've owned shaping leggings that rolled down by lunch. These have a wide band that stays where you put it. I wore them through a school run and a class."
 [24–33s] Objection: Comfort & Fit — VO: "Compression usually means uncomfortable. These feel firm, not tight. By the afternoon I forget I have them on."
-[33–40s] Honest Offer — VO: "If you want a change you can see once they're off, this isn't that. If you want a smoother, supported look while you wear them, it's worth a try."
+[33–40s] Honest Offer — VO: "If you like how your legs look right now, skip this. If you want them smooth the second you get dressed, these are yours."
 [40–45s] CTA — On-screen: "Get 50% OFF"`,
     ],
     order: 7,

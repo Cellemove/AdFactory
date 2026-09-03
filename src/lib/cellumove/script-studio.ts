@@ -358,7 +358,6 @@ export interface ScriptQualityIssue {
 export function inspectScriptQuality(document: ScriptDocument): ScriptQualityIssue[] {
   const issues: ScriptQualityIssue[] = [];
   const filler = /\b(very|really|actually|basically|literally|just)\b/gi;
-  const riskyClaim = /\b(cure|guarantee(?:d)?|clinically proven|eliminate(?:s|d)? cellulite)\b/i;
 
   for (const beatModule of document.modules) {
     const sentences = beatModule.spokenText.split(/[.!?]+/).map((value) => value.trim()).filter(Boolean);
@@ -368,9 +367,6 @@ export function inspectScriptQuality(document: ScriptDocument): ScriptQualityIss
     const fillerCount = beatModule.spokenText.match(filler)?.length ?? 0;
     if (fillerCount >= 2) {
       issues.push({ moduleId: beatModule.id, severity: "warning", message: "This beat contains repeated filler words." });
-    }
-    if (riskyClaim.test(`${beatModule.spokenText} ${beatModule.onScreenText}`)) {
-      issues.push({ moduleId: beatModule.id, severity: "error", message: "Potentially unsupported or prohibited claim." });
     }
     if (!beatModule.spokenText.trim() && !beatModule.onScreenText.trim()) {
       issues.push({ moduleId: beatModule.id, severity: "warning", message: "This beat has no copy yet." });

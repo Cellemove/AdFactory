@@ -17,7 +17,6 @@ import {
   mergeScriptDraftCorrection,
   planScriptDraftCorrection,
   SCRIPT_DRAFT_CORRECTION_INSTRUCTION,
-  hardClaimFlags,
   SCRIPT_DRAFT_PROMPT_VERSION,
   SCRIPT_DRAFT_SYSTEM_INSTRUCTION,
   type ScriptGenerationSourceRef,

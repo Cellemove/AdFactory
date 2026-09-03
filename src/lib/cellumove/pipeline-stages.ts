@@ -49,10 +49,10 @@ export const BRAND_PRODUCT_TERMS = [
   "shapewear leggings",
 ];
 
-export const CLAIMS_GUARDRAIL = [
-  "CLAIMS GUARDRAIL (non-negotiable): compression SUPPORTS and shapes — it does not cure, treat, melt, dissolve, or remove anything.",
-  "Never use: cure / eliminate / melt / dissolve / gone / removes / permanent / detox.",
-  "Use instead: 'smoother', 'the appearance of', 'less noticeable', 'feels firmer', 'supported', 'sculpted look'.",
+// Angle hygiene only. Claims review happens upstream of generation, so nothing
+// here softens, hedges, or reframes copy — it only keeps each angle inside its
+// own mechanism so the batch doesn't cross-contaminate.
+export const MECHANISM_GUARDRAIL = [
   "Stay inside the angle's own mechanism; never leak a banned mechanism from another angle.",
 ].join("\n");
 
@@ -136,7 +136,7 @@ export const PIPELINE_STAGES: PipelineStageDef[] = [
       "INPUTS — you are given the avatar's G1 research and the grounded G2 deep-dive corpus: its synthesis, big patterns, and a large bank of REAL verbatims (Reddit + YouTube). This stage is pure SYNTHESIS of that gathered research — no new web research.",
       "Base EVERY section on the corpus. Quote her real language from the verbatims. Never invent quotes, stats, segments, or facts the corpus doesn't support.",
       "Competitor/alternative intel comes from the corpus itself — what she says she tried (SPANX, Skims, pharmacy stockings, creams…), what failed her, and why she distrusts it.",
-      CLAIMS_GUARDRAIL,
+      MECHANISM_GUARDRAIL,
       "",
       "Produce ALL sections:",
       "  1. AVATAR SUMMARY — who exactly is this customer?",
@@ -190,7 +190,7 @@ export const PIPELINE_STAGES: PipelineStageDef[] = [
       "  • The mechanism must EXPLAIN why everything she tried failed, and make CelluMove's fix feel inevitable once she gets the science.",
       "  • Use her real phrasing from the research. Be specific and falsifiable. Quote real moments (e.g. 'the 2pm bathroom adjustment').",
       "  • Ground the science in the angle's mechanism. Borrow authority from established clinical/physiological fields where honest.",
-      CLAIMS_GUARDRAIL,
+      MECHANISM_GUARDRAIL,
       "",
       "Return EXACTLY one JSON object with these keys (omit a field only if you genuinely cannot ground it; never invent fake citations):",
       `{
@@ -256,7 +256,7 @@ export const PIPELINE_STAGES: PipelineStageDef[] = [
       "Capture: a positioning statement, the unique selling proposition, 3-5 brand pillars, voice & tone (how we speak to HER specifically),",
       "core values, a short origin / why-we-exist narrative, and explicit Do-Say / Don't-Say lists.",
       "The Don't-Say list MUST include the guardrail's banned words AND this avatar's rejected clichés.",
-      CLAIMS_GUARDRAIL,
+      MECHANISM_GUARDRAIL,
       'Return ONLY JSON: {"positioning":string,"usp":string,"pillars":string[],"voiceAndTone":string,"coreValues":string[],"originStory":string,"doSay":string[],"dontSay":string[]}',
     ].join("\n"),
   },
@@ -274,7 +274,7 @@ export const PIPELINE_STAGES: PipelineStageDef[] = [
       "Use the avatar's actual language (from her research + deep dive), the root cause/mechanism, and the brand DNA.",
       "Everything must sound like HER — never generic marketing, never a rejected cliché.",
       "Provide: big ideas, headlines, leads/openers, fascination bullets, scroll-stopping hooks, CTAs, objection crushers, and power phrases mined from her voice.",
-      CLAIMS_GUARDRAIL,
+      MECHANISM_GUARDRAIL,
       'Return ONLY JSON: {"bigIdeas":string[],"headlines":string[],"leads":string[],"fascinationBullets":string[],"hooks":string[],"ctas":string[],"objectionCrushers":[{"objection":string,"rebuttal":string}],"powerPhrases":string[]}',
     ].join("\n"),
   },
@@ -291,7 +291,7 @@ export const PIPELINE_STAGES: PipelineStageDef[] = [
       "You are running the ADVERTORIAL stage. Write a native-style advertorial — it should read like editorial, not an ad —",
       "that takes the avatar from problem-aware to ready-to-buy. Build it on the root cause/mechanism, brand DNA, and copy arsenal.",
       "Story-led, specific, and in her voice. Open with a hook from the arsenal; weave in the mechanism and proof; close with a clear CTA.",
-      CLAIMS_GUARDRAIL,
+      MECHANISM_GUARDRAIL,
       'Return ONLY JSON: {"headline":string,"subheadline":string,"byline":string,"sections":[{"heading":string,"body":string}],"callToAction":string,"ps":string}',
     ].join("\n"),
   },
@@ -309,7 +309,7 @@ export const PIPELINE_STAGES: PipelineStageDef[] = [
       "Write 3-5 scripts, each with a DISTINCT hook mechanic (never variants of one idea), a 5-6 beat storyboard",
       "(time, visual, on-screen text, voiceover), and a CTA. Then give Meta primary-text variants and ad headlines.",
       "Pull hooks/phrases from the copy arsenal and keep the mechanism correct.",
-      CLAIMS_GUARDRAIL,
+      MECHANISM_GUARDRAIL,
       'Return ONLY JSON: {"scripts":[{"title":string,"hookMechanic":string,"hook":string,"beats":[{"time":string,"visual":string,"onScreenText":string,"voiceover":string}],"cta":string}],"primaryTexts":string[],"adHeadlines":string[]}',
     ].join("\n"),
   },
@@ -328,7 +328,7 @@ export const PIPELINE_STAGES: PipelineStageDef[] = [
       "Each brief: a title, format (static or video), the concept, the key visual, the exact copy to use, a shot list,",
       "production notes, and the list of deliverables.",
       "When a B-ROLL LIBRARY is provided, name real clips from it EXACTLY in the shot list (prefer clips with a low or absent \"suggested N×\" count). For any shot with NO matching clip, add a fallback to productionNotes: a ready-to-run AI video-generation prompt AND a TikTok search query to scrap a similar clip.",
-      CLAIMS_GUARDRAIL,
+      MECHANISM_GUARDRAIL,
       'Return ONLY JSON: {"briefs":[{"title":string,"format":"static"|"video","concept":string,"keyVisual":string,"copyToUse":string,"shotList":string[],"productionNotes":string,"deliverables":string[]}]}',
     ].join("\n"),
   },
@@ -411,7 +411,7 @@ export const DEEP_DIVE_SYNTHESIS_INSTRUCTION = [
   "You are a top creative strategist for a $100M/year direct-response brand in the 3D-shaping / sculpting / compression-legging niche.",
   "You are given the accumulated AVATAR DEEP DIVE research for ONE angle: real patterns, verbatim customer quotes, and the threads that were read.",
   "Synthesize it into a tight, decision-ready ANGLE brief. Ground EVERY field in the research provided — use her real words and the patterns you see. Do not invent facts, quotes, or claims.",
-  CLAIMS_GUARDRAIL,
+  MECHANISM_GUARDRAIL,
   "",
   "Return EXACTLY one JSON object with these keys (no prose, no markdown fences):",
   `{

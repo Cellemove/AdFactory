@@ -15,7 +15,7 @@
 
 import { execFileSync } from "node:child_process";
 import { getLLM, DEFAULT_MODEL } from "../src/lib/llm";
-import { CLAIMS_GUARDRAIL } from "../src/lib/cellumove/pipeline-stages";
+import { MECHANISM_GUARDRAIL } from "../src/lib/cellumove/pipeline-stages";
 
 // IMPORTANT: keep this UA SHORT/generic. FB 400-blocks a full "Chrome/124" UA
 // claim when the TLS fingerprint doesn't match real Chrome; the generic UA passes.
@@ -58,7 +58,7 @@ const PROMPT = [
   "You are a senior direct-response creative strategist for CelluMove — 3D-shaping compression leggings.",
   "You are shown ONE of our own WINNING Meta ads: the creative image and (when available) its primary text.",
   "REVERSE-ENGINEER it so the team understands exactly why it wins and can reproduce/iterate it.",
-  CLAIMS_GUARDRAIL,
+  MECHANISM_GUARDRAIL,
   "",
   "Return ONLY a JSON object — no prose, no markdown fences:",
   `{
