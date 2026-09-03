@@ -40,13 +40,15 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
   ]);
 
   const avatarById = new Map(avatars.map((avatar) => [avatar.id, avatar]));
-  const angleBySlug = new Map(angles.map((angle) => [angle.slug, angle]));
+  const angleById = new Map(angles.map((angle) => [angle.id, angle]));
   const pipelineRuns = (pipelineRunsRaw as Pick<ResearchRow, "id" | "focus" | "angleSlug" | "drafts" | "createdAt">[]).flatMap((run) => {
     try {
       const doc = parsePipelineRunSelection(run.drafts);
       if (!doc) return [];
       const avatar = avatarById.get(doc.subAvatarId);
-      const angle = run.angleSlug ? angleBySlug.get(run.angleSlug) : null;
+      // Take the angle from the avatar, not the run's stored angleSlug — the two
+      // can drift, and creation now treats the avatar as the authority.
+      const angle = avatar ? angleById.get(avatar.angleId) : null;
       const completedStages = doc.completedStages;
       if (!avatar || !angle || completedStages === 0) return [];
       return [{
