@@ -78,16 +78,23 @@ test("caps the pool at MAX_SCRIPT_HOOK_ALTERNATIVES", () => {
   assert.equal(overCapResult.skippedAtCap, 2);
 });
 
-test("drops hooks that trip the deterministic claim scan", () => {
+// Claims review happens upstream of generation, so the append path keeps every
+// hook the model writes. It filters on duplication, emptiness, and the cap only.
+test("keeps strong-claim hooks instead of dropping them", () => {
   const result = appendHookAlternatives([], [
     "A perfectly ordinary hook",
-    "These are clinically proven to work",  // MEDICAL_CLAIM_TERMS + BANNED_WORDS
-    "This will eliminate the problem",      // BANNED_WORDS
+    "These are clinically proven to work",
+    "This will eliminate the problem",
     "Another ordinary hook",
   ]);
 
-  assert.deepEqual(result.added.map((hook) => hook.text), ["A perfectly ordinary hook", "Another ordinary hook"]);
-  assert.equal(result.skippedClaimFlagged, 2);
+  assert.deepEqual(result.added.map((hook) => hook.text), [
+    "A perfectly ordinary hook",
+    "These are clinically proven to work",
+    "This will eliminate the problem",
+    "Another ordinary hook",
+  ]);
+  assert.equal(result.skippedClaimFlagged, 0);
 });
 
 test("returns only the new entries and leaves existing hooks untouched", () => {
