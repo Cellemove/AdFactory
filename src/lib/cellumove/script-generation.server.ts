@@ -17,7 +17,6 @@ import {
   mergeScriptDraftCorrection,
   planScriptDraftCorrection,
   SCRIPT_DRAFT_CORRECTION_INSTRUCTION,
-  hardClaimFlags,
   SCRIPT_DRAFT_PROMPT_VERSION,
   SCRIPT_DRAFT_SYSTEM_INSTRUCTION,
   type ScriptGenerationBrollClip,
@@ -643,11 +642,6 @@ export async function generateResourceGroundedScript(input: {
         sourceRefs: baseRefs,
         preserveLocked: input.preserveLocked,
       });
-      const hardClaims = hardClaimFlags(document);
-      if (hardClaims.length) {
-        throw new Error(`Remove unsupported claims: ${hardClaims.join("; ")}`);
-      }
-
       const timingExpansions = document.modules.filter((module) => module.claimFlags.some((flag) => flag.startsWith("timing:")));
       await reportScriptGenerationProgress(input.onProgress, {
         stage: "validation",

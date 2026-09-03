@@ -9,7 +9,7 @@ import { gatherYouTubeComments } from "@/lib/youtube";
 import { subredditsForAngle, renderSubredditBlock } from "@/lib/cellumove/subreddits";
 import { extractJsonObject } from "@/lib/cellumove/agents";
 import { DEEP_DIVE_TEMPLATE } from "@/lib/cellumove/deep-dive-template";
-import { CLAIMS_GUARDRAIL } from "@/lib/cellumove/pipeline-stages";
+import { MECHANISM_GUARDRAIL } from "@/lib/cellumove/pipeline-stages";
 import { verifyDraft } from "@/lib/cellumove/verify-research";
 import { dedupeNovel } from "@/lib/cellumove/embeddings";
 import { exclusionBlock } from "@/lib/cellumove/novelty";
@@ -87,7 +87,7 @@ const EXCAVATION_SYSTEM_PROMPT = [
   "3. For each sub-avatar, fill every field from REAL research in HER words (pain, desires, objections, daily language, triggers, identity, social proof, buying context).",
   "4. Derive the ANGLE this avatar maps to: the mechanism compression legitimately owns for this problem, the one keyword that must appear in every prompt, and the mechanisms from OTHER angles to avoid.",
   "",
-  CLAIMS_GUARDRAIL,
+  MECHANISM_GUARDRAIL,
   "",
   "════════════════════════════════════════════════════════════════════════",
   "OUTPUT — return EXACTLY one JSON object, no prose, no markdown fences",

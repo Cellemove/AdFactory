@@ -34,7 +34,10 @@ export const CreateScriptProjectSchema = z.object({
   adNumber: z.string().trim().min(1).max(40),
   creativeName: z.string().trim().min(2).max(120),
   productId: z.string().min(1),
-  angleId: z.string().min(1),
+  // The avatar owns the angle (SubAvatar.angleId is a non-null FK), so the form
+  // no longer sends one. Still accepted for callers that name an angle directly
+  // — the baseline harness, and any project created without an avatar.
+  angleId: z.string().min(1).nullable().optional(),
   subAvatarId: z.string().nullable().optional(),
   referenceFormatId: z.string().nullable().optional(),
   strategistUserId: z.string().min(1),
@@ -45,6 +48,9 @@ export const CreateScriptProjectSchema = z.object({
   pipelineRunId: z.string().nullable().optional(),
   spySweepId: z.string().nullable().optional(),
   spyAdIndex: z.number().int().nonnegative().nullable().optional(),
+}).refine((value) => Boolean(value.subAvatarId || value.angleId), {
+  message: "Choose an avatar, or name the angle directly.",
+  path: ["subAvatarId"],
 });
 
 export type CreateScriptProjectInput = z.infer<typeof CreateScriptProjectSchema>;
@@ -74,9 +80,8 @@ export async function createScriptProjectCore(
     level: "info",
     message: "Loading the selected product, angle, avatar, framework, and source records",
   });
-  const [productRaw, angleRaw, strategistRaw, editorRaw, avatarRaw, frameworkRaw, pipelineRunRaw, spySweepRaw] = await Promise.all([
+  const [productRaw, strategistRaw, editorRaw, avatarRaw, frameworkRaw, pipelineRunRaw, spySweepRaw] = await Promise.all([
     unwrapOpt(await supabase.from("Product").select("*").eq("id", parsed.productId).maybeSingle()),
-    unwrapOpt(await supabase.from("Angle").select("*").eq("id", parsed.angleId).maybeSingle()),
     unwrapOpt(await supabase.from("AppUser").select("*").eq("id", parsed.strategistUserId).maybeSingle()),
     parsed.editorUserId ? unwrapOpt(await supabase.from("AppUser").select("*").eq("id", parsed.editorUserId).maybeSingle()) : null,
     parsed.subAvatarId ? unwrapOpt(await supabase.from("SubAvatar").select("*").eq("id", parsed.subAvatarId).maybeSingle()) : null,
@@ -85,7 +90,6 @@ export async function createScriptProjectCore(
     parsed.spySweepId ? unwrapOpt(await supabase.from("Research").select("*").eq("id", parsed.spySweepId).eq("type", "competitor_spy").maybeSingle()) : null,
   ]);
   const product = productRaw as ProductRow | null;
-  const angle = angleRaw as AngleRow | null;
   const strategist = strategistRaw as AppUserRow | null;
   const editor = editorRaw as AppUserRow | null;
   const avatar = avatarRaw as SubAvatarRow | null;
@@ -93,17 +97,28 @@ export async function createScriptProjectCore(
   const pipelineRun = pipelineRunRaw as ResearchRow | null;
   const spySweep = spySweepRaw as ResearchRow | null;
 
+  if (parsed.subAvatarId && !avatar) throw new Error("The selected avatar was not found.");
+
+  // The avatar decides the angle. An explicit angleId is only the fallback for a
+  // project created without an avatar.
+  const angleId = avatar?.angleId ?? parsed.angleId;
+  const angle = angleId
+    ? (unwrapOpt(await supabase.from("Angle").select("*").eq("id", angleId).maybeSingle()) as AngleRow | null)
+    : null;
+
   if (!product) throw new Error("Product not found.");
   if (!product.code?.trim()) throw new Error("Assign the product a naming code before creating a script.");
   if (!angle) throw new Error("Angle not found.");
   if (!strategist || strategist.role !== "creative_strategist") throw new Error("Select a valid creative strategist.");
   if (parsed.editorUserId && (!editor || editor.role !== "editor")) throw new Error("Select a valid editor.");
-  if (parsed.subAvatarId && (!avatar || avatar.angleId !== angle.id)) throw new Error("The selected avatar does not belong to this angle.");
+  if (parsed.angleId && avatar && avatar.angleId !== parsed.angleId) throw new Error("The selected avatar does not belong to this angle.");
   if (parsed.referenceFormatId && !framework) throw new Error("Reference format not found.");
   const pipelineDoc = pipelineRun ? parsePipelineRunSelection(pipelineRun.drafts) : null;
   if (parsed.pipelineRunId && (!pipelineRun || !pipelineDoc)) throw new Error("The selected pipeline run is unavailable or invalid.");
-  if (pipelineDoc && (!avatar || pipelineDoc.subAvatarId !== avatar.id || pipelineDoc.angleSlug !== angle.slug)) {
-    throw new Error("The selected pipeline run does not match this angle and avatar.");
+  // Only the avatar has to match. The run's stored angleSlug can drift from the
+  // avatar's real angle, and the avatar is now the authority on which that is.
+  if (pipelineDoc && (!avatar || pipelineDoc.subAvatarId !== avatar.id)) {
+    throw new Error("The selected pipeline run does not match this avatar.");
   }
   if (pipelineDoc && pipelineDoc.completedStages === 0) throw new Error("The selected pipeline run has no completed stages yet.");
   if (parsed.spySweepId && !spySweep) throw new Error("The selected Spy sweep is unavailable.");

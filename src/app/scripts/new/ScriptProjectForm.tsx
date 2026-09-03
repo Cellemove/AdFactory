@@ -39,17 +39,27 @@ export function ScriptProjectForm(props: Props) {
   const [strategistResult, setStrategistResult] = useState<StrategistIdeaResult | null>(null);
   const [batchMode, setBatchMode] = useState(false);
   const [batchFrameworkIds, setBatchFrameworkIds] = useState<string[]>(() => props.frameworks.slice(0, 2).map((item) => item.id));
-  const initialAngleId = props.initialValues?.angleId ?? props.angles[0]?.id ?? "";
-  const initialAvatars = props.avatars.filter((item) => item.angleId === initialAngleId);
+  // No angle in the form: the avatar carries it. A prefilled angle only picks
+  // which avatar to start on.
+  const initialAngleId = props.initialValues?.angleId ?? "";
+  const initialAvatars = initialAngleId ? props.avatars.filter((item) => item.angleId === initialAngleId) : props.avatars;
   const [form, setForm] = useState({
     title: props.initialValues?.title ?? "", idea: props.initialValues?.idea ?? "", adNumber: "", creativeName: props.initialValues?.creativeName ?? "", productId: props.initialValues?.productId ?? props.products[0]?.id ?? "",
-    angleId: initialAngleId, subAvatarId: initialAvatars[0]?.id ?? "", referenceFormatId: props.frameworks[0]?.id ?? "",
+    subAvatarId: initialAvatars[0]?.id ?? props.avatars[0]?.id ?? "", referenceFormatId: props.frameworks[0]?.id ?? "",
     strategistUserId: props.strategists.some((item) => item.id === props.currentUserId) ? props.currentUserId : props.strategists[0]?.id ?? "",
     editorUserId: "", format: props.formats[0] ?? "UGC", targetDurationSec: "30", teardownRecordId: "", pipelineRunId: "",
     spySweepId: props.initialValues?.sweepId ?? "", spyAdIndex: props.initialValues?.adIndex ?? -1,
   });
-  const avatars = useMemo(() => avatarOptions.filter((item) => item.angleId === form.angleId), [avatarOptions, form.angleId]);
-  const selectedAngle = useMemo(() => props.angles.find((item) => item.id === form.angleId) ?? null, [props.angles, form.angleId]);
+  const selectedAvatar = useMemo(() => avatarOptions.find((item) => item.id === form.subAvatarId) ?? null, [avatarOptions, form.subAvatarId]);
+  // The angle is whatever the chosen avatar belongs to. It is never picked here.
+  const selectedAngle = useMemo(() => props.angles.find((item) => item.id === selectedAvatar?.angleId) ?? null, [props.angles, selectedAvatar]);
+  // One flat list of every avatar would be unnavigable, so group it by angle.
+  const avatarGroups = useMemo(
+    () => props.angles
+      .map((angle) => ({ angle, items: avatarOptions.filter((item) => item.angleId === angle.id) }))
+      .filter((group) => group.items.length > 0),
+    [props.angles, avatarOptions],
+  );
   const selectedProduct = useMemo(
     () => props.products.find((item) => item.id === form.productId) ?? null,
     [props.products, form.productId],
@@ -127,8 +137,7 @@ export function ScriptProjectForm(props: Props) {
   };
 
   const targetDuration = Number(form.targetDurationSec);
-  const hasAvatarsForAngle = avatars.length > 0;
-  const ready = form.title.trim().length >= 2 && form.idea.trim().length >= 5 && form.adNumber && form.creativeName && form.productId && selectedProduct?.code && form.angleId && hasAvatarsForAngle && form.subAvatarId && form.strategistUserId && Number.isInteger(targetDuration) && targetDuration >= 5 && targetDuration <= 600 && (!batchMode || batchFrameworkIds.length >= 2);
+  const ready = form.title.trim().length >= 2 && form.idea.trim().length >= 5 && form.adNumber && form.creativeName && form.productId && selectedProduct?.code && form.subAvatarId && form.strategistUserId && Number.isInteger(targetDuration) && targetDuration >= 5 && targetDuration <= 600 && (!batchMode || batchFrameworkIds.length >= 2);
   const handleTargetDurationChange = (event: ChangeEvent<HTMLInputElement>) => {
     const targetDurationSec = normalizeUnsignedIntegerInput(event.currentTarget.value);
     setForm((current) => ({ ...current, targetDurationSec }));
@@ -137,10 +146,12 @@ export function ScriptProjectForm(props: Props) {
     setAvatarOptions((current) => [...current.filter((item) => item.id !== avatar.id), avatar].sort((a, b) => a.name.localeCompare(b.name)));
     setForm((current) => ({ ...current, subAvatarId: avatar.id, pipelineRunId: "" }));
   }, []);
-  const handleAngleChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const angleId = event.currentTarget.value;
-    const nextAvatars = avatarOptions.filter((item) => item.angleId === angleId);
-    setForm((current) => ({ ...current, angleId, subAvatarId: nextAvatars[0]?.id ?? "", pipelineRunId: "" }));
+  // Used by the Creative Strategist's angle suggestions: an angle is still a
+  // meaningful direction to propose, it just resolves to one of its avatars.
+  const selectAngle = (angleId: string) => {
+    const first = avatarOptions.find((item) => item.angleId === angleId);
+    if (!first) return;
+    setForm((current) => ({ ...current, subAvatarId: first.id, pipelineRunId: "" }));
   };
   const handleAvatarChange = (event: ChangeEvent<HTMLSelectElement>) => {
     setForm((current) => ({ ...current, subAvatarId: event.currentTarget.value, pipelineRunId: "" }));
@@ -151,7 +162,6 @@ export function ScriptProjectForm(props: Props) {
     setForm((current) => ({
       ...current,
       pipelineRunId,
-      angleId: run?.angleId ?? current.angleId,
       subAvatarId: run?.subAvatarId ?? current.subAvatarId,
     }));
   };
@@ -170,25 +180,29 @@ export function ScriptProjectForm(props: Props) {
   return (
     <div className="card space-y-5">
       <div className="grid-fields">
-        {props.initialValues && <div className="sm:col-span-2 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">Prefilled from a verified Spy sweep. Review the product and angle guesses before generating.</div>}
+        {props.initialValues && <div className="sm:col-span-2 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">Prefilled from a verified Spy sweep. Review the product and avatar guesses before generating.</div>}
         <div className="sm:col-span-2"><div className="flex items-end justify-between gap-2"><label className="label">Core idea / opening brief</label><button type="button" className="btn btn-ghost text-xs" disabled={strategistPending || form.idea.trim().length < 5 || !form.productId} onClick={runStrategist}>{strategistPending ? "Strategist thinking…" : "Run through Creative Strategist"}</button></div><textarea className="input min-h-28" value={form.idea} onChange={(event) => setForm({ ...form, idea: event.target.value })} placeholder="What is the ad saying, and why should this avatar care?" /></div>
         <div><label className="label">Product</label><ProductCombobox products={props.products} value={form.productId} onChange={(productId) => setForm({ ...form, productId })} /></div>
-        <div><label className="label">Angle</label><select className="input" value={form.angleId} onChange={handleAngleChange}>{props.angles.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
         <div>
           <label className="label">Avatar</label>
-          <select className="input" disabled={!hasAvatarsForAngle} value={form.subAvatarId} onChange={handleAvatarChange}>
-            {hasAvatarsForAngle
-              ? avatars.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)
-              : <option value="">No avatars researched for this angle</option>}
+          <select className="input" disabled={avatarGroups.length === 0} value={form.subAvatarId} onChange={handleAvatarChange}>
+            {avatarGroups.length === 0
+              ? <option value="">No avatars researched yet</option>
+              : avatarGroups.map((group) => (
+                <optgroup key={group.angle.id} label={group.angle.name}>
+                  {group.items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </optgroup>
+              ))}
           </select>
-          <InlineAvatarCreator key={form.angleId} angle={selectedAngle} onCreated={handleAvatarCreated} />
-          {!hasAvatarsForAngle && selectedAngle && (
+          {selectedAngle && <p className="mt-1 text-xs text-ink-500">Angle: {selectedAngle.name}</p>}
+          <InlineAvatarCreator angles={props.angles} defaultAngleId={selectedAngle?.id} onCreated={handleAvatarCreated} />
+          {avatarGroups.length === 0 && (
             <p className="mt-1 text-sm text-red-700">
-              No avatars have been researched for {selectedAngle.name} yet. Research one on the <Link href="/research" className="underline">Research page</Link>, or create one now with the button above.
+              No avatars have been researched yet. Research one on the <Link href="/research" className="underline">Research page</Link>, or create one now with the button above.
             </p>
           )}
         </div>
-        <div><label className="label">Pipeline run <span className="font-normal text-ink-400">(optional)</span></label><select className="input" value={form.pipelineRunId} onChange={handlePipelineRunChange}><option value="">Use latest run for selected avatar</option>{props.pipelineRuns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">Selecting a run also selects its angle and avatar.</p></div>
+        <div><label className="label">Pipeline run <span className="font-normal text-ink-400">(optional)</span></label><select className="input" value={form.pipelineRunId} onChange={handlePipelineRunChange}><option value="">Use latest run for selected avatar</option>{props.pipelineRuns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">Selecting a run also selects its avatar.</p></div>
         <div><label className="label">Reference framework</label><select className="input" value={form.referenceFormatId} onChange={(event) => { const selected = props.frameworks.find((item) => item.id === event.target.value); setForm({ ...form, referenceFormatId: event.target.value, targetDurationSec: selected?.duration == null ? form.targetDurationSec : String(selected.duration) }); }}><option value="">Standard Hook → CTA</option>{props.frameworks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
         <div><label className="label">Production format</label><select className="input" value={form.format} onChange={(event) => setForm({ ...form, format: event.target.value })}>{props.formats.map((item) => <option key={item}>{item}</option>)}</select></div>
         <div><label className="label">Project title</label><input className="input" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="CelluMove viral V1" /></div>
@@ -204,7 +218,16 @@ export function ScriptProjectForm(props: Props) {
           <h2 className="font-semibold text-violet-950">Creative Strategist directions</h2>
           <p className="mt-1 text-xs text-violet-800">This analysis is saved independently. Choosing a direction updates the form but does not create a project.</p>
           <div className="mt-3 grid gap-2 md:grid-cols-2">
-            {strategistResult.angleCandidates.map((candidate) => <button key={candidate.angleId} type="button" className="rounded-lg border border-violet-200 bg-white p-3 text-left text-sm hover:border-violet-600" onClick={() => { const avatars = avatarOptions.filter((item) => item.angleId === candidate.angleId); setForm((current) => ({ ...current, angleId: candidate.angleId, subAvatarId: avatars[0]?.id ?? "", pipelineRunId: "" })); }}><strong>{candidate.angle}</strong><span className="mt-1 block text-xs text-ink-500">{candidate.rationale}</span></button>)}
+            {strategistResult.angleCandidates.map((candidate) => {
+              const hasAvatar = avatarOptions.some((item) => item.angleId === candidate.angleId);
+              return (
+                <button key={candidate.angleId} type="button" className="rounded-lg border border-violet-200 bg-white p-3 text-left text-sm hover:border-violet-600 disabled:opacity-60 disabled:hover:border-violet-200" disabled={!hasAvatar} onClick={() => selectAngle(candidate.angleId)}>
+                  <strong>{candidate.angle}</strong>
+                  <span className="mt-1 block text-xs text-ink-500">{candidate.rationale}</span>
+                  {!hasAvatar && <span className="mt-1 block text-xs text-amber-700">No avatar researched for this angle yet.</span>}
+                </button>
+              );
+            })}
           </div>
           <div className="mt-3 flex flex-wrap gap-2">{strategistResult.hookDirections.map((item) => <button key={item.hook} type="button" className="tag max-w-full text-left" title={item.direction} onClick={() => setForm((current) => ({ ...current, idea: item.hook }))}>{item.hook}</button>)}</div>
         </section>
