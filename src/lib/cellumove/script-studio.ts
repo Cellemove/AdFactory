@@ -87,7 +87,10 @@ export function parseScriptDocument(value: unknown): ScriptDocument {
   return ScriptDocumentSchema.parse(value);
 }
 
-function kindFromLabel(label: string): ScriptModule["kind"] {
+// Exported so the video-framework extractor can verify that a beat label it is
+// about to persist actually maps back to the kind the model intended — asking
+// the real parser instead of re-implementing these regexes.
+export function kindFromLabel(label: string): ScriptModule["kind"] {
   const normalized = label.toLowerCase();
   if (/hook|dream outcome|one change|regret|test|frustration|doubt|myth/.test(normalized)) return "hook";
   if (/problem|spiral|old way|why not me|why they fail|isn't for|not for/.test(normalized)) return "problem";
@@ -99,7 +102,7 @@ function kindFromLabel(label: string): ScriptModule["kind"] {
   return "custom";
 }
 
-function secondsFromBeat(beat: ReferenceFormatBeat, fallback: number): number {
+export function secondsFromBeat(beat: ReferenceFormatBeat, fallback: number): number {
   const values = beat.time.match(/\d+/g)?.map(Number) ?? [];
   if (values.length >= 2 && values[0] !== undefined && values[1] !== undefined) {
     return Math.max(1, values[1] - values[0]);

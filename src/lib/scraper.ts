@@ -107,6 +107,139 @@ export async function fetchThroughProxy(url: string, opts: FetchOpts = {}): Prom
   return null;
 }
 
+// ─── Binary fetch (video) ────────────────────────────────────────────────────
+// fetchThroughProxy reads the body with .text(), which mangles binary beyond
+// repair, so media needs its own path. This one streams and aborts the moment
+// the cap is exceeded — it is pointed at user-supplied URLs, so it must never
+// be able to buffer an arbitrarily large response into the process.
+
+export interface BinaryFetchResult {
+  bytes: Buffer;
+  contentType: string;
+  finalUrl: string;
+}
+
+/** True unless the URL is non-http(s) or points at a loopback/link-local/private host. */
+export function isPubliclyRoutable(rawUrl: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return false;
+  const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".internal")) return false;
+  if (host === "::1" || host === "0.0.0.0") return false;
+  // IPv4 literals in the reserved ranges. A hostname that RESOLVES to one of
+  // these still gets through — a full guard needs a DNS lookup, which is why
+  // the caller re-checks the post-redirect URL too.
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 127 || a === 10 || a === 0) return false;
+    if (a === 192 && b === 168) return false;
+    if (a === 172 && b >= 16 && b <= 31) return false;
+    if (a === 169 && b === 254) return false; // link-local / cloud metadata
+    if (a === 100 && b >= 64 && b <= 127) return false; // carrier-grade NAT
+  }
+  return true;
+}
+
+/**
+ * Download a URL into a Buffer, refusing anything over `maxBytes`. Returns null
+ * on network failure, a blocked host, a non-2xx, or an over-size body — callers
+ * turn that into a user-facing message rather than a stack trace.
+ */
+export async function fetchBinaryThroughProxy(
+  url: string,
+  opts: { maxBytes: number; timeoutMs?: number; attempts?: number },
+): Promise<BinaryFetchResult | null> {
+  if (!isPubliclyRoutable(url)) return null;
+  const proxies = proxyList();
+  const attempts = Math.max(1, opts.attempts ?? (proxies.length ? Math.min(proxies.length, 3) : 2));
+
+  let lastErr: unknown = null;
+  for (let i = 0; i < attempts; i++) {
+    const dispatcher = nextProxyDispatcher();
+    const init: ProxyInit = {
+      headers: { ...DEFAULT_HEADERS, Accept: "video/*,*/*;q=0.8" },
+      redirect: "follow",
+      signal: AbortSignal.timeout(opts.timeoutMs ?? 45000),
+    };
+    if (dispatcher) init.dispatcher = dispatcher;
+    try {
+      const res = await fetch(url, init as RequestInit);
+      // A redirect can land somewhere private even when the original URL was not.
+      if (!res.ok || !res.body || !isPubliclyRoutable(res.url || url)) return null;
+      const declared = Number(res.headers.get("content-length") ?? "");
+      if (Number.isFinite(declared) && declared > opts.maxBytes) return null;
+
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        total += value.byteLength;
+        if (total > opts.maxBytes) {
+          await reader.cancel();
+          return null;
+        }
+        chunks.push(value);
+      }
+      return {
+        bytes: Buffer.concat(chunks),
+        contentType: res.headers.get("content-type") || "",
+        finalUrl: res.url || url,
+      };
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  if (lastErr) {
+    console.warn(`[scraper] binary fetch failed for ${url}: ${lastErr instanceof Error ? lastErr.message : lastErr}`);
+  }
+  return null;
+}
+
+// ─── Meta-tag extraction ─────────────────────────────────────────────────────
+
+/** First capturing group across an ordered ladder of patterns. */
+export function firstMatch(html: string, res: RegExp[]): string | null {
+  for (const re of res) {
+    const m = html.match(re);
+    if (m?.[1]?.trim()) return m[1].trim();
+  }
+  return null;
+}
+
+/**
+ * Best-effort: pull a direct video file URL out of a page's markup. Works on
+ * pages that publish og:video or a plain <video>/<source>; the big social
+ * platforms render their players client-side and usually expose nothing here.
+ */
+export function extractVideoUrl(html: string, baseUrl: string): string | null {
+  const raw = firstMatch(html, [
+    /<meta[^>]+property=["']og:video:secure_url["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:video:secure_url["']/i,
+    /<meta[^>]+property=["']og:video:url["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]+property=["']og:video["'][^>]*content=["']([^"']+)["']/i,
+    /<meta[^>]+content=["']([^"']+)["'][^>]*property=["']og:video["']/i,
+    /<meta[^>]+name=["']twitter:player:stream["'][^>]*content=["']([^"']+)["']/i,
+    /<video[^>]+src=["']([^"']+)["']/i,
+    /<source[^>]+src=["']([^"']+\.(?:mp4|webm|mov|m4v)[^"']*)["']/i,
+    /"contentUrl"\s*:\s*"([^"]+\.(?:mp4|webm|mov|m4v)[^"]*)"/i,
+  ]);
+  if (!raw) return null;
+  try {
+    return new URL(raw.replace(/&amp;/g, "&"), baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
+
 // ─── Readable-text extraction (no dependency) ────────────────────────────────
 const ENTITIES: Record<string, string> = {
   "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&#39;": "'", "&#x27;": "'", "&nbsp;": " ", "&apos;": "'",

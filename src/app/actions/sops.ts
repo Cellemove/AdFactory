@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { supabase, unwrap, newId } from "@/lib/db";
+import type { ReferenceFormatRow } from "@/lib/database.types";
 import { getLLM, DEFAULT_MODEL } from "@/lib/llm";
 import { recordUsage } from "@/lib/usage";
 import { extractJsonObject } from "@/lib/cellumove/agents";
@@ -209,9 +210,22 @@ const ReferenceFormatSchema = z.object({
   optimalDurationSec: z.number().optional().nullable(),
   exampleScripts: z.string().optional().nullable(), // JSON string
   order: z.number().optional(),
+  // Set only by the video-framework extractor; the /knowledge editor omits them
+  // and hand-authored formats keep a NULL sourceKind.
+  sourceKind: z.enum(["upload", "youtube", "url"]).optional().nullable(),
+  sourceUrl: z.string().optional().nullable(),
+  sourceLabel: z.string().optional().nullable(),
 });
 
-export async function upsertReferenceFormat(input: z.infer<typeof ReferenceFormatSchema>) {
+// supabase-js resolves `.select("*")` on this table to `null` data — its
+// generated Insert/Update shapes don't line up well enough for the row type to
+// survive. The queries do return the row at runtime, so assert the shape the
+// table actually has rather than leaving callers with `null`.
+const asReferenceFormat = (value: unknown) => value as ReferenceFormatRow;
+
+export async function upsertReferenceFormat(
+  input: z.infer<typeof ReferenceFormatSchema>,
+): Promise<ReferenceFormatRow> {
   const parsed = ReferenceFormatSchema.parse(input);
   const now = new Date().toISOString();
   const fields = {
@@ -225,9 +239,9 @@ export async function upsertReferenceFormat(input: z.infer<typeof ReferenceForma
     updatedAt: now,
   };
   if (parsed.id) {
-    const saved = unwrap(
+    const saved = asReferenceFormat(unwrap(
       await supabase.from("ReferenceFormat").update(fields).eq("id", parsed.id).select("*").single(),
-    );
+    ));
     revalidatePath("/knowledge");
     return saved;
   }
@@ -237,13 +251,24 @@ export async function upsertReferenceFormat(input: z.infer<typeof ReferenceForma
   while ((await supabase.from("ReferenceFormat").select("id").eq("slug", slug).maybeSingle()).data) {
     slug = `${base}-${n++}`;
   }
-  const saved = unwrap(
+  const saved = asReferenceFormat(unwrap(
     await supabase
       .from("ReferenceFormat")
-      .insert({ id: newId(), slug, createdAt: now, ...fields })
+      // Provenance is only ever set at creation, by the video-framework
+      // extractor. Editing a format from /knowledge goes through the update
+      // branch above, which leaves these columns alone.
+      .insert({
+        id: newId(),
+        slug,
+        createdAt: now,
+        ...fields,
+        sourceKind: parsed.sourceKind ?? null,
+        sourceUrl: parsed.sourceUrl ?? null,
+        sourceLabel: parsed.sourceLabel ?? null,
+      })
       .select("*")
       .single(),
-  );
+  ));
   revalidatePath("/knowledge");
   return saved;
 }

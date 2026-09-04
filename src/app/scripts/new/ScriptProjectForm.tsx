@@ -8,6 +8,7 @@ import { parseNdjsonChunk } from "@/lib/cellumove/ndjson";
 import { normalizeUnsignedIntegerInput } from "@/lib/numeric-input";
 import { GenerationConsole } from "./GenerationConsole";
 import { InlineAvatarCreator, type InlineAvatarOption } from "./InlineAvatarCreator";
+import { InlineFrameworkExtractor, type InlineFrameworkOption } from "./InlineFrameworkExtractor";
 import { ProductCombobox, type ProductOption } from "./ProductCombobox";
 import { analyzeRawIdea, type StrategistIdeaResult } from "@/app/actions/strategist";
 
@@ -17,7 +18,7 @@ type Props = {
   angles: Array<Option & { slug: string }>;
   avatars: Array<Option & { angleId: string }>;
   pipelineRuns: Array<Option & { subAvatarId: string; angleId: string }>;
-  frameworks: Array<Option & { duration: number | null }>;
+  frameworks: Array<Option & { duration: number | null; extracted: boolean }>;
   strategists: Option[];
   editors: Option[];
   teardowns: Option[];
@@ -35,6 +36,8 @@ export function ScriptProjectForm(props: Props) {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [generationEvents, setGenerationEvents] = useState<ScriptGenerationProgressEvent[]>([]);
   const [avatarOptions, setAvatarOptions] = useState(props.avatars);
+  // Mutable so a framework copied from a video is selectable without a reload.
+  const [frameworkOptions, setFrameworkOptions] = useState(props.frameworks);
   const [strategistPending, setStrategistPending] = useState(false);
   const [strategistResult, setStrategistResult] = useState<StrategistIdeaResult | null>(null);
   const [batchMode, setBatchMode] = useState(false);
@@ -53,6 +56,11 @@ export function ScriptProjectForm(props: Props) {
   const selectedAvatar = useMemo(() => avatarOptions.find((item) => item.id === form.subAvatarId) ?? null, [avatarOptions, form.subAvatarId]);
   // The angle is whatever the chosen avatar belongs to. It is never picked here.
   const selectedAngle = useMemo(() => props.angles.find((item) => item.id === selectedAvatar?.angleId) ?? null, [props.angles, selectedAvatar]);
+  // A run belongs to one avatar, so only that avatar's runs are ever selectable.
+  const pipelineRunsForAvatar = useMemo(
+    () => props.pipelineRuns.filter((item) => item.subAvatarId === form.subAvatarId),
+    [props.pipelineRuns, form.subAvatarId],
+  );
   // One flat list of every avatar would be unnavigable, so group it by angle.
   const avatarGroups = useMemo(
     () => props.angles
@@ -64,6 +72,11 @@ export function ScriptProjectForm(props: Props) {
     () => props.products.find((item) => item.id === form.productId) ?? null,
     [props.products, form.productId],
   );
+  // Split so copied frameworks stay findable as the list grows, and so their
+  // provenance shows where the choice is made — without marking the name, which
+  // would land in every generated script's stored document.
+  const seededFrameworks = useMemo(() => frameworkOptions.filter((item) => !item.extracted), [frameworkOptions]);
+  const copiedFrameworks = useMemo(() => frameworkOptions.filter((item) => item.extracted), [frameworkOptions]);
 
   const submit = async () => {
     setError(null);
@@ -146,6 +159,18 @@ export function ScriptProjectForm(props: Props) {
     setAvatarOptions((current) => [...current.filter((item) => item.id !== avatar.id), avatar].sort((a, b) => a.name.localeCompare(b.name)));
     setForm((current) => ({ ...current, subAvatarId: avatar.id, pipelineRunId: "" }));
   }, []);
+  // A framework is only ever copied because the user wants to use it, so select
+  // it straight away — and take its duration, matching what the select does.
+  const handleFrameworkCreated = useCallback((framework: InlineFrameworkOption) => {
+    setFrameworkOptions((current) => [...current.filter((item) => item.id !== framework.id), framework]);
+    setForm((current) => ({
+      ...current,
+      referenceFormatId: framework.id,
+      targetDurationSec: framework.duration == null ? current.targetDurationSec : String(framework.duration),
+    }));
+    setBatchFrameworkIds((current) =>
+      current.includes(framework.id) || current.length >= 5 ? current : [...current, framework.id]);
+  }, []);
   // Used by the Creative Strategist's angle suggestions: an angle is still a
   // meaningful direction to propose, it just resolves to one of its avatars.
   const selectAngle = (angleId: string) => {
@@ -154,16 +179,16 @@ export function ScriptProjectForm(props: Props) {
     setForm((current) => ({ ...current, subAvatarId: first.id, pipelineRunId: "" }));
   };
   const handleAvatarChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    setForm((current) => ({ ...current, subAvatarId: event.currentTarget.value, pipelineRunId: "" }));
+    // Read before the updater: React nulls currentTarget once the handler
+    // returns, and an updater runs at render time whenever React cannot
+    // evaluate it eagerly.
+    const subAvatarId = event.currentTarget.value;
+    setForm((current) => ({ ...current, subAvatarId, pipelineRunId: "" }));
   };
+  // Only this avatar's runs are listed, so there is no avatar to back-fill.
   const handlePipelineRunChange = (event: ChangeEvent<HTMLSelectElement>) => {
     const pipelineRunId = event.currentTarget.value;
-    const run = props.pipelineRuns.find((item) => item.id === pipelineRunId);
-    setForm((current) => ({
-      ...current,
-      pipelineRunId,
-      subAvatarId: run?.subAvatarId ?? current.subAvatarId,
-    }));
+    setForm((current) => ({ ...current, pipelineRunId }));
   };
   const handleConsoleClose = () => setConsoleOpen(false);
   const runStrategist = async () => {
@@ -202,8 +227,20 @@ export function ScriptProjectForm(props: Props) {
             </p>
           )}
         </div>
-        <div><label className="label">Pipeline run <span className="font-normal text-ink-400">(optional)</span></label><select className="input" value={form.pipelineRunId} onChange={handlePipelineRunChange}><option value="">Use latest run for selected avatar</option>{props.pipelineRuns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">Selecting a run also selects its avatar.</p></div>
-        <div><label className="label">Reference framework</label><select className="input" value={form.referenceFormatId} onChange={(event) => { const selected = props.frameworks.find((item) => item.id === event.target.value); setForm({ ...form, referenceFormatId: event.target.value, targetDurationSec: selected?.duration == null ? form.targetDurationSec : String(selected.duration) }); }}><option value="">Standard Hook → CTA</option>{props.frameworks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select></div>
+        <div><label className="label">Pipeline run <span className="font-normal text-ink-400">(optional)</span></label><select className="input" value={form.pipelineRunId} onChange={handlePipelineRunChange}><option value="">Use latest run for selected avatar</option>{pipelineRunsForAvatar.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">{pipelineRunsForAvatar.length === 0 ? "No completed pipeline runs for this avatar yet." : "Only runs for the selected avatar are listed."}</p></div>
+        <div>
+          <label className="label">Reference framework</label>
+          <select className="input" value={form.referenceFormatId} onChange={(event) => { const selected = frameworkOptions.find((item) => item.id === event.target.value); setForm({ ...form, referenceFormatId: event.target.value, targetDurationSec: selected?.duration == null ? form.targetDurationSec : String(selected.duration) }); }}>
+            <option value="">Standard Hook → CTA</option>
+            {seededFrameworks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            {copiedFrameworks.length > 0 && (
+              <optgroup label="Copied from video">
+                {copiedFrameworks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              </optgroup>
+            )}
+          </select>
+          <InlineFrameworkExtractor onCreated={handleFrameworkCreated} />
+        </div>
         <div><label className="label">Production format</label><select className="input" value={form.format} onChange={(event) => setForm({ ...form, format: event.target.value })}>{props.formats.map((item) => <option key={item}>{item}</option>)}</select></div>
         <div><label className="label">Project title</label><input className="input" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="CelluMove viral V1" /></div>
         <div><label className="label">Creative name</label><input className="input" value={form.creativeName} onChange={(event) => setForm({ ...form, creativeName: event.target.value })} placeholder="CELLUMOVE VIRAL" /></div>
@@ -235,7 +272,7 @@ export function ScriptProjectForm(props: Props) {
       <section className="rounded-xl border border-ink-200 p-4">
         <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={batchMode} onChange={(event) => setBatchMode(event.target.checked)} />Generate a framework batch</label>
         <p className="mt-1 text-xs text-ink-500">Create one independently editable draft per selected framework, then compare them side by side.</p>
-        {batchMode && <div className="mt-3 flex flex-wrap gap-2">{props.frameworks.map((framework) => { const selected = batchFrameworkIds.includes(framework.id); return <label key={framework.id} className={`tag cursor-pointer ${selected ? "border-violet-600 bg-violet-50" : ""}`}><input className="mr-1" type="checkbox" checked={selected} disabled={!selected && batchFrameworkIds.length >= 5} onChange={(event) => setBatchFrameworkIds((current) => event.target.checked ? [...current, framework.id] : current.filter((id) => id !== framework.id))} />{framework.name}</label>; })}</div>}
+        {batchMode && <div className="mt-3 flex flex-wrap gap-2">{frameworkOptions.map((framework) => { const selected = batchFrameworkIds.includes(framework.id); return <label key={framework.id} className={`tag cursor-pointer ${selected ? "border-violet-600 bg-violet-50" : ""}`}><input className="mr-1" type="checkbox" checked={selected} disabled={!selected && batchFrameworkIds.length >= 5} onChange={(event) => setBatchFrameworkIds((current) => event.target.checked ? [...current, framework.id] : current.filter((id) => id !== framework.id))} />{framework.name}</label>; })}</div>}
         {batchMode && batchFrameworkIds.length < 2 && <p className="mt-2 text-xs text-red-700">Choose at least two frameworks.</p>}
       </section>
       {props.products.length === 0 && <p className="text-sm text-red-700">No coded products are available. Assign a naming code on the <Link href="/products" className="underline">Products page</Link> first.</p>}

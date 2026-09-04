@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { supabase, newId } from "@/lib/db";
 import { getLLM, DEFAULT_MODEL } from "@/lib/llm";
 import { recordUsage } from "@/lib/usage";
-import { fetchThroughProxy, extractReadableText } from "@/lib/scraper";
+import { fetchThroughProxy, extractReadableText, firstMatch } from "@/lib/scraper";
 import { quoteFoundIn, normalizeForMatch } from "@/lib/cellumove/verify-research";
 import { exclusionBlock } from "@/lib/cellumove/novelty";
 import { dedupeNovel } from "@/lib/cellumove/embeddings";
@@ -117,14 +117,6 @@ function normalize(d: Partial<SpyAd>): SpyAd {
 // Pull the social-preview image a page declares. These URLs are CDN-hosted and
 // built to be embedded, so they render in our gallery far more reliably than a
 // model-guessed image URL.
-function firstMatch(html: string, res: RegExp[]): string | null {
-  for (const re of res) {
-    const m = html.match(re);
-    if (m?.[1]?.trim()) return m[1].trim();
-  }
-  return null;
-}
-
 function extractPreviewImage(html: string, baseUrl: string): string | null {
   const raw = firstMatch(html, [
     /<meta[^>]+property=["']og:image:secure_url["'][^>]*content=["']([^"']+)["']/i,
