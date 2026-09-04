@@ -14,6 +14,9 @@ import { ScriptProjectForm } from "./ScriptProjectForm";
 
 export const metadata: Metadata = { title: "New Script · AdFactory" };
 export const dynamic = "force-dynamic";
+// Server actions inherit the page's budget, and copying a framework from a
+// video means downloading it and having Pro watch the whole thing.
+export const maxDuration = 300;
 
 export default async function NewScriptPage({ searchParams }: { searchParams: Promise<{ spySweepId?: string; spyAdIndex?: string }> }) {
   const query = await searchParams;
@@ -28,7 +31,7 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
       .then(unwrap),
     supabase.from("Angle").select("*").order("order").then(unwrap),
     supabase.from("SubAvatar").select("*").order("name").then(unwrap),
-    supabase.from("ReferenceFormat").select("*").order("order").then(unwrap),
+    supabase.from("ReferenceFormat").select("*").order("order").order("createdAt").then(unwrap),
     supabase.from("AppUser").select("*").order("username").then(unwrap),
     supabase
       .from("Research")
@@ -114,7 +117,7 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
         angles={angles.map((item) => ({ id: item.id, slug: item.slug, name: item.name }))}
         avatars={avatars.map((item) => ({ id: item.id, angleId: item.angleId, name: item.name }))}
         pipelineRuns={pipelineRuns}
-        frameworks={frameworks.map((item) => ({ id: item.id, name: item.name, duration: item.optimalDurationSec }))}
+        frameworks={frameworks.map((item) => ({ id: item.id, name: item.name, duration: item.optimalDurationSec, extracted: Boolean(item.sourceKind) }))}
         strategists={users.filter((item) => item.role === "creative_strategist").map((item) => ({ id: item.id, name: item.username }))}
         editors={users.filter((item) => item.role === "editor").map((item) => ({ id: item.id, name: item.username }))}
         teardowns={teardowns.map((item) => ({

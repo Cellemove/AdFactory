@@ -11,6 +11,7 @@
     "test:script-studio": "tsx --test src/lib/cellumove/script-studio.test.ts",
     "test:teardown": "tsx --test src/lib/cellumove/teardown-brief.test.ts",
     "test:teardown-config": "tsx --test src/lib/teardown-config.test.ts",
+    "test:framework-extraction": "tsx --test src/lib/cellumove/framework-extraction.test.ts",
     "test:script-generation": "tsx --test src/lib/cellumove/script-generation.test.ts",
     "test:script-rag": "tsx --test src/lib/cellumove/script-rag.test.ts",
     "test:script-broll": "tsx --test src/lib/cellumove/script-broll.test.ts",

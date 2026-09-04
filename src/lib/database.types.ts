@@ -300,6 +300,11 @@ export type ReferenceFormatRow = {
   optimalDurationSec: number | null;
   exampleScripts: string | null; // JSON: string[] of winner scripts
   order: number;
+  // Provenance (migration 014). NULL sourceKind = seeded or hand-authored;
+  // otherwise this format was extracted from a reference video.
+  sourceKind: string | null;     // 'upload' | 'youtube' | 'url'
+  sourceUrl: string | null;
+  sourceLabel: string | null;
   createdAt: string;
   updatedAt: string;
 };
