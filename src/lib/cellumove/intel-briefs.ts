@@ -59,7 +59,8 @@ export async function saveIntelBriefDoc(id: string | null, doc: IntelBriefDoc): 
 }
 
 /** Per-brand briefs as a prompt block, alphabetical, capped. */
-export function renderIntelBriefs(doc: IntelBriefDoc | null | undefined, capChars = 50000): string {
+// ponytail: flat char cap — if the drive outgrows it, rank briefs by niche relevance instead.
+export function renderIntelBriefs(doc: IntelBriefDoc | null | undefined, capChars = 100000): string {
   if (!doc || !Object.keys(doc.brands).length) return "";
   return Object.values(doc.brands)
     .sort((a, b) => a.brand.localeCompare(b.brand))
