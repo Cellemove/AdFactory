@@ -33,9 +33,21 @@ const completeDraft = {
     dynamismLevel: "Warm, conversational pacing with clear product close-ups",
   },
   hookAlternatives: [
-    "I nearly left these shorts at home again.",
-    "Packing for holiday used to start with hiding.",
-    "The first thing I pack now is confidence.",
+    {
+      spokenText: "I nearly left these shorts at home again.",
+      onScreenText: "PACKED. NOT HIDDEN.",
+      visualDirection: "Open suitcase on the bed, shorts held over it mid-decision; leggings visible in the case.",
+    },
+    {
+      spokenText: "Packing for holiday used to start with hiding.",
+      onScreenText: "THE COVER-UP PILE",
+      visualDirection: "Top-down on two packing piles — cover-ups vs outfits she likes; hand hovers over the cover-ups.",
+    },
+    {
+      spokenText: "The first thing I pack now is confidence.",
+      onScreenText: "FIRST IN THE CASE",
+      visualDirection: "Macro on the leggings placed into an empty suitcase before anything else.",
+    },
   ],
   modules: [
     {

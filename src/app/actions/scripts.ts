@@ -235,7 +235,12 @@ export async function suggestScriptHookAlternatives(input: {
   projectId: string;
   expectedRevision: number;
   document: z.infer<typeof ScriptDocumentSchema>;
-}): Promise<{ hooks: string[]; generatedCount: number; skippedDuplicate: number; skippedClaimFlagged: number }> {
+}): Promise<{
+  hooks: { spokenText: string; onScreenText?: string; visualDirection?: string }[];
+  generatedCount: number;
+  skippedDuplicate: number;
+  skippedClaimFlagged: number;
+}> {
   await requireStrategist();
   const parsed = z.object({
     projectId: z.string().min(1),
@@ -269,7 +274,11 @@ export async function suggestScriptHookAlternatives(input: {
   const generated = await generateMoreHookAlternatives({ document: parsed.document });
   const result = appendHookAlternatives(parsed.document.hookAlternatives, generated);
   return {
-    hooks: result.added.map((hook) => hook.text),
+    hooks: result.added.map((hook) => ({
+      spokenText: hook.text,
+      onScreenText: hook.onScreenText,
+      visualDirection: hook.visualDirection,
+    })),
     generatedCount: generated.length,
     skippedDuplicate: result.skippedDuplicate,
     skippedClaimFlagged: result.skippedClaimFlagged,

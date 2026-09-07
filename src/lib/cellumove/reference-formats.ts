@@ -233,4 +233,43 @@ export const REFERENCE_FORMATS: ReferenceFormatSeed[] = [
     ],
     order: 11,
   },
+  {
+    slug: "reattribution-spine",
+    name: "Reattribution Spine",
+    description:
+      "The long-form winner structure (SU0900002IO): three fully directed hook variants over one shared spine — hyper-dated pain, reattribute the cause to the real mechanism, execute the category, quantify the mechanism, inoculate skepticism, climb a time ladder of proof, then a story-worded guarantee and a reason-why offer.",
+    beats: [
+      { label: "Hook", time: "0–5s", note: "A directed micro-scene, not a line: VO with a dated/counted specific, exact visual blocking (split screen, object count, cross-section...), and a ≤8-word contrast overlay ('SAME WEIGHT. DIFFERENT LEGS.'). Generate 3 variants, each a different visual mechanism." },
+      { label: "Hyper-Dated Problem", time: "5–12s", note: "Timestamp the pain: week number, time of day, the exact private moment (pinching the inside of her knee at 9pm). Overlay carries the numbers." },
+      { label: "Reattribution Mechanism", time: "12–17s", note: "Reframe the cause: it's not what she thinks it is, it's the real mechanism underneath. One clean belief line, no noise over it." },
+      { label: "Category Execution — Why They Fail", time: "17–25s", note: "Walk the whole menu of alternatives with their prices and structural failures. No named competitors. The category dies here." },
+      { label: "Quantified Mechanism", time: "25–34s", note: "The product's mechanism with numbers and rhythm ('press, release, every step'). She does nothing extra — it works while she lives her day." },
+      { label: "Skepticism Inoculation (Objection)", time: "34–41s", note: "Concede week one shows nothing and validate the doubt. A problem that built for months doesn't reverse in a weekend — honesty here buys the time ladder." },
+      { label: "Time Ladder Proof", time: "41–50s", note: "Same room, same light, jump cuts: week 3, day 30, day 90. The overlay is the ladder." },
+      { label: "Witness Reaction", time: "50–54s", note: "A third party notices unprompted and asks what changed. Social mirror, one line." },
+      { label: "Raw Proof", time: "54–60s", note: "Break the fourth wall: 'this part isn't animation' — raw customer footage, visible timestamps, no grade." },
+      { label: "Social Proof", time: "60–64s", note: "Adoption count + rating from the approved trust bank only. Fast." },
+      { label: "Guarantee Offer", time: "64–70s", note: "The risk reversal worded inside the story ('wear them through the next thirty pounds...'). Always clean — never edgy copy on the guarantee." },
+      { label: "Reason-Why Offer", time: "70–74s", note: "The deal with a story-logic reason ('she's dropping a size — she'll need the second pair'), closing on identity: she did the hard part already." },
+      { label: "CTA", time: "74–76s", note: "One line from the allowed-CTA list. The spine already did the persuading." },
+    ],
+    bestForAngle: "Transformation-in-progress angles (rapid weight loss, postpartum) where the category failed her and the mechanism reattributes the cause.",
+    optimalDurationSec: 76,
+    exampleScripts: [
+      `[0–5s] Hook — VO: "What happens to a woman's legs when she loses the weight fast — and what happens if she puts these on before she's done?" / VISUAL: hard split screen, same woman, same number on the scale both sides; LEFT bare legs with creased inner-knee skin, RIGHT smooth in the leggings. / TEXT: "SAME WEIGHT. SAME SCALE. DIFFERENT LEGS."
+[5–12s] Hyper-Dated Problem — VO: "Month four. Forty pounds down, thirty to go. Nine at night she's in the bathroom pinching the inside of her knee — and it doesn't go back." / TEXT: "MONTH 4. −40 LBS."
+[12–17s] Reattribution Mechanism — VO: "Her thighs aren't sagging because she lost too fast. Nothing moves under that skin anymore. That's not a skin problem — that's a circulation problem." / TEXT: "NOT A SKIN PROBLEM."
+[17–25s] Category Execution — VO: "Sixty-dollar firming cream that never gets past the top layer. Shapewear that rolls down by lunch. A twelve-thousand-dollar quote and a scar. That's the whole menu." / TEXT: "$60 A JAR. $12,000 AND A KNIFE."
+[25–34s] Quantified Mechanism — VO: "Inside these, raised 3D shaping zones press into her leg and let go with every step. Press, release. Support back into skin that emptied out. She isn't doing anything extra — she's walking to the car." / TEXT: "PRESS. RELEASE. EVERY STEP."
+[34–41s] Skepticism Inoculation — VO: "Week one, nothing. She thinks she wasted sixty bucks. Fair. Skin that changed over months isn't changing back over a weekend." / TEXT: "WEEK 1. NOTHING."
+[41–50s] Time Ladder Proof — VO: "Week three, the crease above her knee is shallower. Day thirty, the skin came down with the next eleven pounds. Day ninety, her legs got there with her." / VISUAL: same bathroom, same light, jump cuts. / TEXT: "WEEK 3 · DAY 30 · DAY 90"
+[50–54s] Witness Reaction — VO: "Her sister asked what she's doing at the gym. She hasn't set foot in one." / TEXT: "WHAT ARE YOU DOING AT THE GYM?"
+[54–60s] Raw Proof — VO: "This part isn't animation. Real customers, same angle, same light. Day one. Day fourteen. Day sixty." / TEXT: "NOT ANIMATION."
+[60–64s] Social Proof — On-screen trust line from the approved bank.
+[64–70s] Guarantee Offer — VO: "Wear them through the next thirty pounds. If her thighs don't come down with the rest of her, she doesn't pay a dollar."
+[70–74s] Reason-Why Offer — VO: "Buy one, second one free — she's dropping a size before day ninety and she's going to need it. She did the hardest part already. Don't finish with legs she has to cover."
+[74–76s] CTA — On-screen: "Shop Now"`,
+    ],
+    order: 12,
+  },
 ];
