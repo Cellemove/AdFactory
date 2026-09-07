@@ -10,6 +10,7 @@ import { exclusionBlock } from "@/lib/cellumove/novelty";
 import { dedupeNovel } from "@/lib/cellumove/embeddings";
 import { DEFAULT_SPY_NICHE_SLUG, getSpyNiche, type SpyNiche } from "@/lib/cellumove/spy-niches";
 import { loadCompetitorIntel } from "@/lib/drive";
+import { loadIntelBriefDoc, renderIntelBriefs } from "@/lib/cellumove/intel-briefs";
 
 // ─── COMPETITOR SPY ──────────────────────────────────────────────────────────
 // "Google Images, but for ads." A grounded Gemini sweep finds the trending ad
@@ -265,7 +266,13 @@ export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlu
 
   // Intelligence Industrielle drive → known competitors/brands as search seeds,
   // so the sweep targets named advertisers instead of blind category scanning.
-  const intel = await loadCompetitorIntel();
+  // Drive text (roster + CSVs/Docs) plus the per-brand briefs distilled from each
+  // brand folder's PDF + ad screenshots by scripts/analyze-intel-drive.ts.
+  const [driveIntel, briefDoc] = await Promise.all([loadCompetitorIntel(), loadIntelBriefDoc()]);
+  const briefs = renderIntelBriefs(briefDoc?.doc);
+  const intel = [driveIntel, briefs ? `### Analyzed brand briefs (from their actual ads & research PDFs)\n\n${briefs}` : ""]
+    .filter(Boolean)
+    .join("\n\n");
   if (intel) console.log(`[spy] competitor intel loaded (${intel.length} chars)`);
 
   const userPrompt = [

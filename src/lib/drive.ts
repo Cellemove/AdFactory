@@ -210,6 +210,48 @@ async function fetchIntelFileText(token: string, f: DriveFile): Promise<string |
   return (await res.text()).slice(0, INTEL_PER_FILE_CHARS);
 }
 
+export interface IntelFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  sizeBytes: number | null;
+}
+
+export interface IntelBrandFolder {
+  id: string;
+  name: string;
+  files: IntelFile[];
+}
+
+/**
+ * Top-level brand folders of the intelligence drive, each with every file in its
+ * subtree (depth-capped). Used by scripts/analyze-intel-drive.ts to feed each
+ * brand's PDF + ad screenshots to Gemini.
+ */
+export async function listIntelBrandFolders(): Promise<IntelBrandFolder[]> {
+  const token = await getAccessToken();
+  const out: IntelBrandFolder[] = [];
+  for (const rootId of intelFolderIds()) {
+    for (const f of await listChildren(token, rootId)) {
+      if (f.mimeType !== FOLDER_MIME) continue;
+      const files: IntelFile[] = [];
+      const queue = [f.id];
+      const seen = new Set<string>();
+      while (queue.length && seen.size < 20) {
+        const id = queue.shift()!;
+        if (seen.has(id)) continue;
+        seen.add(id);
+        for (const c of await listChildren(token, id)) {
+          if (c.mimeType === FOLDER_MIME) queue.push(c.id);
+          else files.push({ id: c.id, name: c.name, mimeType: c.mimeType, sizeBytes: c.size ? Number(c.size) : null });
+        }
+      }
+      out.push({ id: f.id, name: f.name, files });
+    }
+  }
+  return out;
+}
+
 let cachedIntel: { text: string; exp: number } | null = null;
 
 /**
