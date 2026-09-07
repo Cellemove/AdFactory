@@ -170,6 +170,101 @@ async function getFolderName(token: string, id: string): Promise<string | null> 
   return ((await res.json()) as { name?: string }).name ?? null;
 }
 
+// ── Competitor intelligence drive (Spy) ──────────────────────────────────────
+// The "Intelligence Industrielle" drive holds competitor / relevant-brand docs.
+// Share it (Viewer) with the SA's client_email, set GOOGLE_DRIVE_INTEL_FOLDER_ID
+// (a folder id or the shared-drive id itself), and Spy reads every Doc/Sheet/text
+// file as plain text to seed its searches.
+
+function intelFolderIds(): string[] {
+  return (process.env.GOOGLE_DRIVE_INTEL_FOLDER_ID ?? "")
+    .split(/[,\s]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+export function intelDriveConfigured(): boolean {
+  return Boolean(loadServiceAccount() && intelFolderIds().length);
+}
+
+// Google-native files export; plain text files download. PDFs/images are skipped.
+const INTEL_EXPORT_MIMES: Record<string, string> = {
+  "application/vnd.google-apps.document": "text/plain",
+  "application/vnd.google-apps.spreadsheet": "text/csv",
+};
+const INTEL_TEXT_MIMES = new Set(["text/plain", "text/markdown", "text/csv", "application/json"]);
+const INTEL_PER_FILE_CHARS = 15000;
+const INTEL_TOTAL_CHARS = 45000;
+const INTEL_MAX_FOLDERS = 50;
+
+async function fetchIntelFileText(token: string, f: DriveFile): Promise<string | null> {
+  const exportMime = INTEL_EXPORT_MIMES[f.mimeType];
+  const url = exportMime
+    ? `https://www.googleapis.com/drive/v3/files/${f.id}/export?mimeType=${encodeURIComponent(exportMime)}`
+    : INTEL_TEXT_MIMES.has(f.mimeType)
+      ? `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&supportsAllDrives=true`
+      : null;
+  if (!url) return null;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return null;
+  return (await res.text()).slice(0, INTEL_PER_FILE_CHARS);
+}
+
+let cachedIntel: { text: string; exp: number } | null = null;
+
+/**
+ * Concatenated text of every readable file in the intelligence drive, as
+ * "### <path/name>" sections. Fail-soft: returns "" if unconfigured or on error.
+ * Cached in-memory for 10 minutes so each Spy sweep doesn't re-walk the drive.
+ */
+export async function loadCompetitorIntel(): Promise<string> {
+  if (!intelDriveConfigured()) return "";
+  const now = Date.now();
+  if (cachedIntel && cachedIntel.exp > now) return cachedIntel.text;
+  let text = "";
+  try {
+    const token = await getAccessToken();
+    const sections: string[] = [];
+    // Each brand/page in the drive is a folder (its files are mostly PDFs/images we
+    // can't read as text) — so the folder names themselves ARE the competitor roster.
+    const folderNames: string[] = [];
+    let total = 0;
+    const queue = intelFolderIds().map((id) => ({ id, path: "" }));
+    const seen = new Set<string>();
+    let folders = 0;
+    while (queue.length && folders < INTEL_MAX_FOLDERS && total < INTEL_TOTAL_CHARS) {
+      const item = queue.shift();
+      if (!item || seen.has(item.id)) continue;
+      seen.add(item.id);
+      folders++;
+      for (const f of await listChildren(token, item.id)) {
+        if (f.mimeType === FOLDER_MIME) {
+          const path = item.path ? `${item.path}/${f.name}` : f.name;
+          folderNames.push(path);
+          queue.push({ id: f.id, path });
+          continue;
+        }
+        if (total >= INTEL_TOTAL_CHARS) break;
+        const body = await fetchIntelFileText(token, f);
+        if (!body?.trim()) continue;
+        const section = `### ${item.path ? `${item.path}/` : ""}${f.name}\n${body.trim()}`;
+        sections.push(section);
+        total += section.length;
+      }
+    }
+    if (folderNames.length) {
+      sections.unshift(
+        `### Tracked competitor brands & pages (one folder each in the drive)\n${folderNames.join("\n")}`,
+      );
+    }
+    text = sections.join("\n\n").slice(0, INTEL_TOTAL_CHARS);
+  } catch (e) {
+    console.error("[drive] competitor intel load failed:", e);
+  }
+  cachedIntel = { text, exp: now + 10 * 60 * 1000 };
+  return text;
+}
+
 /** Walk the configured b-roll folder tree(s) (BFS) and return every video clip. */
 export async function listBrollFromDrive(): Promise<DriveClip[]> {
   const rootIds = brollFolderIds();

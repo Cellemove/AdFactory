@@ -9,6 +9,7 @@ import { quoteFoundIn, normalizeForMatch } from "@/lib/cellumove/verify-research
 import { exclusionBlock } from "@/lib/cellumove/novelty";
 import { dedupeNovel } from "@/lib/cellumove/embeddings";
 import { DEFAULT_SPY_NICHE_SLUG, getSpyNiche, type SpyNiche } from "@/lib/cellumove/spy-niches";
+import { loadCompetitorIntel } from "@/lib/drive";
 
 // ─── COMPETITOR SPY ──────────────────────────────────────────────────────────
 // "Google Images, but for ads." A grounded Gemini sweep finds the trending ad
@@ -262,11 +263,27 @@ export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlu
     }
   }
 
+  // Intelligence Industrielle drive → known competitors/brands as search seeds,
+  // so the sweep targets named advertisers instead of blind category scanning.
+  const intel = await loadCompetitorIntel();
+  if (intel) console.log(`[spy] competitor intel loaded (${intel.length} chars)`);
+
   const userPrompt = [
     focus
       ? `FOCUS FROM USER: ${focus}`
       : `FOCUS: open sweep — the trending creatives across the whole ${niche.name} niche.`,
     "",
+    intel
+      ? [
+          "════════════════════════════════════════════════════════════════════════",
+          "COMPETITOR INTELLIGENCE (from our Intelligence Industrielle drive)",
+          "════════════════════════════════════════════════════════════════════════",
+          "The notes below name the competitors and relevant brands we track. Treat them as your PRIMARY search seeds: search each relevant brand BY NAME on the Meta Ads Library (facebook.com/ads/library), TikTok, Instagram and YouTube for the ads they're running RIGHT NOW, before falling back to open category searches. Still reject anything matching the reject rules.",
+          "",
+          intel,
+          "",
+        ].join("\n")
+      : null,
     "Search the web NOW. Find the most trending ad creatives / social posts competitor brands are running (ads & social — not storefront pages).",
     "Return 10-16 distinct creatives following the schema in the system prompt. Do NOT include CelluMove.",
     "Prefer brands and creatives we have NOT already surfaced (listed below). Bring fresh advertisers and new ads, not repeats of what we've already seen.",
