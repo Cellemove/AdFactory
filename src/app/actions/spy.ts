@@ -10,7 +10,12 @@ import { exclusionBlock } from "@/lib/cellumove/novelty";
 import { dedupeNovel } from "@/lib/cellumove/embeddings";
 import { DEFAULT_SPY_NICHE_SLUG, getSpyNiche, type SpyNiche } from "@/lib/cellumove/spy-niches";
 import { loadCompetitorIntel } from "@/lib/drive";
-import { loadIntelBriefDoc, renderIntelBriefs } from "@/lib/cellumove/intel-briefs";
+import {
+  loadIntelBriefDoc,
+  renderIntelBriefs,
+  extractAdsLibraryLinks,
+  normalizeBrandKey,
+} from "@/lib/cellumove/intel-briefs";
 
 // ─── COMPETITOR SPY ──────────────────────────────────────────────────────────
 // "Google Images, but for ads." A grounded Gemini sweep finds the trending ad
@@ -31,6 +36,10 @@ export interface SpyAd {
   // Anti-hallucination flags (set during enrichment; undefined on legacy rows):
   verified?: boolean;       // sourceUrl actually loaded (live, not a dead/fake link)
   contentMatch?: boolean;   // the brand or caption actually appears on that page
+  // The model's exact post link failed verification, so sourceUrl was replaced
+  // with the brand's Meta Ads Library page / a platform search — a link that is
+  // correct by construction instead of a fabricated post id.
+  linkFallback?: boolean;
 }
 
 export interface SpySweep {
@@ -60,6 +69,7 @@ function buildSpySystemPrompt(niche: SpyNiche): string {
   "  • site:instagram.com brand reels & sponsored posts",
   "  • site:youtube.com ad-style Shorts and video ads",
   "READ with url-context where useful to confirm the brand and the creative's copy. Point sourceUrl at the EXACT ad / post, so its preview image is the creative itself.",
+  "NEVER invent or guess numeric facebook.com/instagram.com post, reel or watch ids — only give such a URL if you actually read that exact page this sweep. If you know a brand is running Meta ads but lack a real post URL, use the brand's Meta Ads Library page link instead (many are provided in the competitor intelligence).",
   "",
   `REJECT: ${niche.rejectRules.join("; ")}. We want the brand's actual ad / social creative, not a shop page or an article.`,
   "",
@@ -199,6 +209,25 @@ function contentMatches(ad: SpyAd, pageNorm: string): boolean {
   return false;
 }
 
+// Deterministic replacement for a link that failed verification: the brand's
+// Meta Ads Library page (from the intel briefs) or a platform search — pages that
+// really show the brand's ads, unlike a fabricated post id.
+function fallbackSourceUrl(ad: SpyAd, adsLibraryByBrand: Record<string, string>): string | null {
+  const platform = ad.platform.toLowerCase();
+  const url = ad.sourceUrl;
+  const brandQ = encodeURIComponent(ad.brand);
+  if (!ad.brand) return null;
+  if (/meta|facebook|instagram/.test(platform) || /facebook\.com|fb\.watch|instagram\.com/i.test(url)) {
+    return (
+      adsLibraryByBrand[normalizeBrandKey(ad.brand)] ??
+      `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=${brandQ}&search_type=keyword_unordered&media_type=all`
+    );
+  }
+  if (/tiktok/.test(platform) || /tiktok\.com/i.test(url)) return `https://www.tiktok.com/search?q=${brandQ}`;
+  if (/youtube/.test(platform) || isYouTube(url)) return `https://www.youtube.com/results?search_query=${brandQ}+ad`;
+  return null;
+}
+
 // Single fetch per ad → liveness + preview image + content provenance. YouTube
 // goes through oEmbed (definitive existence check); everything else fetches the
 // page once and reuses that body for both the og:image and the content match.
@@ -332,7 +361,16 @@ export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlu
   const fresh = await dedupeNovel(parsed, seenAds, (a) => `${a.brand}: ${a.caption}`);
 
   // Enrich + verify (liveness + content provenance) in parallel — one fetch each.
-  const ads = await Promise.all(fresh.map(enrichAndVerify));
+  // A link that fails content-match is untrustworthy (models fabricate numeric
+  // post/reel ids that resolve to unrelated posts) — swap it for the brand's Ads
+  // Library page / platform search and drop the wrong page's preview image.
+  const adsLibraryByBrand = extractAdsLibraryLinks(briefDoc?.doc);
+  const ads = (await Promise.all(fresh.map(enrichAndVerify))).map((ad) => {
+    if (ad.verified && ad.contentMatch) return ad;
+    const fallback = fallbackSourceUrl(ad, adsLibraryByBrand);
+    if (!fallback) return ad;
+    return { ...ad, sourceUrl: fallback, imageUrl: "", verified: true, contentMatch: false, linkFallback: true };
+  });
 
   const id = newId();
   await supabase.from("Research").insert({

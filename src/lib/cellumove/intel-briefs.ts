@@ -58,6 +58,27 @@ export async function saveIntelBriefDoc(id: string | null, doc: IntelBriefDoc): 
   return rowId;
 }
 
+/** Loose brand key for lookups: lowercased alphanumerics only. */
+export function normalizeBrandKey(brand: string): string {
+  return brand.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+const ADS_LIBRARY_RE = /https:\/\/www\.facebook\.com\/ads\/library\/\?\S+view_all_page_id=\d+/g;
+
+/**
+ * Brand → Meta Ads Library page URL, mined from each brief's LINKS line. These
+ * are the one Facebook link we can trust (they always show the brand's live
+ * running ads), used to replace model-fabricated post/reel URLs.
+ */
+export function extractAdsLibraryLinks(doc: IntelBriefDoc | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const b of Object.values(doc?.brands ?? {})) {
+    const url = b.summary.match(ADS_LIBRARY_RE)?.[0];
+    if (url) out[normalizeBrandKey(b.brand)] = url;
+  }
+  return out;
+}
+
 /** Per-brand briefs as a prompt block, alphabetical, capped. */
 // ponytail: flat char cap — if the drive outgrows it, rank briefs by niche relevance instead.
 export function renderIntelBriefs(doc: IntelBriefDoc | null | undefined, capChars = 100000): string {

@@ -351,8 +351,13 @@ function AdGallery({
 
 function VerificationBadge({ ad }: { ad: SpyAd }) {
   if (ad.verified === undefined) return null; // legacy sweep, not checked
-  const [cls, label, title] =
-    ad.verified === false
+  const [cls, label, title] = ad.linkFallback
+    ? [
+        "bg-sky-600/90 text-white",
+        "→ live ads",
+        "The exact post link couldn't be verified, so this opens the brand's live ads (Ads Library / platform search) instead.",
+      ]
+    : ad.verified === false
       ? ["bg-red-600/90 text-white", "unverified", "This link did not load — likely a dead or fabricated URL."]
       : ad.contentMatch
         ? ["bg-emerald-600/90 text-white", "✓ verified", "Link is live and the brand/caption was found on the page."]
