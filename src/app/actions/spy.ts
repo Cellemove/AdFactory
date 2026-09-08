@@ -265,31 +265,42 @@ async function enrichAndVerify(ad: SpyAd): Promise<SpyAd> {
  * with its post preview image, and persist the sweep. Returns the row id so the
  * caller can curate it via updateSpyAds().
  * `focus` optionally narrows the lens; `nicheSlug` selects the persisted category definition.
+ * `hunt` flips the sweep into a target hunt: find exactly what `focus` names (a
+ * brand, or a specific ad description) — repeats allowed, no padding with other brands.
  */
-export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlug?: string | null }): Promise<SpySweep> {
+export async function spyOnCompetitors(input?: {
+  focus?: string | null;
+  nicheSlug?: string | null;
+  hunt?: boolean;
+}): Promise<SpySweep> {
   const focus = input?.focus?.trim() || null;
+  const hunt = Boolean(input?.hunt);
+  if (hunt && !focus) throw new Error("A hunt needs a target — name the brand or describe the ad.");
   const niche = getSpyNiche(input?.nicheSlug ?? DEFAULT_SPY_NICHE_SLUG);
   const llm = getLLM();
-  // Brands/captions already surfaced in recent sweeps — so we find fresh ones.
-  const recent = (
-    await supabase
-      .from("Research")
-      .select("drafts, queryPlan")
-      .eq("type", "competitor_spy")
-      .order("createdAt", { ascending: false })
-      .limit(5)
-  ).data ?? [];
+  // Brands/captions already surfaced in recent sweeps — so open sweeps find fresh
+  // ones. A hunt skips this entirely: you WANT the ad even if we've seen it.
   const seenAds: string[] = [];
-  for (const r of recent as { drafts: string; queryPlan?: unknown }[]) {
-    try {
-      const plan = typeof r.queryPlan === "string" ? JSON.parse(r.queryPlan) : r.queryPlan;
-      const previousSlug = (plan as { niche?: { slug?: string } } | null)?.niche?.slug ?? DEFAULT_SPY_NICHE_SLUG;
-      if (previousSlug !== niche.slug) continue;
-      for (const a of JSON.parse(r.drafts) as SpyAd[]) {
-        if (a?.brand || a?.caption) seenAds.push(`${a.brand}: ${a.caption}`.trim());
+  if (!hunt) {
+    const recent = (
+      await supabase
+        .from("Research")
+        .select("drafts, queryPlan")
+        .eq("type", "competitor_spy")
+        .order("createdAt", { ascending: false })
+        .limit(5)
+    ).data ?? [];
+    for (const r of recent as { drafts: string; queryPlan?: unknown }[]) {
+      try {
+        const plan = typeof r.queryPlan === "string" ? JSON.parse(r.queryPlan) : r.queryPlan;
+        const previousSlug = (plan as { niche?: { slug?: string } } | null)?.niche?.slug ?? DEFAULT_SPY_NICHE_SLUG;
+        if (previousSlug !== niche.slug) continue;
+        for (const a of JSON.parse(r.drafts) as SpyAd[]) {
+          if (a?.brand || a?.caption) seenAds.push(`${a.brand}: ${a.caption}`.trim());
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
     }
   }
 
@@ -305,9 +316,11 @@ export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlu
   if (intel) console.log(`[spy] competitor intel loaded (${intel.length} chars)`);
 
   const userPrompt = [
-    focus
-      ? `FOCUS FROM USER: ${focus}`
-      : `FOCUS: open sweep — the trending creatives across the whole ${niche.name} niche.`,
+    hunt
+      ? `TARGET HUNT: ${focus}`
+      : focus
+        ? `FOCUS FROM USER: ${focus}`
+        : `FOCUS: open sweep — the trending creatives across the whole ${niche.name} niche.`,
     "",
     intel
       ? [
@@ -320,15 +333,24 @@ export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlu
           "",
         ].join("\n")
       : null,
-    "Search the web NOW. Find the most trending ad creatives / social posts competitor brands are running (ads & social — not storefront pages).",
-    "Return 10-16 distinct creatives following the schema in the system prompt. Do NOT include CelluMove.",
-    "Prefer brands and creatives we have NOT already surfaced (listed below). Bring fresh advertisers and new ads, not repeats of what we've already seen.",
-    "Return ONLY the JSON object described in the system prompt.",
-    exclusionBlock(
-      "ALREADY SURFACED IN RECENT SWEEPS — PREFER DIFFERENT ONES",
-      "We've already captured these brand/creative pairs — surface new advertisers or genuinely new ads:",
-      seenAds,
-    ),
+    ...(hunt
+      ? [
+          "Search the web NOW for ads MATCHING THE TARGET ABOVE — nothing else.",
+          "If the target names a brand in the competitor intelligence, start from its Meta Ads Library page link there; otherwise search the brand/description by name on the Meta Ads Library, TikTok, Instagram and YouTube.",
+          "OVERRIDE for this hunt: return every matching creative you actually find, 1-16 — a single exact match beats sixteen loose ones. Do NOT pad with other brands or merely-similar ads, and ignore any preference for brands we haven't surfaced before: repeats are fine.",
+          "Return ONLY the JSON object described in the system prompt.",
+        ]
+      : [
+          "Search the web NOW. Find the most trending ad creatives / social posts competitor brands are running (ads & social — not storefront pages).",
+          "Return 10-16 distinct creatives following the schema in the system prompt. Do NOT include CelluMove.",
+          "Prefer brands and creatives we have NOT already surfaced (listed below). Bring fresh advertisers and new ads, not repeats of what we've already seen.",
+          "Return ONLY the JSON object described in the system prompt.",
+          exclusionBlock(
+            "ALREADY SURFACED IN RECENT SWEEPS — PREFER DIFFERENT ONES",
+            "We've already captured these brand/creative pairs — surface new advertisers or genuinely new ads:",
+            seenAds,
+          ),
+        ]),
   ]
     .filter(Boolean)
     .join("\n");
@@ -348,17 +370,19 @@ export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlu
     model: DEFAULT_MODEL,
     usage: resp.usageMetadata,
     grounded: true,
-    metadata: { focus: focus ?? undefined, nicheSlug: niche.slug },
+    metadata: { focus: focus ?? undefined, nicheSlug: niche.slug, hunt: hunt || undefined },
   });
 
   const text = resp.text ?? "";
   if (!text.trim()) throw new Error("Spy returned no text content.");
   const parsed = parseAds(text).filter((a) => a.sourceUrl || a.imageUrl);
-  if (parsed.length === 0) throw new Error("Spy returned zero creatives — try again or add a focus.");
+  if (parsed.length === 0) {
+    throw new Error(hunt ? "The hunt found no matching creatives — try naming the brand differently." : "Spy returned zero creatives — try again or add a focus.");
+  }
 
   // Novelty gate (lexical + semantic): drop creatives that repeat a brand/caption
-  // from recent sweeps (or each other).
-  const fresh = await dedupeNovel(parsed, seenAds, (a) => `${a.brand}: ${a.caption}`);
+  // from recent sweeps (or each other). A hunt keeps repeats — that's the point.
+  const fresh = hunt ? parsed : await dedupeNovel(parsed, seenAds, (a) => `${a.brand}: ${a.caption}`);
 
   // Enrich + verify (liveness + content provenance) in parallel — one fetch each.
   // A link that fails content-match is untrustworthy (models fabricate numeric
@@ -379,7 +403,7 @@ export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlu
     angleSlug: null,
     focus: focus ?? null,
     drafts: JSON.stringify(ads),
-    queryPlan: { niche },
+    queryPlan: { niche, ...(hunt ? { hunt: true } : {}) },
     status: "pending",
     createdAt: new Date().toISOString(),
   });
