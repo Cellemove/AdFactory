@@ -84,6 +84,7 @@ export function SpyClient({
     latest ? { focus: latest.focus, createdAt: latest.createdAt } : null,
   );
   const [focus, setFocus] = useState("");
+  const [hunt, setHunt] = useState(false);
   const [nicheSlug, setNicheSlug] = useState(latest?.niche.slug ?? DEFAULT_SPY_NICHE_SLUG);
   const [hideUnverified, setHideUnverified] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -118,11 +119,12 @@ export function SpyClient({
 
   const run = (focusOverride?: string | null) => {
     const f = focusOverride !== undefined ? focusOverride : focus || null;
+    const huntNow = focusOverride === undefined && hunt && Boolean(f);
     setError(null);
     setIsRunning(true);
     startTransition(async () => {
       try {
-        const result = await spyOnCompetitors({ focus: f, nicheSlug });
+        const result = await spyOnCompetitors({ focus: f, nicheSlug, hunt: huntNow });
         setAds(result.ads);
         setSweepId(result.id);
         setMeta({ focus: f, createdAt: new Date().toISOString() });
@@ -216,18 +218,30 @@ export function SpyClient({
           </select>
           <input
             className="input flex-1"
-            placeholder="Focus (optional) — e.g. 'butt-lift angle' or 'TikTok Shop brands'"
+            placeholder={hunt
+              ? "Target — e.g. 'Ionix Labs' or 'the split-screen doctor ad about loose skin'"
+              : "Focus (optional) — e.g. 'butt-lift angle' or 'TikTok Shop brands'"}
             value={focus}
             onChange={(e) => setFocus(e.target.value)}
             disabled={isRunning}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !isRunning) run();
+              if (e.key === "Enter" && !isRunning && !(hunt && !focus.trim())) run();
             }}
           />
-          <button className="btn btn-primary sm:w-56" onClick={() => run()} disabled={isRunning}>
-            {isRunning ? `Scouting… ${formatElapsed(elapsed)} / ~40-90s` : "Refresh trending ads"}
+          <button
+            className="btn btn-primary sm:w-56"
+            onClick={() => run()}
+            disabled={isRunning || (hunt && !focus.trim())}
+          >
+            {isRunning
+              ? `Scouting… ${formatElapsed(elapsed)} / ~40-90s`
+              : hunt ? "Hunt these ads" : "Refresh trending ads"}
           </button>
         </div>
+        <label className="mt-2 flex items-center gap-1.5 text-xs text-ink-500">
+          <input type="checkbox" checked={hunt} onChange={(e) => setHunt(e.target.checked)} disabled={isRunning} />
+          Hunt specific ads — find exactly what the target names (a brand or one ad), repeats allowed
+        </label>
         {error && <div className="mt-2 text-xs text-red-700">{error}</div>}
         {isRunning && (
           <p className="mt-2 text-xs text-ink-500">
@@ -351,8 +365,13 @@ function AdGallery({
 
 function VerificationBadge({ ad }: { ad: SpyAd }) {
   if (ad.verified === undefined) return null; // legacy sweep, not checked
-  const [cls, label, title] =
-    ad.verified === false
+  const [cls, label, title] = ad.linkFallback
+    ? [
+        "bg-sky-600/90 text-white",
+        "→ live ads",
+        "The exact post link couldn't be verified, so this opens the brand's live ads (Ads Library / platform search) instead.",
+      ]
+    : ad.verified === false
       ? ["bg-red-600/90 text-white", "unverified", "This link did not load — likely a dead or fabricated URL."]
       : ad.contentMatch
         ? ["bg-emerald-600/90 text-white", "✓ verified", "Link is live and the brand/caption was found on the page."]

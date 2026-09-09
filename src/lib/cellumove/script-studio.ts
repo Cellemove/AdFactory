@@ -62,7 +62,14 @@ export const ScriptDocumentSchema = z.object({
   fiveD: ScriptFiveDSchema.optional(),
   sourceRefs: z.array(z.object({ type: z.string(), id: z.string().nullable(), title: z.string(), url: z.string().nullable() })),
   teardownBrief: TeardownBriefSchema.nullable().optional(),
-  hookAlternatives: z.array(z.object({ id: z.string(), text: z.string() })),
+  // text = the spoken VO. Directed hooks (v5+) also carry the 0-5s visual
+  // blocking and the overlay; optional so pre-existing documents still parse.
+  hookAlternatives: z.array(z.object({
+    id: z.string(),
+    text: z.string(),
+    onScreenText: z.string().optional(),
+    visualDirection: z.string().optional(),
+  })),
   selectedHookId: z.string().nullable(),
   modules: z.array(ScriptModuleSchema).min(1),
 });
@@ -436,6 +443,8 @@ export function renderScriptDownload(document: ScriptDocument): string {
     document.hookAlternatives.forEach((hook, index) => {
       const selected = hook.id === document.selectedHookId ? " [SELECTED]" : "";
       lines.push(`${index + 1}. ${hook.text}${selected}`);
+      if (hook.onScreenText?.trim()) lines.push(`   TEXT: ${hook.onScreenText.trim()}`);
+      if (hook.visualDirection?.trim()) lines.push(`   VISUAL: ${hook.visualDirection.trim()}`);
     });
   }
 

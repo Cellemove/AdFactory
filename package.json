@@ -23,7 +23,8 @@
     "verbatims:rebuild-verified": "tsx --env-file=.env scripts/rebuild-verified-verbatims.ts",
     "baseline:e2e": "tsx --env-file=.env scripts/baseline-end-to-end.ts",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
-    "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts"
+    "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts",
+    "analyze:intel": "tsx --conditions=react-server --env-file=.env scripts/analyze-intel-drive.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

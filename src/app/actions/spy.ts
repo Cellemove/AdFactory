@@ -9,6 +9,13 @@ import { quoteFoundIn, normalizeForMatch } from "@/lib/cellumove/verify-research
 import { exclusionBlock } from "@/lib/cellumove/novelty";
 import { dedupeNovel } from "@/lib/cellumove/embeddings";
 import { DEFAULT_SPY_NICHE_SLUG, getSpyNiche, type SpyNiche } from "@/lib/cellumove/spy-niches";
+import { loadCompetitorIntel } from "@/lib/drive";
+import {
+  loadIntelBriefDoc,
+  renderIntelBriefs,
+  extractAdsLibraryLinks,
+  normalizeBrandKey,
+} from "@/lib/cellumove/intel-briefs";
 
 // ─── COMPETITOR SPY ──────────────────────────────────────────────────────────
 // "Google Images, but for ads." A grounded Gemini sweep finds the trending ad
@@ -29,6 +36,10 @@ export interface SpyAd {
   // Anti-hallucination flags (set during enrichment; undefined on legacy rows):
   verified?: boolean;       // sourceUrl actually loaded (live, not a dead/fake link)
   contentMatch?: boolean;   // the brand or caption actually appears on that page
+  // The model's exact post link failed verification, so sourceUrl was replaced
+  // with the brand's Meta Ads Library page / a platform search — a link that is
+  // correct by construction instead of a fabricated post id.
+  linkFallback?: boolean;
 }
 
 export interface SpySweep {
@@ -58,6 +69,7 @@ function buildSpySystemPrompt(niche: SpyNiche): string {
   "  • site:instagram.com brand reels & sponsored posts",
   "  • site:youtube.com ad-style Shorts and video ads",
   "READ with url-context where useful to confirm the brand and the creative's copy. Point sourceUrl at the EXACT ad / post, so its preview image is the creative itself.",
+  "NEVER invent or guess numeric facebook.com/instagram.com post, reel or watch ids — only give such a URL if you actually read that exact page this sweep. If you know a brand is running Meta ads but lack a real post URL, use the brand's Meta Ads Library page link instead (many are provided in the competitor intelligence).",
   "",
   `REJECT: ${niche.rejectRules.join("; ")}. We want the brand's actual ad / social creative, not a shop page or an article.`,
   "",
@@ -197,6 +209,25 @@ function contentMatches(ad: SpyAd, pageNorm: string): boolean {
   return false;
 }
 
+// Deterministic replacement for a link that failed verification: the brand's
+// Meta Ads Library page (from the intel briefs) or a platform search — pages that
+// really show the brand's ads, unlike a fabricated post id.
+function fallbackSourceUrl(ad: SpyAd, adsLibraryByBrand: Record<string, string>): string | null {
+  const platform = ad.platform.toLowerCase();
+  const url = ad.sourceUrl;
+  const brandQ = encodeURIComponent(ad.brand);
+  if (!ad.brand) return null;
+  if (/meta|facebook|instagram/.test(platform) || /facebook\.com|fb\.watch|instagram\.com/i.test(url)) {
+    return (
+      adsLibraryByBrand[normalizeBrandKey(ad.brand)] ??
+      `https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=ALL&q=${brandQ}&search_type=keyword_unordered&media_type=all`
+    );
+  }
+  if (/tiktok/.test(platform) || /tiktok\.com/i.test(url)) return `https://www.tiktok.com/search?q=${brandQ}`;
+  if (/youtube/.test(platform) || isYouTube(url)) return `https://www.youtube.com/results?search_query=${brandQ}+ad`;
+  return null;
+}
+
 // Single fetch per ad → liveness + preview image + content provenance. YouTube
 // goes through oEmbed (definitive existence check); everything else fetches the
 // page once and reuses that body for both the og:image and the content match.
@@ -234,48 +265,92 @@ async function enrichAndVerify(ad: SpyAd): Promise<SpyAd> {
  * with its post preview image, and persist the sweep. Returns the row id so the
  * caller can curate it via updateSpyAds().
  * `focus` optionally narrows the lens; `nicheSlug` selects the persisted category definition.
+ * `hunt` flips the sweep into a target hunt: find exactly what `focus` names (a
+ * brand, or a specific ad description) — repeats allowed, no padding with other brands.
  */
-export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlug?: string | null }): Promise<SpySweep> {
+export async function spyOnCompetitors(input?: {
+  focus?: string | null;
+  nicheSlug?: string | null;
+  hunt?: boolean;
+}): Promise<SpySweep> {
   const focus = input?.focus?.trim() || null;
+  const hunt = Boolean(input?.hunt);
+  if (hunt && !focus) throw new Error("A hunt needs a target — name the brand or describe the ad.");
   const niche = getSpyNiche(input?.nicheSlug ?? DEFAULT_SPY_NICHE_SLUG);
   const llm = getLLM();
-  // Brands/captions already surfaced in recent sweeps — so we find fresh ones.
-  const recent = (
-    await supabase
-      .from("Research")
-      .select("drafts, queryPlan")
-      .eq("type", "competitor_spy")
-      .order("createdAt", { ascending: false })
-      .limit(5)
-  ).data ?? [];
+  // Brands/captions already surfaced in recent sweeps — so open sweeps find fresh
+  // ones. A hunt skips this entirely: you WANT the ad even if we've seen it.
   const seenAds: string[] = [];
-  for (const r of recent as { drafts: string; queryPlan?: unknown }[]) {
-    try {
-      const plan = typeof r.queryPlan === "string" ? JSON.parse(r.queryPlan) : r.queryPlan;
-      const previousSlug = (plan as { niche?: { slug?: string } } | null)?.niche?.slug ?? DEFAULT_SPY_NICHE_SLUG;
-      if (previousSlug !== niche.slug) continue;
-      for (const a of JSON.parse(r.drafts) as SpyAd[]) {
-        if (a?.brand || a?.caption) seenAds.push(`${a.brand}: ${a.caption}`.trim());
+  if (!hunt) {
+    const recent = (
+      await supabase
+        .from("Research")
+        .select("drafts, queryPlan")
+        .eq("type", "competitor_spy")
+        .order("createdAt", { ascending: false })
+        .limit(5)
+    ).data ?? [];
+    for (const r of recent as { drafts: string; queryPlan?: unknown }[]) {
+      try {
+        const plan = typeof r.queryPlan === "string" ? JSON.parse(r.queryPlan) : r.queryPlan;
+        const previousSlug = (plan as { niche?: { slug?: string } } | null)?.niche?.slug ?? DEFAULT_SPY_NICHE_SLUG;
+        if (previousSlug !== niche.slug) continue;
+        for (const a of JSON.parse(r.drafts) as SpyAd[]) {
+          if (a?.brand || a?.caption) seenAds.push(`${a.brand}: ${a.caption}`.trim());
+        }
+      } catch {
+        /* ignore */
       }
-    } catch {
-      /* ignore */
     }
   }
 
+  // Intelligence Industrielle drive → known competitors/brands as search seeds,
+  // so the sweep targets named advertisers instead of blind category scanning.
+  // Drive text (roster + CSVs/Docs) plus the per-brand briefs distilled from each
+  // brand folder's PDF + ad screenshots by scripts/analyze-intel-drive.ts.
+  const [driveIntel, briefDoc] = await Promise.all([loadCompetitorIntel(), loadIntelBriefDoc()]);
+  const briefs = renderIntelBriefs(briefDoc?.doc);
+  const intel = [driveIntel, briefs ? `### Analyzed brand briefs (from their actual ads & research PDFs)\n\n${briefs}` : ""]
+    .filter(Boolean)
+    .join("\n\n");
+  if (intel) console.log(`[spy] competitor intel loaded (${intel.length} chars)`);
+
   const userPrompt = [
-    focus
-      ? `FOCUS FROM USER: ${focus}`
-      : `FOCUS: open sweep — the trending creatives across the whole ${niche.name} niche.`,
+    hunt
+      ? `TARGET HUNT: ${focus}`
+      : focus
+        ? `FOCUS FROM USER: ${focus}`
+        : `FOCUS: open sweep — the trending creatives across the whole ${niche.name} niche.`,
     "",
-    "Search the web NOW. Find the most trending ad creatives / social posts competitor brands are running (ads & social — not storefront pages).",
-    "Return 10-16 distinct creatives following the schema in the system prompt. Do NOT include CelluMove.",
-    "Prefer brands and creatives we have NOT already surfaced (listed below). Bring fresh advertisers and new ads, not repeats of what we've already seen.",
-    "Return ONLY the JSON object described in the system prompt.",
-    exclusionBlock(
-      "ALREADY SURFACED IN RECENT SWEEPS — PREFER DIFFERENT ONES",
-      "We've already captured these brand/creative pairs — surface new advertisers or genuinely new ads:",
-      seenAds,
-    ),
+    intel
+      ? [
+          "════════════════════════════════════════════════════════════════════════",
+          "COMPETITOR INTELLIGENCE (from our Intelligence Industrielle drive)",
+          "════════════════════════════════════════════════════════════════════════",
+          "The notes below name the competitors and relevant brands we track. Treat them as your PRIMARY search seeds: search each relevant brand BY NAME on the Meta Ads Library (facebook.com/ads/library), TikTok, Instagram and YouTube for the ads they're running RIGHT NOW, before falling back to open category searches. Still reject anything matching the reject rules.",
+          "",
+          intel,
+          "",
+        ].join("\n")
+      : null,
+    ...(hunt
+      ? [
+          "Search the web NOW for ads MATCHING THE TARGET ABOVE — nothing else.",
+          "If the target names a brand in the competitor intelligence, start from its Meta Ads Library page link there; otherwise search the brand/description by name on the Meta Ads Library, TikTok, Instagram and YouTube.",
+          "OVERRIDE for this hunt: return every matching creative you actually find, 1-16 — a single exact match beats sixteen loose ones. Do NOT pad with other brands or merely-similar ads, and ignore any preference for brands we haven't surfaced before: repeats are fine.",
+          "Return ONLY the JSON object described in the system prompt.",
+        ]
+      : [
+          "Search the web NOW. Find the most trending ad creatives / social posts competitor brands are running (ads & social — not storefront pages).",
+          "Return 10-16 distinct creatives following the schema in the system prompt. Do NOT include CelluMove.",
+          "Prefer brands and creatives we have NOT already surfaced (listed below). Bring fresh advertisers and new ads, not repeats of what we've already seen.",
+          "Return ONLY the JSON object described in the system prompt.",
+          exclusionBlock(
+            "ALREADY SURFACED IN RECENT SWEEPS — PREFER DIFFERENT ONES",
+            "We've already captured these brand/creative pairs — surface new advertisers or genuinely new ads:",
+            seenAds,
+          ),
+        ]),
   ]
     .filter(Boolean)
     .join("\n");
@@ -295,20 +370,31 @@ export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlu
     model: DEFAULT_MODEL,
     usage: resp.usageMetadata,
     grounded: true,
-    metadata: { focus: focus ?? undefined, nicheSlug: niche.slug },
+    metadata: { focus: focus ?? undefined, nicheSlug: niche.slug, hunt: hunt || undefined },
   });
 
   const text = resp.text ?? "";
   if (!text.trim()) throw new Error("Spy returned no text content.");
   const parsed = parseAds(text).filter((a) => a.sourceUrl || a.imageUrl);
-  if (parsed.length === 0) throw new Error("Spy returned zero creatives — try again or add a focus.");
+  if (parsed.length === 0) {
+    throw new Error(hunt ? "The hunt found no matching creatives — try naming the brand differently." : "Spy returned zero creatives — try again or add a focus.");
+  }
 
   // Novelty gate (lexical + semantic): drop creatives that repeat a brand/caption
-  // from recent sweeps (or each other).
-  const fresh = await dedupeNovel(parsed, seenAds, (a) => `${a.brand}: ${a.caption}`);
+  // from recent sweeps (or each other). A hunt keeps repeats — that's the point.
+  const fresh = hunt ? parsed : await dedupeNovel(parsed, seenAds, (a) => `${a.brand}: ${a.caption}`);
 
   // Enrich + verify (liveness + content provenance) in parallel — one fetch each.
-  const ads = await Promise.all(fresh.map(enrichAndVerify));
+  // A link that fails content-match is untrustworthy (models fabricate numeric
+  // post/reel ids that resolve to unrelated posts) — swap it for the brand's Ads
+  // Library page / platform search and drop the wrong page's preview image.
+  const adsLibraryByBrand = extractAdsLibraryLinks(briefDoc?.doc);
+  const ads = (await Promise.all(fresh.map(enrichAndVerify))).map((ad) => {
+    if (ad.verified && ad.contentMatch) return ad;
+    const fallback = fallbackSourceUrl(ad, adsLibraryByBrand);
+    if (!fallback) return ad;
+    return { ...ad, sourceUrl: fallback, imageUrl: "", verified: true, contentMatch: false, linkFallback: true };
+  });
 
   const id = newId();
   await supabase.from("Research").insert({
@@ -317,7 +403,7 @@ export async function spyOnCompetitors(input?: { focus?: string | null; nicheSlu
     angleSlug: null,
     focus: focus ?? null,
     drafts: JSON.stringify(ads),
-    queryPlan: { niche },
+    queryPlan: { niche, ...(hunt ? { hunt: true } : {}) },
     status: "pending",
     createdAt: new Date().toISOString(),
   });
