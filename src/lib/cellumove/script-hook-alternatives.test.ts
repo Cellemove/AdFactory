@@ -27,6 +27,16 @@ function hooks(...texts: string[]): HookAlternative[] {
   return texts.map((text, index) => ({ id: `ai-hook-${index + 1}`, text }));
 }
 
+// Model candidates are directed micro-scenes; only spokenText matters for
+// dedupe/id allocation, so tests build the rest mechanically.
+function cands(...texts: string[]) {
+  return texts.map((spokenText) => ({
+    spokenText,
+    onScreenText: "OVERLAY",
+    visualDirection: "Macro on the fabric, product in frame.",
+  }));
+}
+
 test("appended hook ids never collide with any existing id namespace", () => {
   // teardown-hook-* and ai-hook-* never coexist in today's write paths, but
   // appending is the first thing that can put them in one document.
@@ -38,9 +48,9 @@ test("appended hook ids never collide with any existing id namespace", () => {
     { id: "hook-alt-3", text: "An earlier top-up that already took a low number" },
   ];
 
-  const first = appendHookAlternatives(existing, ["Batch one A", "Batch one B", "Batch one C"]).added;
+  const first = appendHookAlternatives(existing, cands("Batch one A", "Batch one B", "Batch one C")).added;
   const afterFirst = [...existing, ...first];
-  const second = appendHookAlternatives(afterFirst, ["Batch two A", "Batch two B"]).added;
+  const second = appendHookAlternatives(afterFirst, cands("Batch two A", "Batch two B")).added;
   const all = [...afterFirst, ...second];
 
   assert.equal(new Set(all.map((hook) => hook.id)).size, all.length, "every id must be unique");
@@ -53,13 +63,13 @@ test("appended hook ids never collide with any existing id namespace", () => {
 
 test("deduplicates against existing hooks and within the batch", () => {
   const existing = hooks("Stop hiding your legs", "Your legs at 6pm");
-  const result = appendHookAlternatives(existing, [
+  const result = appendHookAlternatives(existing, cands(
     "Stop hiding your legs",       // exact repeat of an existing hook
     "  STOP   hiding your LEGS ",  // same hook, different casing and spacing
     "A genuinely new hook",
     "A genuinely new hook",        // intra-batch duplicate
     "Another new hook",
-  ]);
+  ));
 
   assert.deepEqual(result.added.map((hook) => hook.text), ["A genuinely new hook", "Another new hook"]);
   assert.equal(result.skippedDuplicate, 3);
@@ -67,13 +77,13 @@ test("deduplicates against existing hooks and within the batch", () => {
 
 test("caps the pool at MAX_SCRIPT_HOOK_ALTERNATIVES", () => {
   const nearCap = hooks(...Array.from({ length: MAX_SCRIPT_HOOK_ALTERNATIVES - 2 }, (_, i) => `Existing ${i}`));
-  const result = appendHookAlternatives(nearCap, ["New one", "New two", "New three", "New four"]);
+  const result = appendHookAlternatives(nearCap, cands("New one", "New two", "New three", "New four"));
   assert.equal(result.added.length, 2);
   assert.equal(result.skippedAtCap, 2);
 
   // A legacy document can already sit over the cap; that must not go negative or throw.
   const overCap = hooks(...Array.from({ length: MAX_SCRIPT_HOOK_ALTERNATIVES + 2 }, (_, i) => `Existing ${i}`));
-  const overCapResult = appendHookAlternatives(overCap, ["New one", "New two"]);
+  const overCapResult = appendHookAlternatives(overCap, cands("New one", "New two"));
   assert.deepEqual(overCapResult.added, []);
   assert.equal(overCapResult.skippedAtCap, 2);
 });
@@ -81,12 +91,12 @@ test("caps the pool at MAX_SCRIPT_HOOK_ALTERNATIVES", () => {
 // Claims review happens upstream of generation, so the append path keeps every
 // hook the model writes. It filters on duplication, emptiness, and the cap only.
 test("keeps strong-claim hooks instead of dropping them", () => {
-  const result = appendHookAlternatives([], [
+  const result = appendHookAlternatives([], cands(
     "A perfectly ordinary hook",
     "These are clinically proven to work",
     "This will eliminate the problem",
     "Another ordinary hook",
-  ]);
+  ));
 
   assert.deepEqual(result.added.map((hook) => hook.text), [
     "A perfectly ordinary hook",
@@ -100,7 +110,7 @@ test("keeps strong-claim hooks instead of dropping them", () => {
 test("returns only the new entries and leaves existing hooks untouched", () => {
   const existing = hooks("First", "Second");
   const snapshot = JSON.parse(JSON.stringify(existing)) as HookAlternative[];
-  const result = appendHookAlternatives(existing, ["Third"]);
+  const result = appendHookAlternatives(existing, cands("Third"));
 
   assert.equal(result.added.length, 1);
   assert.ok(!result.added.some((hook) => hook.text === "First" || hook.text === "Second"));
@@ -133,20 +143,21 @@ test("context includes the hook mechanics menu, so the model has concrete ways t
 
 test("rejects malformed model output", () => {
   assert.deepEqual(
-    parseGeneratedHookAlternatives({ hookAlternatives: ["one", "two", "three"] }),
-    ["one", "two", "three"],
+    parseGeneratedHookAlternatives({ hookAlternatives: cands("one", "two", "three") }),
+    cands("one", "two", "three"),
   );
 
-  assert.throws(() => parseGeneratedHookAlternatives(["one", "two", "three"]), "bare array");
+  assert.throws(() => parseGeneratedHookAlternatives(cands("one", "two", "three")), "bare array");
+  assert.throws(() => parseGeneratedHookAlternatives({ hookAlternatives: ["one", "two", "three"] }), "legacy plain strings");
   assert.throws(() => parseGeneratedHookAlternatives({ hookAlternatives: [] }), "empty");
-  assert.throws(() => parseGeneratedHookAlternatives({ hookAlternatives: ["one", "two"] }), "under three");
+  assert.throws(() => parseGeneratedHookAlternatives({ hookAlternatives: cands("one", "two") }), "under three");
   assert.throws(
-    () => parseGeneratedHookAlternatives({ hookAlternatives: Array.from({ length: 9 }, (_, i) => `hook ${i}`) }),
+    () => parseGeneratedHookAlternatives({ hookAlternatives: cands(...Array.from({ length: 9 }, (_, i) => `hook ${i}`)) }),
     "over eight",
   );
-  assert.throws(() => parseGeneratedHookAlternatives({ hookAlternatives: ["one", "two", ""] }), "empty string item");
+  assert.throws(() => parseGeneratedHookAlternatives({ hookAlternatives: cands("one", "two", "") }), "empty spokenText");
   assert.throws(
-    () => parseGeneratedHookAlternatives({ hookAlternatives: ["one", "two", "three"], modules: [] }),
+    () => parseGeneratedHookAlternatives({ hookAlternatives: cands("one", "two", "three"), modules: [] }),
     "extra top-level key",
   );
 });

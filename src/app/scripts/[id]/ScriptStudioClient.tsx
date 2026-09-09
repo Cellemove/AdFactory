@@ -169,13 +169,23 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
       } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
     });
   };
-  const applyHook = (hookId: string, text: string) => {
+  // A directed hook carries its own overlay + 0-5s blocking; applying it updates
+  // the whole hook beat, not just the VO. Legacy text-only hooks leave the
+  // module's overlay/visuals untouched.
+  const applyHook = (hook: { id: string; text: string; onScreenText?: string; visualDirection?: string }) => {
     const hookModule = document.modules.find((module) => module.kind === "hook") ?? document.modules[0];
     if (!hookModule || hookModule.locked) return;
     setDocument((current) => ({
       ...current,
-      selectedHookId: hookId,
-      modules: current.modules.map((module) => module.id === hookModule.id ? { ...module, spokenText: text } : module),
+      selectedHookId: hook.id,
+      modules: current.modules.map((module) => module.id === hookModule.id
+        ? {
+            ...module,
+            spokenText: hook.text,
+            ...(hook.onScreenText ? { onScreenText: hook.onScreenText } : {}),
+            ...(hook.visualDirection ? { visualDirection: hook.visualDirection } : {}),
+          }
+        : module),
     }));
   };
   // Plain async like applyModuleAssist, not startTransition, so a slow hook
@@ -268,7 +278,11 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
           <button type="button" className="btn" disabled={!editable || pending || assistPending || hooksPending || hooksAtCap} onClick={requestMoreHooks}>{hooksPending ? "Writing hooks…" : hooksAtCap ? "Hook limit reached" : "More hooks"}</button>
         </div>
         {document.hookAlternatives.length > 0
-          ? <div className="grid gap-2 lg:grid-cols-3">{document.hookAlternatives.map((hook) => <button key={hook.id} type="button" disabled={!editable} className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${document.selectedHookId === hook.id ? "border-brand-purple bg-brand-purple/5" : "border-ink-200 hover:border-ink-400"}`} onClick={() => applyHook(hook.id, hook.text)}>{hook.text}</button>)}</div>
+          ? <div className="grid gap-2 lg:grid-cols-3">{document.hookAlternatives.map((hook) => <button key={hook.id} type="button" disabled={!editable} className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${document.selectedHookId === hook.id ? "border-brand-purple bg-brand-purple/5" : "border-ink-200 hover:border-ink-400"}`} onClick={() => applyHook(hook)}>
+              <span className="block">{hook.text}</span>
+              {hook.onScreenText && <span className="mt-1.5 block text-[11px] font-semibold uppercase tracking-wide text-ink-700">{hook.onScreenText}</span>}
+              {hook.visualDirection && <span className="mt-1 block text-xs text-ink-500">{hook.visualDirection}</span>}
+            </button>)}</div>
           : <p className="text-xs text-ink-500">No hook options yet. Use More hooks, or AI fill all for a complete draft.</p>}
       </section>
 

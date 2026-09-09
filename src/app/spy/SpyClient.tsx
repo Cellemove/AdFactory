@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { spyOnCompetitors, updateSpyAds, type SpyAd } from "../actions/spy";
 import { saveToBank } from "../actions/bank";
+import { importBrandSearchMetaAds, verifyBrandSearch } from "../actions/brandsearch";
 import { youtubeThumb } from "@/lib/video-thumb";
 import { DEFAULT_SPY_NICHE_SLUG, type SpyNiche } from "@/lib/cellumove/spy-niches";
 
@@ -13,6 +14,7 @@ interface HistoryItem {
   createdAt: string;
   count: number;
   niche: SpyNiche;
+  source: string;
 }
 
 interface LatestSweep {
@@ -21,6 +23,7 @@ interface LatestSweep {
   focus: string | null;
   createdAt: string;
   niche: SpyNiche;
+  source: string;
 }
 
 // Live elapsed timer — same pattern as the Research page.
@@ -71,23 +74,27 @@ export function SpyClient({
   history,
   bankedUrls = [],
   niches,
+  brandSearchConfigured,
 }: {
   latest: LatestSweep | null;
   history: HistoryItem[];
   /** Source URLs already in the idea bank, so saved tiles render as saved. */
   bankedUrls?: string[];
   niches: SpyNiche[];
+  brandSearchConfigured: boolean;
 }) {
   const [ads, setAds] = useState<SpyAd[] | null>(latest?.ads ?? null);
   const [sweepId, setSweepId] = useState<string | null>(latest?.id ?? null);
-  const [meta, setMeta] = useState<{ focus: string | null; createdAt: string } | null>(
-    latest ? { focus: latest.focus, createdAt: latest.createdAt } : null,
+  const [meta, setMeta] = useState<{ focus: string | null; createdAt: string; source: string } | null>(
+    latest ? { focus: latest.focus, createdAt: latest.createdAt, source: latest.source } : null,
   );
   const [focus, setFocus] = useState("");
+  const [hunt, setHunt] = useState(false);
   const [nicheSlug, setNicheSlug] = useState(latest?.niche.slug ?? DEFAULT_SPY_NICHE_SLUG);
   const [hideUnverified, setHideUnverified] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [isRunning, setIsRunning] = useState(false);
+  const [runningSource, setRunningSource] = useState<"web" | "brandsearch" | null>(null);
+  const isRunning = runningSource !== null;
   const [, startTransition] = useTransition();
   const elapsed = useElapsedMs(isRunning);
   const autoRan = useRef(false);
@@ -95,6 +102,7 @@ export function SpyClient({
   // as its dedupe key (sourceUrl, falling back to imageUrl).
   const [banked, setBanked] = useState<Set<string>>(() => new Set(bankedUrls));
   const [saving, setSaving] = useState<string | null>(null);
+  const [brandSearchState, setBrandSearchState] = useState<string | null>(null);
 
   const bankKey = (ad: SpyAd) => (ad.sourceUrl || ad.imageUrl || "").trim();
 
@@ -118,19 +126,46 @@ export function SpyClient({
 
   const run = (focusOverride?: string | null) => {
     const f = focusOverride !== undefined ? focusOverride : focus || null;
+    const huntNow = focusOverride === undefined && hunt && Boolean(f);
     setError(null);
-    setIsRunning(true);
+    setRunningSource("web");
     startTransition(async () => {
       try {
-        const result = await spyOnCompetitors({ focus: f, nicheSlug });
+        const result = await spyOnCompetitors({ focus: f, nicheSlug, hunt: huntNow });
         setAds(result.ads);
         setSweepId(result.id);
-        setMeta({ focus: f, createdAt: new Date().toISOString() });
+        setMeta({ focus: f, createdAt: new Date().toISOString(), source: "web_scout" });
         setNicheSlug(result.niche.slug);
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
-        setIsRunning(false);
+        setRunningSource(null);
+      }
+    });
+  };
+
+  const importBrandSearch = () => {
+    const f = focus.trim() || null;
+    setError(null);
+    setRunningSource("brandsearch");
+    setBrandSearchState("Connecting to BrandSearch…");
+    startTransition(async () => {
+      try {
+        await verifyBrandSearch();
+        setBrandSearchState(`Connected · importing scaling Meta ads…`);
+        const result = await importBrandSearchMetaAds({ nicheSlug, focus: f, limit: 24 });
+        setAds(result.ads);
+        setSweepId(result.id);
+        setMeta({ focus: f, createdAt: new Date().toISOString(), source: "brandsearch" });
+        setNicheSlug(result.niche.slug);
+        const quota = result.dailyRemaining === null ? "quota unavailable" : `${result.dailyRemaining.toLocaleString()} daily credits left`;
+        const index = result.durableIndexUpdated ? "durable index updated" : "run migration 016 for durable indexing";
+        setBrandSearchState(`${result.ads.length} probable winners imported · ${quota} · ${index}`);
+      } catch (e) {
+        setBrandSearchState(null);
+        setError(e instanceof Error ? e.message : String(e));
+      } finally {
+        setRunningSource(null);
       }
     });
   };
@@ -168,7 +203,7 @@ export function SpyClient({
       if (Array.isArray(parsed)) {
         setAds(parsed);
         setSweepId(h.id);
-        setMeta({ focus: h.focus, createdAt: h.createdAt });
+        setMeta({ focus: h.focus, createdAt: h.createdAt, source: h.source });
         setNicheSlug(h.niche.slug);
         setError(null);
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -196,6 +231,7 @@ export function SpyClient({
         {meta && (
           <span className="text-xs text-ink-400">
             {ads?.length ?? 0} creatives · {new Date(meta.createdAt).toLocaleString()}
+            {` · ${meta.source === "brandsearch" ? "BrandSearch evidence" : "web scout"}`}
             {meta.focus ? ` · focus: “${meta.focus}”` : ""}
           </span>
         )}
@@ -216,25 +252,64 @@ export function SpyClient({
           </select>
           <input
             className="input flex-1"
-            placeholder="Focus (optional) — e.g. 'butt-lift angle' or 'TikTok Shop brands'"
+            placeholder={hunt
+              ? "Target — e.g. 'Ionix Labs' or 'the split-screen doctor ad about loose skin'"
+              : "Focus (optional) — e.g. 'butt-lift angle' or 'TikTok Shop brands'"}
             value={focus}
             onChange={(e) => setFocus(e.target.value)}
             disabled={isRunning}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && !isRunning) run();
+              if (e.key === "Enter" && !isRunning && !(hunt && !focus.trim())) run();
             }}
           />
-          <button className="btn btn-primary sm:w-56" onClick={() => run()} disabled={isRunning}>
-            {isRunning ? `Scouting… ${formatElapsed(elapsed)} / ~40-90s` : "Refresh trending ads"}
+          <button
+            className="btn btn-primary sm:w-56"
+            onClick={() => run()}
+            disabled={isRunning || (hunt && !focus.trim())}
+          >
+            {runningSource === "web"
+              ? `Scouting… ${formatElapsed(elapsed)} / ~40-90s`
+              : hunt ? "Hunt these ads" : "Refresh trending ads"}
           </button>
         </div>
+        <label className="mt-2 flex items-center gap-1.5 text-xs text-ink-500">
+          <input type="checkbox" checked={hunt} onChange={(e) => setHunt(e.target.checked)} disabled={isRunning} />
+          Hunt specific ads — find exactly what the target names (a brand or one ad), repeats allowed
+        </label>
         {error && <div className="mt-2 text-xs text-red-700">{error}</div>}
-        {isRunning && (
+        {runningSource === "web" && (
           <p className="mt-2 text-xs text-ink-500">
             Searching Meta Ads Library, TikTok, Instagram and YouTube ads, then pulling each
             creative&apos;s preview image. Give it a moment — this is a real web sweep.
           </p>
         )}
+      </section>
+
+      <section className="card border-sky-200 bg-sky-50/40">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold">BrandSearch competitor evidence</h2>
+              <span className="tag">Meta · probable winners</span>
+            </div>
+            <p className="mt-1 max-w-3xl text-xs text-ink-600">
+              Imports BrandSearch&apos;s scaling cohort: top reach-rank or €500+ observed EU spend. These are strong
+              performance proxies, not verified ROAS winners. The focus above is optional and narrows ad copy.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="btn btn-primary shrink-0 sm:w-56"
+            onClick={importBrandSearch}
+            disabled={isRunning || !brandSearchConfigured}
+          >
+            {runningSource === "brandsearch" ? "Importing…" : "Import scaling Meta ads"}
+          </button>
+        </div>
+        {!brandSearchConfigured && (
+          <p className="mt-2 text-xs text-red-700">BRANDSEARCH_API_KEY is not configured on the server.</p>
+        )}
+        {brandSearchState && <p className="mt-2 text-xs text-sky-800">{brandSearchState}</p>}
       </section>
 
       {/* Verification controls */}
@@ -292,6 +367,7 @@ export function SpyClient({
                   <div className="min-w-0">
                     <div className="text-sm font-medium">
                       <span className="tag">Spy</span>
+                      {h.source === "brandsearch" && <span className="ml-2 tag">BrandSearch</span>}
                       <span className="ml-2">{h.niche.name}</span>
                       {h.focus ? (
                         <span className="ml-2">focus: “{h.focus}”</span>
@@ -351,8 +427,13 @@ function AdGallery({
 
 function VerificationBadge({ ad }: { ad: SpyAd }) {
   if (ad.verified === undefined) return null; // legacy sweep, not checked
-  const [cls, label, title] =
-    ad.verified === false
+  const [cls, label, title] = ad.linkFallback
+    ? [
+        "bg-sky-600/90 text-white",
+        "→ live ads",
+        "The exact post link couldn't be verified, so this opens the brand's live ads (Ads Library / platform search) instead.",
+      ]
+    : ad.verified === false
       ? ["bg-red-600/90 text-white", "unverified", "This link did not load — likely a dead or fabricated URL."]
       : ad.contentMatch
         ? ["bg-emerald-600/90 text-white", "✓ verified", "Link is live and the brand/caption was found on the page."]
@@ -365,6 +446,27 @@ function VerificationBadge({ ad }: { ad: SpyAd }) {
       {label}
     </span>
   );
+}
+
+function EvidenceBadge({ ad }: { ad: SpyAd }) {
+  if (!ad.winnerEvidence) return null;
+  const label = ad.winnerEvidence === "verified_winner"
+    ? "verified winner"
+    : ad.winnerEvidence === "probable_winner" ? "probable winner" : "observed";
+  const cls = ad.winnerEvidence === "verified_winner"
+    ? "bg-emerald-700 text-white"
+    : ad.winnerEvidence === "probable_winner" ? "bg-amber-400 text-amber-950" : "bg-ink-200 text-ink-800";
+  return (
+    <span className={`absolute bottom-2 right-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
+function metric(value: unknown, prefix = ""): string | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? `${prefix}${Math.round(value).toLocaleString()}`
+    : null;
 }
 
 function AdTile({
@@ -448,7 +550,7 @@ function AdTile({
               className="w-full bg-ink-100 object-cover"
             />
           )}
-          {ad.mediaType === "video" && (
+          {ad.mediaType === "video" && !ad.winnerEvidence && (
             <span className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white">
               ▶ video
             </span>
@@ -459,10 +561,24 @@ function AdTile({
             </span>
           )}
           <VerificationBadge ad={ad} />
+          <EvidenceBadge ad={ad} />
         </div>
         <div className="p-2.5">
           <div className="truncate text-sm font-semibold text-ink-900">{ad.brand || hostOf(href)}</div>
           {ad.caption && <p className="mt-0.5 line-clamp-2 text-xs text-ink-600">{ad.caption}</p>}
+          {ad.evidenceReasons && ad.evidenceReasons.length > 0 && (
+            <p className="mt-1 line-clamp-2 text-[10px] text-amber-800">{ad.evidenceReasons.join(" · ")}</p>
+          )}
+          {ad.evidenceMetrics && (
+            <div className="mt-1 flex flex-wrap gap-x-2 text-[10px] text-ink-500">
+              {metric(ad.evidenceMetrics.euTotalSpend, "€") && <span>{metric(ad.evidenceMetrics.euTotalSpend, "€")} spend</span>}
+              {metric(ad.evidenceMetrics.euTotalReach) && <span>{metric(ad.evidenceMetrics.euTotalReach)} reach</span>}
+              {metric(ad.evidenceMetrics.totalActiveTimeSec) && (
+                <span>{Math.floor(Number(ad.evidenceMetrics.totalActiveTimeSec) / 86_400)}d active</span>
+              )}
+            </div>
+          )}
+          {ad.transcriptUrl && <p className="mt-1 text-[10px] font-medium text-sky-700">transcript available</p>}
         </div>
       </a>
       {useIdeaHref && (

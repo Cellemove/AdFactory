@@ -1,11 +1,13 @@
 import { supabase, unwrap } from "@/lib/db";
 import { KnowledgeClient } from "./KnowledgeClient";
 import { SopFoundationClient } from "./SopFoundationClient";
+import Link from "next/link";
+import { isBrandSearchConfigured } from "@/lib/brandsearch.server";
 
 export const dynamic = "force-dynamic";
 
 export default async function KnowledgePage() {
-  const [notesRes, principlesRes, sopsRes, formatsRes, marketsRes] = await Promise.all([
+  const [notesRes, principlesRes, sopsRes, formatsRes, marketsRes, competitorAdsRes] = await Promise.all([
     supabase
       .from("KnowledgeNote")
       .select("*")
@@ -21,6 +23,7 @@ export default async function KnowledgePage() {
     supabase.from("Sop").select("*").order("pinned", { ascending: false }).order("order", { ascending: true }),
     supabase.from("ReferenceFormat").select("*").order("order", { ascending: true }),
     supabase.from("MarketProfile").select("*").order("order", { ascending: true }),
+    supabase.from("CompetitorAd").select("id, winnerEvidence, reviewStatus"),
   ]);
   const notes = unwrap(notesRes);
   const principles = unwrap(principlesRes);
@@ -29,6 +32,10 @@ export default async function KnowledgePage() {
   const formats = formatsRes.error ? [] : formatsRes.data ?? [];
   const markets = marketsRes.error ? [] : marketsRes.data ?? [];
   const migrationPending = Boolean(sopsRes.error || formatsRes.error || marketsRes.error);
+  const competitorAds = competitorAdsRes.error ? [] : competitorAdsRes.data ?? [];
+  const brandSearchMigrationPending = Boolean(competitorAdsRes.error);
+  const probableCount = competitorAds.filter((ad) => ad.winnerEvidence === "probable_winner").length;
+  const approvedCount = competitorAds.filter((ad) => ad.reviewStatus === "approved").length;
 
   return (
     <div className="space-y-6">
@@ -37,6 +44,30 @@ export default async function KnowledgePage() {
           <h1 className="text-2xl font-semibold tracking-tight">Knowledge</h1>
           <p className="text-sm text-ink-500">SOPs + reference formats + market profiles + free-form notes &amp; copy principles.</p>
         </header>
+      </section>
+
+      <section className="card border-sky-200 bg-sky-50/40">
+        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+          <div>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold">BrandSearch competitor evidence</h2>
+              <span className={isBrandSearchConfigured() ? "tag" : "tag border-red-300 text-red-700"}>
+                {isBrandSearchConfigured() ? "API key configured" : "not configured"}
+              </span>
+            </div>
+            <p className="mt-1 text-xs text-ink-600">
+              {probableCount} probable winners indexed · {approvedCount} approved for curation. Provider signals remain
+              separate from verified ROAS evidence.
+            </p>
+            {brandSearchMigrationPending && (
+              <p className="mt-1 text-xs text-amber-800">
+                Run <code>migrations/016_brandsearch_competitor_ads.sql</code> to enable durable indexing. Imports still
+                remain available as Spy sweep snapshots.
+              </p>
+            )}
+          </div>
+          <Link href="/spy" className="btn btn-primary shrink-0">Import competitor ads →</Link>
+        </div>
       </section>
 
       {migrationPending && (

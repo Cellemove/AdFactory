@@ -25,6 +25,7 @@ const PRIMARY: NavLink[] = [
 ];
 
 const OTHER: NavLink[] = [
+  { href: "/scorer", label: "Script Scorer" },
   { href: "/research", label: "Research" },
   { href: "/winners", label: "Winners" },
   { href: "/runs", label: "History" },

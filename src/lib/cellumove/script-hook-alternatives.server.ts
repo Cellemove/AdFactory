@@ -6,12 +6,13 @@ import {
   parseGeneratedHookAlternatives,
   SCRIPT_HOOK_ALTERNATIVES_PROMPT_VERSION,
   SCRIPT_HOOK_ALTERNATIVES_SYSTEM_INSTRUCTION,
+  type HookCandidate,
 } from "./script-hook-alternatives";
 import type { ScriptDocument } from "./script-studio";
 
 export async function generateMoreHookAlternatives(input: {
   document: ScriptDocument;
-}): Promise<string[]> {
+}): Promise<HookCandidate[]> {
   let correction: string | null = null;
   let lastError: unknown = null;
 
@@ -38,7 +39,7 @@ export async function generateMoreHookAlternatives(input: {
       return parseGeneratedHookAlternatives(extractJsonObject<unknown>(response));
     } catch (error) {
       lastError = error;
-      correction = `The previous response was invalid: ${error instanceof Error ? error.message : String(error)}. Return only valid JSON matching {"hookAlternatives":["string","string","string"]} with between three and eight hooks.`;
+      correction = `The previous response was invalid: ${error instanceof Error ? error.message : String(error)}. Return only valid JSON matching {"hookAlternatives":[{"spokenText":"...","onScreenText":"...","visualDirection":"..."}]} with between three and eight hooks.`;
     }
   }
 

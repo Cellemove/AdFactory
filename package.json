@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/next-dev.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -20,10 +20,15 @@
     "test:product-overrides": "tsx --test src/lib/product-overrides.test.ts",
     "test:research-architecture": "tsx --test src/lib/cellumove/research-architecture.test.ts",
     "test:verified-verbatims": "tsx --test src/lib/cellumove/verified-verbatims.test.ts",
+    "test:script-scorer": "tsx --test src/lib/cellumove/script-scorer.test.ts src/lib/cellumove/gold-set-import.test.ts",
+    "test:brandsearch": "tsx --test src/lib/brandsearch.test.ts",
+    "scorer:import-gold": "tsx --env-file=.env scripts/import-scorer-gold-set.ts",
+    "scorer:embed-verbatims": "tsx --env-file=.env scripts/backfill-verbatim-embeddings.ts",
     "verbatims:rebuild-verified": "tsx --env-file=.env scripts/rebuild-verified-verbatims.ts",
     "baseline:e2e": "tsx --env-file=.env scripts/baseline-end-to-end.ts",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
-    "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts"
+    "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts",
+    "analyze:intel": "tsx --conditions=react-server --env-file=.env scripts/analyze-intel-drive.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
