@@ -489,6 +489,124 @@ export type ScriptEventRow = {
   createdAt: string;
 };
 
+export type CopyTaxonomyCodeRow = {
+  version: string;
+  code: string;
+  layer: string;
+  label: string;
+  description: string;
+  createdAt: string;
+};
+
+export type GoldAdRow = {
+  id: string;
+  externalId: string;
+  title: string;
+  angleSlug: string;
+  format: string;
+  marketCode: string | null;
+  durationSec: number | null;
+  scriptText: string;
+  baselineVersion: string;
+  taxonomyVersion: string;
+  createdAt: string;
+};
+
+export type GoldBeatRow = {
+  id: string;
+  goldAdId: string;
+  taxonomyVersion: string;
+  orderIndex: number;
+  layer: string;
+  code: string;
+  startSec: number | null;
+  endSec: number | null;
+  evidenceQuote: string;
+  otherExplanation: string | null;
+  createdAt: string;
+};
+
+export type BrandFactRow = {
+  id: string;
+  productId: string;
+  marketCode: string | null;
+  factType: string;
+  statement: string;
+  normalizedStatement: string;
+  sourceUrl: string | null;
+  status: string;
+  approvedByUserId: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ProductOfferRow = {
+  id: string;
+  productId: string;
+  marketCode: string | null;
+  offerType: string;
+  statement: string;
+  sourceUrl: string | null;
+  status: string;
+  validFrom: string | null;
+  validUntil: string | null;
+  approvedByUserId: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScriptScoreRunRow = {
+  id: string;
+  runKey: string;
+  projectId: string;
+  scriptVersion: number;
+  status: string;
+  marketCode: string;
+  inputHash: string;
+  engineVersion: string;
+  extractorPromptVersion: string;
+  taxonomyVersion: string;
+  baselineVersion: string;
+  model: string;
+  createdByUserId: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  errorCode: string | null;
+  errorSummary: string | null;
+  contextSnapshot: Json;
+  createdAt: string;
+};
+
+export type ScriptScoreModuleRow = {
+  runId: string;
+  module: string;
+  status: string;
+  score: number | null;
+  label: string;
+  summary: string;
+  metrics: Json;
+};
+
+export type ScriptScoreFindingRow = {
+  id: string;
+  runId: string;
+  module: string;
+  severity: string;
+  scriptModuleId: string | null;
+  lineIndex: number | null;
+  scriptQuote: string | null;
+  message: string;
+  recommendation: string | null;
+  evidenceType: string | null;
+  evidenceId: string | null;
+  evidenceQuote: string | null;
+  similarity: number | null;
+  metadata: Json;
+  createdAt: string;
+};
+
 // Verbatim = one captured piece of real customer voice (Module 1). Classified
 // by taxonomy category + weighted by source rank × engagement.
 export type VerbatimRow = {
@@ -503,6 +621,9 @@ export type VerbatimRow = {
   sourceWeight: number;
   market: string | null;
   researchId: string | null;
+  embedding?: string | null;
+  embeddingModel?: string | null;
+  embeddingVersion?: string;
   createdAt: string;
 };
 
@@ -557,12 +678,24 @@ export type Database = {
       ScriptAssignment: { Row: ScriptAssignmentRow; Insert: Partial<ScriptAssignmentRow> & { id: string; projectId: string; status: string }; Update: Partial<ScriptAssignmentRow>; Relationships: [] };
       ScriptSource: { Row: ScriptSourceRow; Insert: Partial<ScriptSourceRow> & { id: string; projectId: string; sourceType: string; title: string }; Update: Partial<ScriptSourceRow>; Relationships: [] };
       ScriptEvent: { Row: ScriptEventRow; Insert: Partial<ScriptEventRow> & { id: string; projectId: string; eventType: string }; Update: Partial<ScriptEventRow>; Relationships: [] };
+      CopyTaxonomyCode: { Row: CopyTaxonomyCodeRow; Insert: Partial<CopyTaxonomyCodeRow> & { version: string; code: string; layer: string; label: string; description: string }; Update: Partial<CopyTaxonomyCodeRow>; Relationships: [] };
+      GoldAd: { Row: GoldAdRow; Insert: Partial<GoldAdRow> & { id: string; externalId: string; title: string; angleSlug: string; format: string; scriptText: string; baselineVersion: string; taxonomyVersion: string }; Update: Partial<GoldAdRow>; Relationships: [] };
+      GoldBeat: { Row: GoldBeatRow; Insert: Partial<GoldBeatRow> & { id: string; goldAdId: string; taxonomyVersion: string; orderIndex: number; layer: string; code: string; evidenceQuote: string }; Update: Partial<GoldBeatRow>; Relationships: [] };
+      BrandFact: { Row: BrandFactRow; Insert: Partial<BrandFactRow> & { id: string; productId: string; factType: string; statement: string; normalizedStatement: string }; Update: Partial<BrandFactRow>; Relationships: [] };
+      ProductOffer: { Row: ProductOfferRow; Insert: Partial<ProductOfferRow> & { id: string; productId: string; offerType: string; statement: string }; Update: Partial<ProductOfferRow>; Relationships: [] };
+      ScriptScoreRun: { Row: ScriptScoreRunRow; Insert: Partial<ScriptScoreRunRow> & { id: string; runKey: string; projectId: string; scriptVersion: number; marketCode: string; inputHash: string; engineVersion: string; extractorPromptVersion: string; taxonomyVersion: string; baselineVersion: string; model: string; createdByUserId: string; contextSnapshot: Json }; Update: Partial<ScriptScoreRunRow>; Relationships: [] };
+      ScriptScoreModule: { Row: ScriptScoreModuleRow; Insert: Partial<ScriptScoreModuleRow> & { runId: string; module: string; status: string; label: string; summary: string; metrics: Json }; Update: Partial<ScriptScoreModuleRow>; Relationships: [] };
+      ScriptScoreFinding: { Row: ScriptScoreFindingRow; Insert: Partial<ScriptScoreFindingRow> & { id: string; runId: string; module: string; severity: string; message: string; metadata: Json }; Update: Partial<ScriptScoreFindingRow>; Relationships: [] };
     };
     Views: Record<string, never>;
     Functions: {
       match_research_evidence: {
         Args: { query_embedding: string; match_count?: number; filter_angle_slug?: string | null; filter_category?: string | null };
         Returns: Array<Pick<ResearchEvidenceRow, "id" | "researchId" | "draftKey" | "category" | "text" | "sourceUrl" | "verificationStatus"> & { similarity: number }>;
+      };
+      match_verbatims: {
+        Args: { query_embedding: string; match_count?: number; filter_sub_avatar_id?: string | null; filter_angle_slug?: string | null; filter_market?: string | null };
+        Returns: Array<Pick<VerbatimRow, "id" | "text" | "sourceUrl"> & { similarity: number }>;
       };
     };
     Enums: Record<string, never>;
