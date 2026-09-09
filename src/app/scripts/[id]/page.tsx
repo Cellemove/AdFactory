@@ -44,7 +44,7 @@ export default async function ScriptDetailPage({ params }: { params: Promise<{ i
             <div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-semibold tracking-tight">{project.title}</h1><span className={statusMeta.className}>{statusMeta.label}</span></div>
             <p className="mt-1 break-all font-mono text-xs text-ink-500">{project.displayName}</p>
           </div>
-          <div className="space-y-2 text-right text-xs text-ink-500"><div>Owner: @{strategist?.username ?? "unknown"}</div>{editor ? <div>Video editor: @{editor.username}</div> : <div className="space-y-1"><div>Video editor: Unassigned</div><AssignEditorControl projectId={project.id} editors={editors} /></div>}<div>Version {project.currentVersion} · revision {project.revision}</div></div>
+          <div className="space-y-2 text-right text-xs text-ink-500"><div>Owner: @{strategist?.username ?? "unknown"}</div>{editor ? <div>Video editor: @{editor.username}</div> : <div className="space-y-1"><div>Video editor: Unassigned</div><AssignEditorControl projectId={project.id} editors={editors} /></div>}<div>Version {project.currentVersion} · revision {project.revision}</div><Link href={`/scorer?project=${encodeURIComponent(project.id)}&version=${project.currentVersion}`} className="btn">Score this version</Link></div>
         </div>
       </header>
 

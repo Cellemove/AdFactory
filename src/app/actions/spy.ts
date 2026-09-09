@@ -40,6 +40,15 @@ export interface SpyAd {
   // with the brand's Meta Ads Library page / a platform search — a link that is
   // correct by construction instead of a fabricated post id.
   linkFallback?: boolean;
+  // Provider-backed evidence (BrandSearch imports; absent on legacy/Gemini rows).
+  provider?: string;
+  providerId?: string;
+  providerUrl?: string;
+  winnerEvidence?: "observed" | "probable_winner" | "verified_winner";
+  evidenceReasons?: string[];
+  evidenceMetrics?: Record<string, string | number | boolean | null>;
+  transcriptUrl?: string;
+  mediaExpiresAt?: string;
 }
 
 export interface SpySweep {
