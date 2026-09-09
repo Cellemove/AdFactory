@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
+    "dev": "node scripts/next-dev.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -21,6 +21,7 @@
     "test:research-architecture": "tsx --test src/lib/cellumove/research-architecture.test.ts",
     "test:verified-verbatims": "tsx --test src/lib/cellumove/verified-verbatims.test.ts",
     "test:script-scorer": "tsx --test src/lib/cellumove/script-scorer.test.ts src/lib/cellumove/gold-set-import.test.ts",
+    "test:brandsearch": "tsx --test src/lib/brandsearch.test.ts",
     "scorer:import-gold": "tsx --env-file=.env scripts/import-scorer-gold-set.ts",
     "scorer:embed-verbatims": "tsx --env-file=.env scripts/backfill-verbatim-embeddings.ts",
     "verbatims:rebuild-verified": "tsx --env-file=.env scripts/rebuild-verified-verbatims.ts",

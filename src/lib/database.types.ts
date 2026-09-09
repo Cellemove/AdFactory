@@ -489,6 +489,40 @@ export type ScriptEventRow = {
   createdAt: string;
 };
 
+// CompetitorAd = normalized, provider-backed competitor creative (Migration
+// 016). `winnerEvidence` deliberately separates observable/scaling proxies from
+// a genuinely performance-verified winner.
+export type CompetitorAdRow = {
+  id: string;
+  provider: string;
+  externalId: string;
+  platform: string;
+  brandId: string | null;
+  brandName: string;
+  sourceUrl: string | null;
+  dashboardUrl: string | null;
+  mediaType: string;
+  imageUrl: string | null;
+  videoUrl: string | null;
+  copy: string;
+  status: string | null;
+  startedAt: string | null;
+  endedAt: string | null;
+  durationSec: number | null;
+  transcriptUrl: string | null;
+  winnerEvidence: string;
+  evidenceReasons: Json;
+  metrics: Json;
+  reviewStatus: string;
+  rawPayload: Json;
+  mediaExpiresAt: string | null;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  fetchedAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CopyTaxonomyCodeRow = {
   version: string;
   code: string;
@@ -672,6 +706,7 @@ export type Database = {
       AppUser: { Row: AppUserRow; Insert: Partial<AppUserRow> & { id: string; username: string; passwordHash: string }; Update: Partial<AppUserRow>; Relationships: [] };
       BrollClip: { Row: BrollClipRow; Insert: Partial<BrollClipRow> & { id: string; driveId: string; name: string; mimeType: string }; Update: Partial<BrollClipRow>; Relationships: [] };
       BankedAd: { Row: BankedAdRow; Insert: Partial<BankedAdRow> & { id: string; sourceUrl: string }; Update: Partial<BankedAdRow>; Relationships: [] };
+      CompetitorAd: { Row: CompetitorAdRow; Insert: Partial<CompetitorAdRow> & { id: string; provider: string; externalId: string; platform: string }; Update: Partial<CompetitorAdRow>; Relationships: [] };
       BrollSuggestion: { Row: BrollSuggestionRow; Insert: Partial<BrollSuggestionRow> & { id: string; clipId: string; clipName: string; source: string }; Update: Partial<BrollSuggestionRow>; Relationships: [] };
       ScriptProject: { Row: ScriptProjectRow; Insert: Partial<ScriptProjectRow> & { id: string; title: string; strategistUserId: string; createdByUserId: string; productId: string; angleId: string; idea: string; adNumber: string; creativeName: string; format: string; document: Json; displayName: string }; Update: Partial<ScriptProjectRow>; Relationships: [] };
       ScriptVersion: { Row: ScriptVersionRow; Insert: Partial<ScriptVersionRow> & { id: string; projectId: string; version: number; document: Json; origin: string; changeSummary: string; createdByUserId: string }; Update: Partial<ScriptVersionRow>; Relationships: [] };
