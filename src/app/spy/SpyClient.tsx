@@ -1,58 +1,15 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { spyOnCompetitors, updateSpyAds, type SpyAd } from "../actions/spy";
+import { updateSpyAds, type SpyAd } from "../actions/spy";
 import { saveToBank } from "../actions/bank";
-import { importBrandSearchMetaAds, verifyBrandSearch } from "../actions/brandsearch";
-import { youtubeThumb } from "@/lib/video-thumb";
-import { DEFAULT_SPY_NICHE_SLUG, type SpyNiche } from "@/lib/cellumove/spy-niches";
+import { importBrandSearchMetaAds } from "../actions/brandsearch";
+import { isFeedStale, matchCompetitor, type SpectreCompetitor } from "@/lib/brandsearch";
 
-interface HistoryItem {
-  id: string;
-  focus: string | null;
-  drafts: string; // JSON-stringified SpyAd[]
-  createdAt: string;
-  count: number;
-  niche: SpyNiche;
-  source: string;
-}
-
-interface LatestSweep {
+interface CachedFeed {
   id: string;
   ads: SpyAd[];
-  focus: string | null;
   createdAt: string;
-  niche: SpyNiche;
-  source: string;
-}
-
-// Live elapsed timer — same pattern as the Research page.
-function useElapsedMs(active: boolean): number {
-  const [ms, setMs] = useState(0);
-  const startRef = useRef<number | null>(null);
-  useEffect(() => {
-    if (!active) {
-      setMs(0);
-      startRef.current = null;
-      return;
-    }
-    startRef.current = Date.now();
-    setMs(0);
-    const id = setInterval(() => {
-      if (startRef.current != null) setMs(Date.now() - startRef.current);
-    }, 100);
-    return () => clearInterval(id);
-  }, [active]);
-  return ms;
-}
-
-function formatElapsed(ms: number): string {
-  if (ms < 10_000) return `${(ms / 1000).toFixed(1)}s`;
-  const totalSec = Math.floor(ms / 1000);
-  if (totalSec < 60) return `${totalSec}s`;
-  const m = Math.floor(totalSec / 60);
-  const s = totalSec % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 function hostOf(url: string): string {
@@ -63,46 +20,38 @@ function hostOf(url: string): string {
   }
 }
 
-// The best image we can show for a creative: scraped image first, else a derived
-// YouTube thumbnail.
-function thumbFor(ad: SpyAd): string | null {
-  return ad.imageUrl || youtubeThumb(ad.sourceUrl || "");
-}
-
 export function SpyClient({
-  latest,
-  history,
+  cached,
   bankedUrls = [],
-  niches,
   brandSearchConfigured,
+  canRefresh,
+  competitors,
 }: {
-  latest: LatestSweep | null;
-  history: HistoryItem[];
+  /** Newest cached BrandSearch Spectre feed, or null if none has been fetched yet. */
+  cached: CachedFeed | null;
   /** Source URLs already in the idea bank, so saved tiles render as saved. */
   bankedUrls?: string[];
-  niches: SpyNiche[];
   brandSearchConfigured: boolean;
+  /** Viewer may spend BrandSearch credits (creative strategists only). */
+  canRefresh: boolean;
+  /** BrandSearch Spectre competitors; null when the list couldn't be loaded. */
+  competitors: SpectreCompetitor[] | null;
 }) {
-  const [ads, setAds] = useState<SpyAd[] | null>(latest?.ads ?? null);
-  const [sweepId, setSweepId] = useState<string | null>(latest?.id ?? null);
-  const [meta, setMeta] = useState<{ focus: string | null; createdAt: string; source: string } | null>(
-    latest ? { focus: latest.focus, createdAt: latest.createdAt, source: latest.source } : null,
-  );
-  const [focus, setFocus] = useState("");
-  const [hunt, setHunt] = useState(false);
-  const [nicheSlug, setNicheSlug] = useState(latest?.niche.slug ?? DEFAULT_SPY_NICHE_SLUG);
-  const [hideUnverified, setHideUnverified] = useState(true);
+  const [ads, setAds] = useState<SpyAd[] | null>(cached?.ads ?? null);
+  const [sweepId, setSweepId] = useState<string | null>(cached?.id ?? null);
+  const [fetchedAt, setFetchedAt] = useState<string | null>(cached?.createdAt ?? null);
   const [error, setError] = useState<string | null>(null);
-  const [runningSource, setRunningSource] = useState<"web" | "brandsearch" | null>(null);
-  const isRunning = runningSource !== null;
+  const [status, setStatus] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
   const [, startTransition] = useTransition();
-  const elapsed = useElapsedMs(isRunning);
   const autoRan = useRef(false);
+  // Read the clock after mount so server and client render the same markup.
+  const [now, setNow] = useState<number | null>(null);
+  useEffect(() => setNow(Date.now()), [fetchedAt]);
   // Which creatives are already banked, keyed by the same value the action uses
   // as its dedupe key (sourceUrl, falling back to imageUrl).
   const [banked, setBanked] = useState<Set<string>>(() => new Set(bankedUrls));
   const [saving, setSaving] = useState<string | null>(null);
-  const [brandSearchState, setBrandSearchState] = useState<string | null>(null);
 
   const bankKey = (ad: SpyAd) => (ad.sourceUrl || ad.imageUrl || "").trim();
 
@@ -124,63 +73,47 @@ export function SpyClient({
     });
   };
 
-  const run = (focusOverride?: string | null) => {
-    const f = focusOverride !== undefined ? focusOverride : focus || null;
-    const huntNow = focusOverride === undefined && hunt && Boolean(f);
+  // Re-fetch the feed from BrandSearch and cache it (costs ~1 credit per ad).
+  // `auto` = triggered by a missing/expired cache; the server re-checks the
+  // cache first in case another viewer already refreshed it.
+  const refresh = (auto = false) => {
     setError(null);
-    setRunningSource("web");
+    setStatus(null);
+    setRefreshing(true);
     startTransition(async () => {
       try {
-        const result = await spyOnCompetitors({ focus: f, nicheSlug, hunt: huntNow });
+        const result = await importBrandSearchMetaAds({ ifStale: auto });
         setAds(result.ads);
         setSweepId(result.id);
-        setMeta({ focus: f, createdAt: new Date().toISOString(), source: "web_scout" });
-        setNicheSlug(result.niche.slug);
+        setFetchedAt(result.createdAt);
+        if (!result.reused) {
+          const credits = result.creditsUsed === null ? null : `${result.creditsUsed.toLocaleString()} credits used`;
+          const quota = result.dailyRemaining === null ? null : `${result.dailyRemaining.toLocaleString()} daily credits left`;
+          const lead = auto && cached
+            ? `Image links had expired, so the feed was refreshed · ${result.ads.length} ads`
+            : `${result.ads.length} ads fetched`;
+          setStatus([lead, credits, quota].filter(Boolean).join(" · "));
+        }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       } finally {
-        setRunningSource(null);
+        setRefreshing(false);
       }
     });
   };
 
-  const importBrandSearch = () => {
-    const f = focus.trim() || null;
-    setError(null);
-    setRunningSource("brandsearch");
-    setBrandSearchState("Connecting to BrandSearch…");
-    startTransition(async () => {
-      try {
-        await verifyBrandSearch();
-        setBrandSearchState(`Connected · importing scaling Meta ads…`);
-        const result = await importBrandSearchMetaAds({ nicheSlug, focus: f, limit: 24 });
-        setAds(result.ads);
-        setSweepId(result.id);
-        setMeta({ focus: f, createdAt: new Date().toISOString(), source: "brandsearch" });
-        setNicheSlug(result.niche.slug);
-        const quota = result.dailyRemaining === null ? "quota unavailable" : `${result.dailyRemaining.toLocaleString()} daily credits left`;
-        const index = result.durableIndexUpdated ? "durable index updated" : "run migration 016 for durable indexing";
-        setBrandSearchState(`${result.ads.length} probable winners imported · ${quota} · ${index}`);
-      } catch (e) {
-        setBrandSearchState(null);
-        setError(e instanceof Error ? e.message : String(e));
-      } finally {
-        setRunningSource(null);
-      }
-    });
-  };
-
-  // "Whenever we access the spy page, show me an array" — if there's no cached
-  // sweep to show, kick one off automatically on first mount.
+  // No cache yet, or its BrandSearch media links have expired → fetch once
+  // automatically. Otherwise the cache is served until someone hits Refresh.
   useEffect(() => {
-    if (!autoRan.current && !latest && !isRunning) {
+    if (autoRan.current || !canRefresh || !brandSearchConfigured) return;
+    if (!cached || isFeedStale(cached.createdAt)) {
       autoRan.current = true;
-      run(null);
+      refresh(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Remove a creative from the current view and persist the curated list.
+  // Remove a creative from the feed and persist the curated list.
   const removeAd = (index: number) => {
     if (!ads) return;
     const next = ads.filter((_, i) => i !== index);
@@ -197,27 +130,15 @@ export function SpyClient({
     }
   };
 
-  const openHistory = (h: HistoryItem) => {
-    try {
-      const parsed = JSON.parse(h.drafts) as SpyAd[];
-      if (Array.isArray(parsed)) {
-        setAds(parsed);
-        setSweepId(h.id);
-        setMeta({ focus: h.focus, createdAt: h.createdAt, source: h.source });
-        setNicheSlug(h.niche.slug);
-        setError(null);
-        window.scrollTo({ top: 0, behavior: "smooth" });
-      }
-    } catch {
-      setError("Couldn't parse that saved sweep.");
-    }
-  };
-
-  // Keep original indices so removal/curation stays correct when filtering.
+  // Keep original indices so removal and "Use this idea" links stay correct.
+  // Brands dropped from Spectre since the cache was fetched are hidden.
   const visibleAds = (ads ?? [])
     .map((ad, index) => ({ ad, index }))
-    .filter(({ ad }) => !hideUnverified || ad.verified !== false);
-  const unverifiedCount = (ads ?? []).filter((a) => a.verified === false).length;
+    .filter(({ ad }) => !competitors || matchCompetitor(ad, competitors) !== null);
+  const untrackedCount = (ads?.length ?? 0) - visibleAds.length;
+  const brandCount = new Set(visibleAds.map(({ ad }) => ad.brandDomain || ad.brand)).size;
+  // BrandSearch media links expire 3 days after the fetch.
+  const mediaExpired = now !== null && fetchedAt !== null && isFeedStale(fetchedAt, now);
 
   return (
     <div className="space-y-6">
@@ -225,115 +146,63 @@ export function SpyClient({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Spy</h1>
           <p className="text-sm text-ink-500">
-            A live, niche-specific feed of competitor ads and social creatives. Choose a niche before each sweep.
+            The active Meta ads of the competitors you track in BrandSearch Spectre, top spenders first.
           </p>
         </div>
-        {meta && (
-          <span className="text-xs text-ink-400">
-            {ads?.length ?? 0} creatives · {new Date(meta.createdAt).toLocaleString()}
-            {` · ${meta.source === "brandsearch" ? "BrandSearch evidence" : "web scout"}`}
-            {meta.focus ? ` · focus: “${meta.focus}”` : ""}
-          </span>
-        )}
-      </header>
-
-      <section className="card">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <select
-            className="input sm:w-72"
-            value={nicheSlug}
-            onChange={(event) => setNicheSlug(event.target.value)}
-            disabled={isRunning}
-            aria-label="Competitor niche"
-          >
-            {niches.map((niche) => (
-              <option key={niche.slug} value={niche.slug}>{niche.name}</option>
-            ))}
-          </select>
-          <input
-            className="input flex-1"
-            placeholder={hunt
-              ? "Target — e.g. 'Ionix Labs' or 'the split-screen doctor ad about loose skin'"
-              : "Focus (optional) — e.g. 'butt-lift angle' or 'TikTok Shop brands'"}
-            value={focus}
-            onChange={(e) => setFocus(e.target.value)}
-            disabled={isRunning}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !isRunning && !(hunt && !focus.trim())) run();
-            }}
-          />
-          <button
-            className="btn btn-primary sm:w-56"
-            onClick={() => run()}
-            disabled={isRunning || (hunt && !focus.trim())}
-          >
-            {runningSource === "web"
-              ? `Scouting… ${formatElapsed(elapsed)} / ~40-90s`
-              : hunt ? "Hunt these ads" : "Refresh trending ads"}
-          </button>
-        </div>
-        <label className="mt-2 flex items-center gap-1.5 text-xs text-ink-500">
-          <input type="checkbox" checked={hunt} onChange={(e) => setHunt(e.target.checked)} disabled={isRunning} />
-          Hunt specific ads — find exactly what the target names (a brand or one ad), repeats allowed
-        </label>
-        {error && <div className="mt-2 text-xs text-red-700">{error}</div>}
-        {runningSource === "web" && (
-          <p className="mt-2 text-xs text-ink-500">
-            Searching Meta Ads Library, TikTok, Instagram and YouTube ads, then pulling each
-            creative&apos;s preview image. Give it a moment — this is a real web sweep.
-          </p>
-        )}
-      </section>
-
-      <section className="card border-sky-200 bg-sky-50/40">
-        <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold">BrandSearch competitor evidence</h2>
-              <span className="tag">Meta · probable winners</span>
-            </div>
-            <p className="mt-1 max-w-3xl text-xs text-ink-600">
-              Imports BrandSearch&apos;s scaling cohort: top reach-rank or €500+ observed EU spend. These are strong
-              performance proxies, not verified ROAS winners. The focus above is optional and narrows ad copy.
-            </p>
-          </div>
+        <div className="flex items-center gap-3">
+          {fetchedAt && (
+            <span className="text-xs text-ink-400">Last refreshed {new Date(fetchedAt).toLocaleString()}</span>
+          )}
           <button
             type="button"
-            className="btn btn-primary shrink-0 sm:w-56"
-            onClick={importBrandSearch}
-            disabled={isRunning || !brandSearchConfigured}
+            className="btn btn-primary"
+            onClick={() => refresh()}
+            disabled={refreshing || !brandSearchConfigured || !canRefresh}
+            title={canRefresh
+              ? "Re-fetch from BrandSearch (about 1 credit per ad)"
+              : "Only creative strategists can refresh the feed"}
           >
-            {runningSource === "brandsearch" ? "Importing…" : "Import scaling Meta ads"}
+            {refreshing ? "Refreshing…" : "Refresh"}
           </button>
         </div>
-        {!brandSearchConfigured && (
-          <p className="mt-2 text-xs text-red-700">BRANDSEARCH_API_KEY is not configured on the server.</p>
-        )}
-        {brandSearchState && <p className="mt-2 text-xs text-sky-800">{brandSearchState}</p>}
-      </section>
+      </header>
 
-      {/* Verification controls */}
-      {ads && ads.length > 0 && (
-        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-500">
-          <span>
-            {visibleAds.length} shown
-            {unverifiedCount > 0 ? ` · ${unverifiedCount} unverified (dead/blocked link)` : " · all links verified live"}
-          </span>
-          {unverifiedCount > 0 && (
-            <label className="flex items-center gap-1.5">
-              <input
-                type="checkbox"
-                checked={hideUnverified}
-                onChange={(e) => setHideUnverified(e.target.checked)}
-              />
-              Hide unverified
-            </label>
-          )}
+      {!brandSearchConfigured && (
+        <p className="text-xs text-red-700">BRANDSEARCH_API_KEY is not configured on the server.</p>
+      )}
+      {brandSearchConfigured && !competitors && (
+        <p className="text-xs text-red-700">
+          Couldn&apos;t load your Spectre competitor list — the cached feed is shown unfiltered.
+        </p>
+      )}
+      {error && <p className="text-xs text-red-700">{error}</p>}
+      {status && <p className="text-xs text-sky-800">{status}</p>}
+      {mediaExpired && !refreshing && (
+        <p className="text-xs text-amber-800">
+          BrandSearch image links expire 3 days after a fetch, so some previews may not load.
+          {canRefresh
+            ? " Hit Refresh to reload them."
+            : " They reload automatically the next time a creative strategist opens this page."}
+        </p>
+      )}
+
+      {competitors && (
+        <p className="text-xs text-ink-500">
+          Tracking {competitors.length} competitors: {competitors.map((c) => c.domain).join(", ")}. Add or remove
+          them in BrandSearch → Swipe Files → Spectre.
+        </p>
+      )}
+
+      {visibleAds.length > 0 && !refreshing && (
+        <div className="text-xs text-ink-500">
+          {visibleAds.length} ads from {brandCount} competitors
+          {untrackedCount > 0 ? ` · ${untrackedCount} from brands no longer tracked hidden` : ""}
         </div>
       )}
 
-      {/* The gallery */}
-      {ads && ads.length > 0 ? (
+      {refreshing ? (
+        <GallerySkeleton />
+      ) : visibleAds.length > 0 ? (
         <AdGallery
           items={visibleAds}
           sweepId={sweepId}
@@ -343,47 +212,16 @@ export function SpyClient({
           savingKey={saving}
           bankKey={bankKey}
         />
-      ) : !isRunning ? (
-        <section className="card text-sm text-ink-500">
-          No creatives yet. Hit <span className="font-medium text-ink-700">Refresh trending ads</span> to
-          pull the latest competitor feed.
-        </section>
       ) : (
-        <GallerySkeleton />
-      )}
-
-      {history.length > 0 && (
-        <section className="card">
-          <h2 className="text-sm font-semibold">Past sweeps</h2>
-          <p className="mt-0.5 text-xs text-ink-500">The last {history.length} competitor scouts.</p>
-          <div className="divider" />
-          <ul className="space-y-2">
-            {history.map((h) => (
-              <li key={h.id}>
-                <button
-                  onClick={() => openHistory(h)}
-                  className="flex w-full flex-wrap items-center justify-between gap-2 rounded-md border border-ink-200 bg-white p-3 text-left transition hover:border-ink-900 hover:bg-ink-50"
-                >
-                  <div className="min-w-0">
-                    <div className="text-sm font-medium">
-                      <span className="tag">Spy</span>
-                      {h.source === "brandsearch" && <span className="ml-2 tag">BrandSearch</span>}
-                      <span className="ml-2">{h.niche.name}</span>
-                      {h.focus ? (
-                        <span className="ml-2">focus: “{h.focus}”</span>
-                      ) : (
-                        <span className="ml-2 text-ink-500">open sweep</span>
-                      )}
-                    </div>
-                    <div className="text-xs text-ink-500">
-                      {h.count} creatives · {new Date(h.createdAt).toLocaleString()}
-                    </div>
-                  </div>
-                  <span className="text-xs text-ink-500">view →</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+        <section className="card text-sm text-ink-500">
+          {canRefresh ? (
+            <>
+              No competitor ads cached yet. Hit <span className="font-medium text-ink-700">Refresh</span> to fetch
+              them from BrandSearch.
+            </>
+          ) : (
+            "No competitor ads cached yet — a creative strategist needs to open this page to fetch them."
+          )}
         </section>
       )}
     </div>
@@ -425,29 +263,6 @@ function AdGallery({
   );
 }
 
-function VerificationBadge({ ad }: { ad: SpyAd }) {
-  if (ad.verified === undefined) return null; // legacy sweep, not checked
-  const [cls, label, title] = ad.linkFallback
-    ? [
-        "bg-sky-600/90 text-white",
-        "→ live ads",
-        "The exact post link couldn't be verified, so this opens the brand's live ads (Ads Library / platform search) instead.",
-      ]
-    : ad.verified === false
-      ? ["bg-red-600/90 text-white", "unverified", "This link did not load — likely a dead or fabricated URL."]
-      : ad.contentMatch
-        ? ["bg-emerald-600/90 text-white", "✓ verified", "Link is live and the brand/caption was found on the page."]
-        : ["bg-amber-500/90 text-white", "live · unmatched", "Link loads, but the claimed brand/caption wasn't found on the page."];
-  return (
-    <span
-      className={`absolute bottom-2 left-2 rounded-full px-2 py-0.5 text-[10px] font-medium ${cls}`}
-      title={title}
-    >
-      {label}
-    </span>
-  );
-}
-
 function EvidenceBadge({ ad }: { ad: SpyAd }) {
   if (!ad.winnerEvidence) return null;
   const label = ad.winnerEvidence === "verified_winner"
@@ -486,12 +301,12 @@ function AdTile({
 }) {
   const [broken, setBroken] = useState(false);
   const href = ad.sourceUrl || ad.imageUrl;
-  const img = thumbFor(ad);
+  const img = ad.imageUrl;
 
   return (
     <div className="group relative mb-3 block break-inside-avoid overflow-hidden rounded-lg border border-ink-200 bg-white transition hover:border-ink-900 hover:shadow-md">
       {/* Keep + remove. A banked tile keeps its badge visible so you can see at a
-          glance what you've already taken from this sweep. */}
+          glance what you've already taken from this feed. */}
       <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
         <button
           type="button"
@@ -540,18 +355,11 @@ function AdTile({
               loading="lazy"
               referrerPolicy="no-referrer"
               onError={() => setBroken(true)}
-              onLoad={(e) => {
-                // YouTube serves a 120×90 gray "video not found" placeholder (HTTP
-                // 200) for dead ids — treat that tiny image as broken.
-                if (e.currentTarget.naturalWidth > 0 && e.currentTarget.naturalWidth <= 120) {
-                  setBroken(true);
-                }
-              }}
               className="w-full bg-ink-100 object-cover"
             />
           )}
-          {ad.mediaType === "video" && !ad.winnerEvidence && (
-            <span className="absolute bottom-2 right-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white">
+          {ad.mediaType === "video" && (
+            <span className="absolute bottom-2 left-2 rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-medium text-white">
               ▶ video
             </span>
           )}
@@ -560,7 +368,6 @@ function AdTile({
               {ad.platform}
             </span>
           )}
-          <VerificationBadge ad={ad} />
           <EvidenceBadge ad={ad} />
         </div>
         <div className="p-2.5">
