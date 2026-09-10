@@ -21,7 +21,7 @@
     "test:research-architecture": "tsx --test src/lib/cellumove/research-architecture.test.ts",
     "test:verified-verbatims": "tsx --test src/lib/cellumove/verified-verbatims.test.ts",
     "test:script-scorer": "tsx --test src/lib/cellumove/script-scorer.test.ts src/lib/cellumove/gold-set-import.test.ts",
-    "test:scorer-evidence": "tsx --test src/lib/cellumove/scorer-evidence.test.ts src/lib/cellumove/evidence-library.test.ts",
+    "test:scorer-evidence": "tsx --test src/lib/cellumove/scorer-evidence.test.ts src/lib/cellumove/evidence-library.test.ts src/lib/cellumove/milanote-script-extraction.test.ts",
     "test:brandsearch": "tsx --test src/lib/brandsearch.test.ts",
     "scorer:import-gold": "tsx --env-file=.env scripts/import-scorer-gold-set.ts",
     "scorer:import-evidence": "tsx --conditions=react-server --env-file=.env scripts/import-google-sheet-evidence.ts",
@@ -40,8 +40,10 @@
     "@vercel/blob": "^2.4.0",
     "cuid": "^3.0.0",
     "next": "^15.5.18",
+    "pdf-lib": "^1.17.1",
     "react": "19.0.0",
     "react-dom": "19.0.0",
+    "server-only": "^0.0.1",
     "zod": "^3.23.8"
   },
   "devDependencies": {

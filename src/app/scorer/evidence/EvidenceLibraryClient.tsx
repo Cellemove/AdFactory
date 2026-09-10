@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Json, ScriptEvidenceRevisionRow, ScriptEvidenceRow } from "@/lib/database.types";
 import {
   GOOGLE_SHEET_TABS,
@@ -303,10 +303,46 @@ function EvidenceDrawer({ item, draft, revisions, angles, markets, saving, onCha
   onReset: (field: EditableEvidenceField) => void;
   onKeep: (field: EditableEvidenceField) => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extractionError, setExtractionError] = useState<string | null>(null);
+  const [extractionMessage, setExtractionMessage] = useState<string | null>(null);
   const overrides = getJsonStringArray(item.overrideFields);
   const conflicts = getJsonStringArray(item.conflictFields) as EditableEvidenceField[];
   const links = getSourceLinks(item.sourceLinks);
+  const milanoteLink = links.find((link) => link.type === "milanote");
   const latest = revisions[0];
+
+  const extractPdf = async (file: File) => {
+    setExtracting(true);
+    setExtractionError(null);
+    setExtractionMessage(null);
+    try {
+      const formData = new FormData();
+      formData.set("file", file);
+      formData.set("expectedUpdatedAt", item.updatedAt);
+      const response = await fetch(`/api/scorer/evidence/${item.id}/extract-milanote`, {
+        method: "POST",
+        body: formData,
+      });
+      const body = await response.json() as {
+        extraction?: { scriptText: string; sectionLabels: string[]; excludedLabels: string[] };
+        error?: string;
+      };
+      if (!response.ok || !body.extraction) throw new Error(body.error ?? "Could not extract the Milanote script.");
+      onChange({ scriptText: body.extraction.scriptText });
+      const excluded = body.extraction.excludedLabels.length
+        ? ` Excluded: ${body.extraction.excludedLabels.join(", ")}.`
+        : " System prompts and planning material were excluded.";
+      setExtractionMessage(`Extracted ${body.extraction.sectionLabels.length} final script section${body.extraction.sectionLabels.length === 1 ? "" : "s"}.${excluded} Review the text below, then Save.`);
+    } catch (error) {
+      setExtractionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setExtracting(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   return <div className="fixed inset-0 z-50 flex justify-end bg-ink-900/35" role="dialog" aria-modal="true" aria-label="Edit scorer evidence" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <aside className="h-full w-full max-w-3xl overflow-y-auto bg-white shadow-2xl">
       <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-ink-200 bg-white/95 p-5 backdrop-blur"><div><p className="text-xs font-semibold uppercase tracking-wide text-violet-600">Editable evidence</p><h2 className="mt-1 text-xl font-semibold">{item.externalId || item.title}</h2><p className="mt-1 text-xs text-ink-500">Raw source revisions stay locked.</p></div><button className="btn" onClick={onClose}>Close</button></div>
@@ -332,6 +368,16 @@ function EvidenceDrawer({ item, draft, revisions, angles, markets, saving, onCha
         <Editable label="Performance evidence" field="performanceEvidence" overridden={overrides.includes("performanceEvidence")} onReset={onReset}><textarea className="input min-h-24" value={draft.performanceEvidence ?? ""} onChange={(event) => onChange({ performanceEvidence: nullIfEmpty(event.target.value) })} placeholder="Required before marking verified winner: source, metric, time range." /></Editable>
 
         <section><div className="flex items-center justify-between"><div><h3 className="text-sm font-semibold">Performance metrics</h3><p className="mt-1 text-xs text-ink-500">Manual only. The shifted May columns are not mapped automatically.</p></div>{overrides.includes("metrics") && <button className="text-xs font-semibold text-violet-700" onClick={() => onReset("metrics")}>Reset</button>}</div><div className="mt-3 grid gap-3 sm:grid-cols-3">{(Object.keys(emptyMetrics) as Array<keyof Metrics>).map((key) => <label key={key}><span className="label">{key}</span><input className="input" type="number" step="any" value={draft.metrics[key] ?? ""} onChange={(event) => onChange({ metrics: { ...draft.metrics, [key]: event.target.value === "" ? null : Number(event.target.value) } })} /></label>)}</div></section>
+
+        {milanoteLink && <section className="rounded-xl border border-violet-200 bg-violet-50 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="max-w-xl"><h3 className="text-sm font-semibold text-violet-950">Import from Milanote</h3><p className="mt-1 text-xs leading-5 text-violet-800">Open the linked board, export it as PDF, then upload it here. Only final script cards are extracted; system prompts, instructions, research, deconstructions, and reference material are excluded.</p></div>
+            <div className="flex flex-wrap gap-2"><a className="btn text-xs" href={milanoteLink.url} target="_blank" rel="noreferrer">Open Milanote</a><button className="btn btn-primary text-xs" type="button" disabled={saving || extracting} onClick={() => fileInputRef.current?.click()}>{extracting ? "Extracting…" : "Upload Milanote PDF"}</button></div>
+          </div>
+          <input ref={fileInputRef} className="hidden" type="file" accept="application/pdf,.pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void extractPdf(file); }} />
+          {extractionError && <p className="mt-3 rounded-lg border border-red-200 bg-white p-3 text-xs text-red-800">⚠ {extractionError}</p>}
+          {extractionMessage && <p className="mt-3 rounded-lg border border-emerald-200 bg-white p-3 text-xs text-emerald-800">✓ {extractionMessage}</p>}
+        </section>}
 
         <Editable label="Exact script text" field="scriptText" overridden={overrides.includes("scriptText")} onReset={onReset}><textarea className="input min-h-[26rem] font-mono text-sm leading-6" value={draft.scriptText ?? ""} onChange={(event) => onChange({ scriptText: nullIfEmpty(event.target.value) })} placeholder="Paste the exact sourced script. Do not summarize or rewrite it." /></Editable>
         {!draft.scriptText?.trim() && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Source-only entries remain in the review queue but do not satisfy structural evidence requirements.</p>}
