@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type ChangeEvent, useCallback, useMemo, useState } from "react";
+import { type ChangeEvent, type ReactNode, useCallback, useMemo, useState } from "react";
 import type { ScriptGenerationProgressEvent } from "@/lib/cellumove/script-generation-progress";
 import { parseNdjsonChunk } from "@/lib/cellumove/ndjson";
 import { normalizeUnsignedIntegerInput } from "@/lib/numeric-input";
@@ -150,7 +150,19 @@ export function ScriptProjectForm(props: Props) {
   };
 
   const targetDuration = Number(form.targetDurationSec);
-  const ready = form.title.trim().length >= 2 && form.idea.trim().length >= 5 && form.adNumber && form.creativeName && form.productId && selectedProduct?.code && form.subAvatarId && form.strategistUserId && Number.isInteger(targetDuration) && targetDuration >= 5 && targetDuration <= 600 && (!batchMode || batchFrameworkIds.length >= 2);
+  // Named in form order, so a disabled Generate button can say what's missing.
+  const missing = [
+    !form.productId || !selectedProduct?.code ? "a coded product" : null,
+    !form.subAvatarId ? "an avatar" : null,
+    form.idea.trim().length < 5 ? "the core idea" : null,
+    batchMode && batchFrameworkIds.length < 2 ? "two or more frameworks" : null,
+    !(Number.isInteger(targetDuration) && targetDuration >= 5 && targetDuration <= 600) ? "a 5–600s duration" : null,
+    form.title.trim().length < 2 ? "project title" : null,
+    !form.creativeName ? "creative name" : null,
+    !form.adNumber ? "ad number" : null,
+    !form.strategistUserId ? "a creative strategist" : null,
+  ].filter((item): item is string => item !== null);
+  const ready = missing.length === 0;
   const handleTargetDurationChange = (event: ChangeEvent<HTMLInputElement>) => {
     const targetDurationSec = normalizeUnsignedIntegerInput(event.currentTarget.value);
     setForm((current) => ({ ...current, targetDurationSec }));
@@ -202,84 +214,125 @@ export function ScriptProjectForm(props: Props) {
       setStrategistPending(false);
     }
   };
+  // Inputs follow the order decisions are made: who the ad is for → what it
+  // says → how it's structured → project admin.
   return (
-    <div className="card space-y-5">
-      <div className="grid-fields">
-        {props.initialValues && <div className="sm:col-span-2 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">Prefilled from a verified Spy sweep. Review the product and avatar guesses before generating.</div>}
-        <div className="sm:col-span-2"><div className="flex items-end justify-between gap-2"><label className="label">Core idea / opening brief</label><button type="button" className="btn btn-ghost text-xs" disabled={strategistPending || form.idea.trim().length < 5 || !form.productId} onClick={runStrategist}>{strategistPending ? "Strategist thinking…" : "Run through Creative Strategist"}</button></div><textarea className="input min-h-28" value={form.idea} onChange={(event) => setForm({ ...form, idea: event.target.value })} placeholder="What is the ad saying, and why should this avatar care?" /></div>
-        <div><label className="label">Product</label><ProductCombobox products={props.products} value={form.productId} onChange={(productId) => setForm({ ...form, productId })} /></div>
-        <div>
-          <label className="label">Avatar</label>
-          <select className="input" disabled={avatarGroups.length === 0} value={form.subAvatarId} onChange={handleAvatarChange}>
-            {avatarGroups.length === 0
-              ? <option value="">No avatars researched yet</option>
-              : avatarGroups.map((group) => (
-                <optgroup key={group.angle.id} label={group.angle.name}>
-                  {group.items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-                </optgroup>
-              ))}
-          </select>
-          {selectedAngle && <p className="mt-1 text-xs text-ink-500">Angle: {selectedAngle.name}</p>}
-          <InlineAvatarCreator angles={props.angles} defaultAngleId={selectedAngle?.id} onCreated={handleAvatarCreated} />
-          {avatarGroups.length === 0 && (
-            <p className="mt-1 text-sm text-red-700">
-              No avatars have been researched yet. Research one on the <Link href="/research" className="underline">Research page</Link>, or create one now with the button above.
-            </p>
-          )}
-        </div>
-        <div><label className="label">Pipeline run <span className="font-normal text-ink-400">(optional)</span></label><select className="input" value={form.pipelineRunId} onChange={handlePipelineRunChange}><option value="">Use latest run for selected avatar</option>{pipelineRunsForAvatar.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">{pipelineRunsForAvatar.length === 0 ? "No completed pipeline runs for this avatar yet." : "Only runs for the selected avatar are listed."}</p></div>
-        <div>
-          <label className="label">Reference framework</label>
-          <select className="input" value={form.referenceFormatId} onChange={(event) => { const selected = frameworkOptions.find((item) => item.id === event.target.value); setForm({ ...form, referenceFormatId: event.target.value, targetDurationSec: selected?.duration == null ? form.targetDurationSec : String(selected.duration) }); }}>
-            <option value="">Standard Hook → CTA</option>
-            {seededFrameworks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-            {copiedFrameworks.length > 0 && (
-              <optgroup label="Copied from video">
-                {copiedFrameworks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </optgroup>
+    <div className="card space-y-8">
+      {props.initialValues && <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">Prefilled from a Spy competitor ad. Review the product and avatar guesses before generating.</div>}
+
+      <FormSection step={1} title="Who it's for" hint="The product and avatar decide which research, verbatims and winners the AI draws on.">
+        <div className="grid-fields">
+          <div><label className="label">Product</label><ProductCombobox products={props.products} value={form.productId} onChange={(productId) => setForm({ ...form, productId })} /></div>
+          <div>
+            <label className="label">Avatar</label>
+            <select className="input" disabled={avatarGroups.length === 0} value={form.subAvatarId} onChange={handleAvatarChange}>
+              {avatarGroups.length === 0
+                ? <option value="">No avatars researched yet</option>
+                : avatarGroups.map((group) => (
+                  <optgroup key={group.angle.id} label={group.angle.name}>
+                    {group.items.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </optgroup>
+                ))}
+            </select>
+            {selectedAngle && <p className="mt-1 text-xs text-ink-500">Angle: {selectedAngle.name}</p>}
+            <InlineAvatarCreator angles={props.angles} defaultAngleId={selectedAngle?.id} onCreated={handleAvatarCreated} />
+            {avatarGroups.length === 0 && (
+              <p className="mt-1 text-sm text-red-700">
+                No avatars have been researched yet. Research one on the <Link href="/research" className="underline">Research page</Link>, or create one now with the button above.
+              </p>
             )}
-          </select>
-          <InlineFrameworkExtractor onCreated={handleFrameworkCreated} />
-        </div>
-        <div><label className="label">Production format</label><select className="input" value={form.format} onChange={(event) => setForm({ ...form, format: event.target.value })}>{props.formats.map((item) => <option key={item}>{item}</option>)}</select></div>
-        <div><label className="label">Project title</label><input className="input" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="CelluMove viral V1" /></div>
-        <div><label className="label">Creative name</label><input className="input" value={form.creativeName} onChange={(event) => setForm({ ...form, creativeName: event.target.value })} placeholder="CELLUMOVE VIRAL" /></div>
-        <div><label className="label">Ad number</label><input className="input" value={form.adNumber} onChange={(event) => setForm({ ...form, adNumber: event.target.value })} placeholder="SU0800012" /></div>
-        <div><label className="label">Creative strategist</label><select className="input" value={form.strategistUserId} onChange={(event) => setForm({ ...form, strategistUserId: event.target.value })}>{props.strategists.map((item) => <option key={item.id} value={item.id}>@{item.name}</option>)}</select></div>
-        <div><label className="label">Video editor (optional)</label><select className="input" value={form.editorUserId} onChange={(event) => setForm({ ...form, editorUserId: event.target.value })}><option value="">Assign later</option>{props.editors.map((item) => <option key={item.id} value={item.id}>@{item.name}</option>)}</select></div>
-        <div><label className="label">Target duration (seconds)</label><input className="input" type="number" min={5} max={600} step={1} value={form.targetDurationSec} onChange={handleTargetDurationChange} /></div>
-        <div><label className="label">Teardown2 source</label><select className="input" disabled={!props.teardownConfigured || props.teardowns.length === 0} value={form.teardownRecordId} onChange={(event) => setForm({ ...form, teardownRecordId: event.target.value })}><option value="">No teardown source</option>{props.teardowns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">{!props.teardownConfigured ? "Set TEARDOWN_API_BASE_URL to enable imports." : props.teardownWarning ? `Unavailable: ${props.teardownWarning}` : `${props.teardowns.length} completed records available.`}</p></div>
-      </div>
-      {strategistResult && (
-        <section className="rounded-xl border border-violet-200 bg-violet-50 p-4">
-          <h2 className="font-semibold text-violet-950">Creative Strategist directions</h2>
-          <p className="mt-1 text-xs text-violet-800">This analysis is saved independently. Choosing a direction updates the form but does not create a project.</p>
-          <div className="mt-3 grid gap-2 md:grid-cols-2">
-            {strategistResult.angleCandidates.map((candidate) => {
-              const hasAvatar = avatarOptions.some((item) => item.angleId === candidate.angleId);
-              return (
-                <button key={candidate.angleId} type="button" className="rounded-lg border border-violet-200 bg-white p-3 text-left text-sm hover:border-violet-600 disabled:opacity-60 disabled:hover:border-violet-200" disabled={!hasAvatar} onClick={() => selectAngle(candidate.angleId)}>
-                  <strong>{candidate.angle}</strong>
-                  <span className="mt-1 block text-xs text-ink-500">{candidate.rationale}</span>
-                  {!hasAvatar && <span className="mt-1 block text-xs text-amber-700">No avatar researched for this angle yet.</span>}
-                </button>
-              );
-            })}
           </div>
-          <div className="mt-3 flex flex-wrap gap-2">{strategistResult.hookDirections.map((item) => <button key={item.hook} type="button" className="tag max-w-full text-left" title={item.direction} onClick={() => setForm((current) => ({ ...current, idea: item.hook }))}>{item.hook}</button>)}</div>
-        </section>
-      )}
-      <section className="rounded-xl border border-ink-200 p-4">
-        <label className="flex items-center gap-2 text-sm font-medium"><input type="checkbox" checked={batchMode} onChange={(event) => setBatchMode(event.target.checked)} />Generate a framework batch</label>
-        <p className="mt-1 text-xs text-ink-500">Create one independently editable draft per selected framework, then compare them side by side.</p>
-        {batchMode && <div className="mt-3 flex flex-wrap gap-2">{frameworkOptions.map((framework) => { const selected = batchFrameworkIds.includes(framework.id); return <label key={framework.id} className={`tag cursor-pointer ${selected ? "border-violet-600 bg-violet-50" : ""}`}><input className="mr-1" type="checkbox" checked={selected} disabled={!selected && batchFrameworkIds.length >= 5} onChange={(event) => setBatchFrameworkIds((current) => event.target.checked ? [...current, framework.id] : current.filter((id) => id !== framework.id))} />{framework.name}</label>; })}</div>}
-        {batchMode && batchFrameworkIds.length < 2 && <p className="mt-2 text-xs text-red-700">Choose at least two frameworks.</p>}
-      </section>
-      {props.products.length === 0 && <p className="text-sm text-red-700">No coded products are available. Assign a naming code on the <Link href="/products" className="underline">Products page</Link> first.</p>}
-      {selectedProduct && !selectedProduct.code && <p className="text-sm text-amber-800">Assign this product a naming code on the <Link href="/products" className="underline">Products page</Link> before creating its script.</p>}
+          {/* Sits under Avatar: a run belongs to the avatar chosen above it. */}
+          <div className="sm:col-start-2"><label className="label">Pipeline run <span className="font-normal normal-case text-ink-400">(optional)</span></label><select className="input" value={form.pipelineRunId} onChange={handlePipelineRunChange}><option value="">Use latest run for selected avatar</option>{pipelineRunsForAvatar.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">{pipelineRunsForAvatar.length === 0 ? "No completed pipeline runs for this avatar yet." : "Only runs for the selected avatar are listed."}</p></div>
+        </div>
+        {props.products.length === 0 && <p className="text-sm text-red-700">No coded products are available. Assign a naming code on the <Link href="/products" className="underline">Products page</Link> first.</p>}
+        {selectedProduct && !selectedProduct.code && <p className="text-sm text-amber-800">Assign this product a naming code on the <Link href="/products" className="underline">Products page</Link> before creating its script.</p>}
+      </FormSection>
+
+      <FormSection step={2} title="The idea" hint="What the ad is saying, and why this avatar should care.">
+        <div><div className="flex items-end justify-between gap-2"><label className="label">Core idea / opening brief</label><button type="button" className="btn btn-ghost text-xs" disabled={strategistPending || form.idea.trim().length < 5 || !form.productId} onClick={runStrategist}>{strategistPending ? "Strategist thinking…" : "Run through Creative Strategist"}</button></div><textarea className="input min-h-28" value={form.idea} onChange={(event) => setForm({ ...form, idea: event.target.value })} placeholder="What is the ad saying, and why should this avatar care?" /></div>
+        {strategistResult && (
+          <div className="rounded-xl border border-violet-200 bg-violet-50 p-4">
+            <h3 className="font-semibold text-violet-950">Creative Strategist directions</h3>
+            <p className="mt-1 text-xs text-violet-800">Saved independently. Picking an angle switches the avatar in step 1; picking a hook replaces the idea above.</p>
+            <div className="mt-3 grid gap-2 md:grid-cols-2">
+              {strategistResult.angleCandidates.map((candidate) => {
+                const hasAvatar = avatarOptions.some((item) => item.angleId === candidate.angleId);
+                return (
+                  <button key={candidate.angleId} type="button" className="rounded-lg border border-violet-200 bg-white p-3 text-left text-sm hover:border-violet-600 disabled:opacity-60 disabled:hover:border-violet-200" disabled={!hasAvatar} onClick={() => selectAngle(candidate.angleId)}>
+                    <strong>{candidate.angle}</strong>
+                    <span className="mt-1 block text-xs text-ink-500">{candidate.rationale}</span>
+                    {!hasAvatar && <span className="mt-1 block text-xs text-amber-700">No avatar researched for this angle yet.</span>}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">{strategistResult.hookDirections.map((item) => <button key={item.hook} type="button" className="tag max-w-full text-left" title={item.direction} onClick={() => setForm((current) => ({ ...current, idea: item.hook }))}>{item.hook}</button>)}</div>
+          </div>
+        )}
+      </FormSection>
+
+      <FormSection step={3} title="Script structure" hint="The framework shapes the beats; format and duration set how it's shot.">
+        <div className="grid-fields">
+          <div>
+            <label className="label">Reference framework</label>
+            <select className="input" disabled={batchMode} value={form.referenceFormatId} onChange={(event) => { const selected = frameworkOptions.find((item) => item.id === event.target.value); setForm({ ...form, referenceFormatId: event.target.value, targetDurationSec: selected?.duration == null ? form.targetDurationSec : String(selected.duration) }); }}>
+              <option value="">Standard Hook → CTA</option>
+              {seededFrameworks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+              {copiedFrameworks.length > 0 && (
+                <optgroup label="Copied from video">
+                  {copiedFrameworks.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                </optgroup>
+              )}
+            </select>
+            <InlineFrameworkExtractor onCreated={handleFrameworkCreated} />
+            <label className="mt-2 flex items-center gap-2 text-xs text-ink-700"><input type="checkbox" checked={batchMode} onChange={(event) => setBatchMode(event.target.checked)} />Compare several frameworks instead (one draft each)</label>
+          </div>
+          <div><label className="label">Production format</label><select className="input" value={form.format} onChange={(event) => setForm({ ...form, format: event.target.value })}>{props.formats.map((item) => <option key={item}>{item}</option>)}</select></div>
+          {batchMode && (
+            <div className="sm:col-span-2 rounded-lg border border-ink-200 p-3">
+              <p className="text-xs text-ink-500">Pick 2–5 frameworks. Each gets its own editable draft, compared side by side.</p>
+              <div className="mt-2 flex flex-wrap gap-2">{frameworkOptions.map((framework) => { const selected = batchFrameworkIds.includes(framework.id); return <label key={framework.id} className={`tag cursor-pointer ${selected ? "border-violet-600 bg-violet-50" : ""}`}><input className="mr-1" type="checkbox" checked={selected} disabled={!selected && batchFrameworkIds.length >= 5} onChange={(event) => setBatchFrameworkIds((current) => event.target.checked ? [...current, framework.id] : current.filter((id) => id !== framework.id))} />{framework.name}</label>; })}</div>
+              {batchFrameworkIds.length < 2 && <p className="mt-2 text-xs text-red-700">Choose at least two frameworks.</p>}
+            </div>
+          )}
+          <div><label className="label">Target duration (seconds)</label><input className="input" type="number" min={5} max={600} step={1} value={form.targetDurationSec} onChange={handleTargetDurationChange} /><p className="mt-1 text-xs text-ink-500">Filled from the framework when it has a set length.</p></div>
+          <div><label className="label">Teardown2 source <span className="font-normal normal-case text-ink-400">(optional)</span></label><select className="input" disabled={!props.teardownConfigured || props.teardowns.length === 0} value={form.teardownRecordId} onChange={(event) => setForm({ ...form, teardownRecordId: event.target.value })}><option value="">No teardown source</option>{props.teardowns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">{!props.teardownConfigured ? "Set TEARDOWN_API_BASE_URL to enable imports." : props.teardownWarning ? `Unavailable: ${props.teardownWarning}` : `${props.teardowns.length} completed records available.`}</p></div>
+        </div>
+      </FormSection>
+
+      <FormSection step={4} title="Project details" hint="Naming and who's assigned — doesn't change the script itself.">
+        <div className="grid-fields">
+          <div className="sm:col-span-2"><label className="label">Project title</label><input className="input" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="CelluMove viral V1" /></div>
+          <div><label className="label">Creative name</label><input className="input" value={form.creativeName} onChange={(event) => setForm({ ...form, creativeName: event.target.value })} placeholder="CELLUMOVE VIRAL" /></div>
+          <div><label className="label">Ad number</label><input className="input" value={form.adNumber} onChange={(event) => setForm({ ...form, adNumber: event.target.value })} placeholder="SU0800012" /></div>
+          <div><label className="label">Creative strategist</label><select className="input" value={form.strategistUserId} onChange={(event) => setForm({ ...form, strategistUserId: event.target.value })}>{props.strategists.map((item) => <option key={item.id} value={item.id}>@{item.name}</option>)}</select></div>
+          <div><label className="label">Video editor <span className="font-normal normal-case text-ink-400">(optional)</span></label><select className="input" value={form.editorUserId} onChange={(event) => setForm({ ...form, editorUserId: event.target.value })}><option value="">Assign later</option>{props.editors.map((item) => <option key={item.id} value={item.id}>@{item.name}</option>)}</select></div>
+        </div>
+      </FormSection>
+
       {error && <p className="text-sm text-red-700">{error}</p>}
-      <div className="flex gap-2"><button type="button" className="btn btn-primary" disabled={pending || !ready} onClick={submit}>{pending ? (batchMode ? "Generating framework batch…" : "Generating complete draft…") : (batchMode ? `Generate ${batchFrameworkIds.length} drafts` : "Generate structured script")}</button><Link href="/scripts" className="btn">Cancel</Link></div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className="btn btn-primary" disabled={pending || !ready} onClick={submit}>{pending ? (batchMode ? "Generating framework batch…" : "Generating complete draft…") : (batchMode ? `Generate ${batchFrameworkIds.length} drafts` : "Generate structured script")}</button>
+        <Link href="/scripts" className="btn">Cancel</Link>
+        {!ready && !pending && <p className="text-xs text-ink-500">Still needed: {missing.join(", ")}.</p>}
+      </div>
       <GenerationConsole open={consoleOpen} running={pending} events={generationEvents} error={error} onClose={handleConsoleClose} />
     </div>
+  );
+}
+
+function FormSection({ step, title, hint, children }: { step: number; title: string; hint: string; children: ReactNode }) {
+  return (
+    <section className="space-y-4">
+      <div className="flex items-start gap-3 border-b border-ink-100 pb-2">
+        <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-violet-100 text-xs font-semibold text-violet-800">{step}</span>
+        <div>
+          <h2 className="text-sm font-semibold text-ink-900">{title}</h2>
+          <p className="text-xs text-ink-500">{hint}</p>
+        </div>
+      </div>
+      {children}
+    </section>
   );
 }

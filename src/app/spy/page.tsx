@@ -1,10 +1,9 @@
 import { supabase } from "@/lib/db";
-import type { ResearchRow } from "@/lib/database.types";
 import type { SpyAd } from "../actions/spy";
 import { bankedSourceUrls } from "../actions/bank";
 import { SpyClient } from "./SpyClient";
-import { DEFAULT_SPY_NICHE_SLUG, getSpyNiche, SPY_NICHES } from "@/lib/cellumove/spy-niches";
-import { isBrandSearchConfigured } from "@/lib/brandsearch.server";
+import { isBrandSearchConfigured, listSpectreCompetitors } from "@/lib/brandsearch.server";
+import { getSessionUser } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -17,52 +16,41 @@ function parseAds(json: string): SpyAd[] {
   }
 }
 
-function parsePlan(queryPlan: ResearchRow["queryPlan"]): { niche: ReturnType<typeof getSpyNiche>; source: string } {
-  try {
-    const parsed = typeof queryPlan === "string" ? JSON.parse(queryPlan) : queryPlan;
-    return {
-      niche: getSpyNiche(parsed?.niche?.slug ?? DEFAULT_SPY_NICHE_SLUG),
-      source: typeof parsed?.source === "string" ? parsed.source : "web_scout",
-    };
-  } catch {
-    return { niche: getSpyNiche(DEFAULT_SPY_NICHE_SLUG), source: "web_scout" };
-  }
-}
-
 export default async function SpyPage() {
-  // Past sweeps live in the Research table under type "competitor_spy". Show the
-  // latest one's gallery immediately, plus a short history. Fail-soft on errors.
-  const [res, banked] = await Promise.all([
+  // The feed is cached in the Research table: the newest BrandSearch Spectre
+  // import (type "competitor_spy", queryPlan.cohort "spectre"). BrandSearch is
+  // only called again on first load (no cache yet), when the cache's media links
+  // expire (3 days), or when the user hits Refresh.
+  // Competitors null = couldn't load; the client warns and shows the cache unfiltered.
+  const [res, banked, competitors, user] = await Promise.all([
     supabase
       .from("Research")
-      .select("*")
+      .select("id, drafts, createdAt")
       .eq("type", "competitor_spy")
+      .eq("queryPlan->>cohort", "spectre")
       .order("createdAt", { ascending: false })
-      .limit(20),
+      .limit(1)
+      .maybeSingle(),
     bankedSourceUrls(),
+    isBrandSearchConfigured()
+      ? listSpectreCompetitors().catch((e: unknown) => {
+          console.error("[spy] Spectre competitor list failed:", e);
+          return null;
+        })
+      : Promise.resolve(null),
+    getSessionUser(),
   ]);
-  const rows = res.error ? [] : (res.data as ResearchRow[]);
-
-  const latest = rows[0]
-    ? { id: rows[0].id, ads: parseAds(rows[0].drafts), focus: rows[0].focus, createdAt: rows[0].createdAt, ...parsePlan(rows[0].queryPlan) }
-    : null;
-
-  const history = rows.map((r) => ({
-    id: r.id,
-    focus: r.focus,
-    drafts: r.drafts,
-    createdAt: r.createdAt,
-    count: parseAds(r.drafts).length,
-    ...parsePlan(r.queryPlan),
-  }));
+  const row = res.error ? null : res.data;
 
   return (
     <SpyClient
-      latest={latest}
-      history={history}
+      cached={row ? { id: row.id, ads: parseAds(row.drafts), createdAt: row.createdAt } : null}
       bankedUrls={banked}
-      niches={SPY_NICHES}
       brandSearchConfigured={isBrandSearchConfigured()}
+      // Fetching spends BrandSearch credits, so only strategists (who can run
+      // the import action) refresh — by hand or automatically on expiry.
+      canRefresh={user?.role === "creative_strategist"}
+      competitors={competitors}
     />
   );
 }
