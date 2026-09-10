@@ -78,6 +78,7 @@ export const EvidencePatchSchema = z.object({
   metrics: EvidenceMetricsSchema.optional(),
   primarySourceUrl: nullableUrl.optional(),
   scriptText: nullableText.optional(),
+  deconstructionText: nullableText.optional(),
   evidenceLevel: z.enum(EVIDENCE_LEVELS).optional(),
   performanceEvidence: nullableText.optional(),
   reviewStatus: z.enum(REVIEW_STATUSES).optional(),
@@ -106,7 +107,7 @@ export const EvidenceBulkUpdateSchema = z.object({
 export const ResetEvidenceFieldSchema = z.object({
   field: z.enum([
     "externalId", "title", "format", "avatar", "angleSlug", "marketCode", "adDate",
-    "launchedStatus", "sourceStatus", "notes", "metrics", "primarySourceUrl", "scriptText",
+    "launchedStatus", "sourceStatus", "notes", "metrics", "primarySourceUrl", "scriptText", "deconstructionText",
     "evidenceLevel", "performanceEvidence", "reviewStatus", "intent",
   ]),
   expectedUpdatedAt: z.string().datetime({ offset: true }),

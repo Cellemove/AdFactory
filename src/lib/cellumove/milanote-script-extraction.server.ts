@@ -13,6 +13,9 @@ export type ExtractedMilanoteScript = {
   scriptText: string;
   sectionLabels: string[];
   excludedLabels: string[];
+  /** Verbatim "Deconstruction of the ads" column, or null when the board has none. */
+  deconstructionText: string | null;
+  deconstructionLabel: string | null;
   /** How the script was read. Geometry-based extraction is deterministic: no model, no rewriting. */
   method: "pdf-geometry";
 };
@@ -44,11 +47,13 @@ export async function extractMilanoteScriptFromPdf(file: File): Promise<Extracte
     throw new Error(`No HOOK, BODY, SCRIPT or CTA column was found on this board.${seen ? ` Columns seen: ${seen}.` : ""} Title the final script columns HOOK 1/2/3 and BODY, then export again.`);
   }
 
-  const extraction = normalizeMilanoteExtraction(selection);
+  const extraction = normalizeMilanoteExtraction({ sections: selection.sections, excludedLabels: selection.excludedLabels });
   return {
     scriptText: buildMilanoteScriptText(extraction),
     sectionLabels: extraction.sections.map((section) => section.label),
     excludedLabels: extraction.excludedLabels,
+    deconstructionText: selection.deconstruction?.content ?? null,
+    deconstructionLabel: selection.deconstruction?.label ?? null,
     method: "pdf-geometry",
   };
 }

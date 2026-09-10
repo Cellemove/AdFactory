@@ -77,7 +77,13 @@ test("Milanote PDF export is read by column geometry: script columns in, everyth
 
   const selection = selectScriptSections(blocks);
   assert.deepEqual(selection.sections.map((section) => section.label), ["HOOK 1", "HOOK 2", "HOOK 3 — The Sock Mark", "BODY"]);
-  assert.deepEqual(selection.excludedLabels, ["SYSTEM PROMPT — CREATIVE STRATEGIST", "Deconstruction of the ads"]);
+  assert.deepEqual(selection.excludedLabels, ["SYSTEM PROMPT — CREATIVE STRATEGIST"]);
+
+  // The deconstruction column is kept verbatim as its own evidence field, never as script.
+  assert.deepEqual(selection.deconstruction, {
+    label: "Deconstruction of the ads",
+    content: "BASIC AD INFORMATION\nAn exhaustive deconstruction of the reference video.",
+  });
 
   const body = selection.sections.find((section) => section.label === "BODY")!;
   assert.equal(
@@ -92,7 +98,7 @@ test("Milanote PDF export is read by column geometry: script columns in, everyth
   assert.doesNotMatch(JSON.stringify(selection.sections.filter((s) => s.label !== "HOOK 2")), /world-class|Your objective|deconstruction of the reference/i);
 
   // The prompt-shaped card inside the HOOK 2 column survives geometry but not the content guard.
-  const extraction = normalizeMilanoteExtraction(selection);
+  const extraction = normalizeMilanoteExtraction({ sections: selection.sections, excludedLabels: selection.excludedLabels });
   assert.deepEqual(extraction.sections.map((section) => section.label), ["HOOK 1", "HOOK 3 — The Sock Mark", "BODY"]);
   assert.doesNotMatch(buildMilanoteScriptText(extraction), /world-class|Your objective/i);
   assert.match(buildMilanoteScriptText(extraction), /^## HOOK 1\nHOOK 1 — The Easy Put On/);
@@ -151,4 +157,16 @@ test("cards are assigned to the innermost column and headers exclude card text",
 test("PDF uploads are checked by file signature rather than browser MIME alone", () => {
   assert.equal(isPdfBytes(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31])), true);
   assert.equal(isPdfBytes(new TextEncoder().encode("<html>login wall</html>")), false);
+});
+
+test("boards without a deconstruction column report null instead of an empty field", () => {
+  const rects: BoardRect[] = [{ x0: 0, y0: 0, x1: 200, y1: 100 }, { x0: 5, y0: 30, x1: 195, y1: 90 }];
+  const items: BoardTextItem[] = [
+    { str: "HOOK 1", x: 8, y: 20, size: 10, width: 40 },
+    { str: "VO: hello", x: 10, y: 45, size: 8, width: 40 },
+  ];
+  const selection = selectScriptSections(buildBoardBlocks(rects, items, 1));
+  assert.deepEqual(selection.sections, [{ label: "HOOK 1", content: "VO: hello" }]);
+  assert.equal(selection.deconstruction, null);
+  assert.deepEqual(selection.excludedLabels, []);
 });

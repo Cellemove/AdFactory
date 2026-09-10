@@ -70,6 +70,7 @@ export async function createScorerEvidenceScript(
     primarySourceUrl: validated.data.sourceUrl,
     sourceTypes: [...new Set(sourceLinks.map((link) => link.type))] as unknown as Json,
     scriptText: validated.data.scriptText,
+    deconstructionText: null,
     evidenceLevel: validated.data.evidenceLevel,
     performanceEvidence: validated.data.performanceEvidence,
     reviewStatus: "needs_review",

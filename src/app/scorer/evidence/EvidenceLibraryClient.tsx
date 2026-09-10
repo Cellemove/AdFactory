@@ -326,15 +326,17 @@ function EvidenceDrawer({ item, draft, revisions, angles, markets, saving, onCha
         body: formData,
       });
       const body = await response.json() as {
-        extraction?: { scriptText: string; sectionLabels: string[]; excludedLabels: string[] };
+        extraction?: { scriptText: string; sectionLabels: string[]; excludedLabels: string[]; deconstructionText: string | null; deconstructionLabel: string | null };
         error?: string;
       };
       if (!response.ok || !body.extraction) throw new Error(body.error ?? "Could not extract the Milanote script.");
-      onChange({ scriptText: body.extraction.scriptText });
-      const excluded = body.extraction.excludedLabels.length
-        ? ` Excluded: ${body.extraction.excludedLabels.join(", ")}.`
+      const { scriptText, deconstructionText, deconstructionLabel, sectionLabels, excludedLabels } = body.extraction;
+      onChange(deconstructionText ? { scriptText, deconstructionText } : { scriptText });
+      const deconstruction = deconstructionText ? ` Captured "${deconstructionLabel ?? "Deconstruction"}" into Ad deconstruction.` : "";
+      const excluded = excludedLabels.length
+        ? ` Excluded: ${excludedLabels.join(", ")}.`
         : " No other columns were found on the board.";
-      setExtractionMessage(`Extracted ${body.extraction.sectionLabels.length} final script section${body.extraction.sectionLabels.length === 1 ? "" : "s"}.${excluded} Review the text below, then Save.`);
+      setExtractionMessage(`Extracted ${sectionLabels.length} final script section${sectionLabels.length === 1 ? "" : "s"}.${deconstruction}${excluded} Review the text below, then Save.`);
     } catch (error) {
       setExtractionError(error instanceof Error ? error.message : String(error));
     } finally {
@@ -371,7 +373,7 @@ function EvidenceDrawer({ item, draft, revisions, angles, markets, saving, onCha
 
         {milanoteLink && <section className="rounded-xl border border-violet-200 bg-violet-50 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="max-w-xl"><h3 className="text-sm font-semibold text-violet-950">Import from Milanote</h3><p className="mt-1 text-xs leading-5 text-violet-800">Open the linked board, export it as PDF (Board menu → Export → PDF), then upload it here. Only the cards inside columns titled HOOK 1/2/3, BODY, SCRIPT or CTA are read, verbatim; system prompts, instructions, research, deconstructions and reference material are never opened.</p></div>
+            <div className="max-w-xl"><h3 className="text-sm font-semibold text-violet-950">Import from Milanote</h3><p className="mt-1 text-xs leading-5 text-violet-800">Open the linked board, export it as PDF (Board menu → Export → PDF), then upload it here. Only the cards inside columns titled HOOK 1/2/3, BODY, SCRIPT or CTA are read, verbatim, into Exact script text; a column titled Deconstruction of the ads is copied into Ad deconstruction; system prompts, instructions, research and reference material are never opened.</p></div>
             <div className="flex flex-wrap gap-2"><a className="btn text-xs" href={milanoteLink.url} target="_blank" rel="noreferrer">Open Milanote</a><button className="btn btn-primary text-xs" type="button" disabled={saving || extracting} onClick={() => fileInputRef.current?.click()}>{extracting ? "Extracting…" : "Upload Milanote PDF"}</button></div>
           </div>
           <input ref={fileInputRef} className="hidden" type="file" accept="application/pdf,.pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void extractPdf(file); }} />
@@ -381,6 +383,7 @@ function EvidenceDrawer({ item, draft, revisions, angles, markets, saving, onCha
 
         <Editable label="Exact script text" field="scriptText" overridden={overrides.includes("scriptText")} onReset={onReset}><textarea className="input min-h-[26rem] font-mono text-sm leading-6" value={draft.scriptText ?? ""} onChange={(event) => onChange({ scriptText: nullIfEmpty(event.target.value) })} placeholder="Paste the exact sourced script. Do not summarize or rewrite it." /></Editable>
         {!draft.scriptText?.trim() && <p className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">Source-only entries remain in the review queue but do not satisfy structural evidence requirements.</p>}
+        <Editable label="Ad deconstruction" field="deconstructionText" overridden={overrides.includes("deconstructionText")} onReset={onReset}><textarea className="input min-h-40 text-sm leading-6" value={draft.deconstructionText ?? ""} onChange={(event) => onChange({ deconstructionText: nullIfEmpty(event.target.value) })} placeholder="The board's Deconstruction of the ads column (AI winning-ad workbook). Kept separate from the exact script." /></Editable>
         <Editable label="Reviewer notes" field="notes" overridden={overrides.includes("notes")} onReset={onReset}><textarea className="input min-h-24" value={draft.notes ?? ""} onChange={(event) => onChange({ notes: nullIfEmpty(event.target.value) })} /></Editable>
 
         <section className="rounded-xl border border-ink-200 bg-ink-50 p-4"><h3 className="text-sm font-semibold">Immutable provenance</h3><dl className="mt-3 grid gap-3 text-xs sm:grid-cols-2"><div><dt className="text-ink-400">Workbook</dt><dd className="mt-1 break-all">{item.spreadsheetId || "Manual entry"}</dd></div><div><dt className="text-ink-400">Tab and row</dt><dd className="mt-1">{item.sheetName ? `${item.sheetName} · row ${item.sourceRow}` : "Not applicable"}</dd></div><div><dt className="text-ink-400">Last imported</dt><dd className="mt-1">{item.lastImportedAt ? new Date(item.lastImportedAt).toLocaleString() : "Manual"}</dd></div><div><dt className="text-ink-400">Raw revisions</dt><dd className="mt-1">{revisions.length}</dd></div></dl><div className="mt-4 flex flex-wrap gap-2">{links.map((link, index) => <a key={`${link.url}-${index}`} className="tag hover:border-violet-400" href={link.url} target="_blank" rel="noreferrer">{link.type.replaceAll("_", " ")} · {link.cellLabel}</a>)}</div>{latest && <details className="mt-4"><summary className="cursor-pointer text-xs font-semibold">View latest locked raw row</summary><div className="mt-3 max-h-96 overflow-auto rounded-lg border border-ink-200 bg-white"><table className="w-full text-left text-xs"><tbody>{rawPairs(latest).map((pair) => <tr key={pair.index} className="border-b border-ink-100 align-top"><th className="w-48 p-2 text-ink-500">{pair.index + 1} · {pair.header || "Unnamed column"}</th><td className="whitespace-pre-wrap break-all p-2">{pair.value || <span className="text-ink-300">empty</span>}</td></tr>)}</tbody></table></div></details>}</section>
@@ -422,6 +425,7 @@ function toDraft(item: ScriptEvidenceRow): Draft {
     metrics: readMetrics(item.metrics),
     primarySourceUrl: item.primarySourceUrl,
     scriptText: item.scriptText,
+    deconstructionText: item.deconstructionText,
     evidenceLevel: item.evidenceLevel as Draft["evidenceLevel"],
     performanceEvidence: item.performanceEvidence,
     reviewStatus: item.reviewStatus as Draft["reviewStatus"],

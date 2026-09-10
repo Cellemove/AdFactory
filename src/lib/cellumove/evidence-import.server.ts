@@ -144,6 +144,7 @@ export async function executeGoogleSheetEvidenceImport(runId: string): Promise<v
         primarySourceUrl: imported.sourceValues.primarySourceUrl,
         sourceTypes: imported.sourceValues.sourceTypes as unknown as Json,
         scriptText: null,
+        deconstructionText: null,
         evidenceLevel: "observed",
         performanceEvidence: null,
         reviewStatus: "unreviewed",

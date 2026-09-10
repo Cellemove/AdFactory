@@ -561,6 +561,7 @@ export type ScriptEvidenceRow = {
   primarySourceUrl: string | null;
   sourceTypes: Json;
   scriptText: string | null;
+  deconstructionText: string | null;
   evidenceLevel: string;
   performanceEvidence: string | null;
   reviewStatus: string;

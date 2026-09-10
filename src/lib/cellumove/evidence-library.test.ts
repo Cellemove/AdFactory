@@ -117,7 +117,7 @@ function sampleEvidence(overrides: Partial<ScriptEvidenceRow>): ScriptEvidenceRo
     sheetName: "May", sourceRow: 3, externalId: "SU1", title: "Title", format: null, avatar: null,
     angleSlug: null, marketCode: null, adDate: null, launchedStatus: null, sourceStatus: null, notes: null,
     metrics: {}, sourceLinks: [], primarySourceUrl: "https://example.com/old", sourceTypes: ["external_html"],
-    scriptText: null, evidenceLevel: "observed", performanceEvidence: null, reviewStatus: "unreviewed",
+    scriptText: null, deconstructionText: null, evidenceLevel: "observed", performanceEvidence: null, reviewStatus: "unreviewed",
     intent: "structural_candidate", contentStatus: "source_only", sourceValues: {}, overrideFields: [],
     conflictFields: [], latestSourceHash: "hash", lastImportedAt: null, createdByUserId: null,
     createdAt: "2026-09-10T00:00:00.000Z", updatedAt: "2026-09-10T00:00:00.000Z", ...overrides,
