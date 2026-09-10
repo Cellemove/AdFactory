@@ -31,7 +31,8 @@
     "baseline:e2e": "tsx --env-file=.env scripts/baseline-end-to-end.ts",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
     "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts",
-    "analyze:intel": "tsx --conditions=react-server --env-file=.env scripts/analyze-intel-drive.ts"
+    "analyze:intel": "tsx --conditions=react-server --env-file=.env scripts/analyze-intel-drive.ts",
+    "scorer:extract-milanote": "tsx scripts/extract-milanote-pdf.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
@@ -40,7 +41,7 @@
     "@vercel/blob": "^2.4.0",
     "cuid": "^3.0.0",
     "next": "^15.5.18",
-    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^4.10.38",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "server-only": "^0.0.1",
@@ -53,6 +54,7 @@
     "autoprefixer": "^10.4.20",
     "eslint": "^9.16.0",
     "eslint-config-next": "^15.5.18",
+    "pdf-lib": "^1.17.1",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.16",
     "tsx": "^4.19.2",

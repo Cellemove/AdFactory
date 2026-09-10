@@ -333,7 +333,7 @@ function EvidenceDrawer({ item, draft, revisions, angles, markets, saving, onCha
       onChange({ scriptText: body.extraction.scriptText });
       const excluded = body.extraction.excludedLabels.length
         ? ` Excluded: ${body.extraction.excludedLabels.join(", ")}.`
-        : " System prompts and planning material were excluded.";
+        : " No other columns were found on the board.";
       setExtractionMessage(`Extracted ${body.extraction.sectionLabels.length} final script section${body.extraction.sectionLabels.length === 1 ? "" : "s"}.${excluded} Review the text below, then Save.`);
     } catch (error) {
       setExtractionError(error instanceof Error ? error.message : String(error));
@@ -371,7 +371,7 @@ function EvidenceDrawer({ item, draft, revisions, angles, markets, saving, onCha
 
         {milanoteLink && <section className="rounded-xl border border-violet-200 bg-violet-50 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="max-w-xl"><h3 className="text-sm font-semibold text-violet-950">Import from Milanote</h3><p className="mt-1 text-xs leading-5 text-violet-800">Open the linked board, export it as PDF, then upload it here. Only final script cards are extracted; system prompts, instructions, research, deconstructions, and reference material are excluded.</p></div>
+            <div className="max-w-xl"><h3 className="text-sm font-semibold text-violet-950">Import from Milanote</h3><p className="mt-1 text-xs leading-5 text-violet-800">Open the linked board, export it as PDF (Board menu → Export → PDF), then upload it here. Only the cards inside columns titled HOOK 1/2/3, BODY, SCRIPT or CTA are read, verbatim; system prompts, instructions, research, deconstructions and reference material are never opened.</p></div>
             <div className="flex flex-wrap gap-2"><a className="btn text-xs" href={milanoteLink.url} target="_blank" rel="noreferrer">Open Milanote</a><button className="btn btn-primary text-xs" type="button" disabled={saving || extracting} onClick={() => fileInputRef.current?.click()}>{extracting ? "Extracting…" : "Upload Milanote PDF"}</button></div>
           </div>
           <input ref={fileInputRef} className="hidden" type="file" accept="application/pdf,.pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void extractPdf(file); }} />
