@@ -14,8 +14,31 @@ const MIN_RECT_HEIGHT = 16;
 
 type Matrix = [number, number, number, number, number, number];
 
+type PdfjsModule = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
+let pdfjsPromise: Promise<PdfjsModule> | null = null;
+
+/**
+ * Loads pdf.js with its worker running on the main thread. pdf.js normally
+ * reaches the worker through `import(workerSrc)`, a dynamic path that serverless
+ * bundlers cannot trace — on Vercel that surfaced as "Cannot find module
+ * …/pdf.worker.mjs". Importing the worker with a literal specifier makes it part
+ * of the deployed function, and registering its handler on
+ * `globalThis.pdfjsWorker` makes pdf.js use it without any dynamic import.
+ */
+function loadPdfjs(): Promise<PdfjsModule> {
+  pdfjsPromise ??= (async () => {
+    const [pdfjs, worker] = await Promise.all([
+      import("pdfjs-dist/legacy/build/pdf.mjs"),
+      import("pdfjs-dist/legacy/build/pdf.worker.mjs"),
+    ]);
+    (globalThis as { pdfjsWorker?: { WorkerMessageHandler: unknown } }).pdfjsWorker = { WorkerMessageHandler: worker.WorkerMessageHandler };
+    return pdfjs;
+  })();
+  return pdfjsPromise;
+}
+
 export async function readMilanoteBoard(bytes: Uint8Array): Promise<BoardBlock[]> {
-  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const pdfjs = await loadPdfjs();
   const document = await pdfjs.getDocument({ data: bytes, isEvalSupported: false, useSystemFonts: false }).promise;
   try {
     const blocks: BoardBlock[] = [];
