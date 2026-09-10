@@ -4,12 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createHash } from "node:crypto";
 import { requireStrategist } from "@/lib/authorization";
 import { supabase, newId } from "@/lib/db";
-import { BRANDSEARCH_MEDIA_TTL_MS } from "@/lib/brandsearch";
-import {
-  discoverBrandSearchMetaAds,
-  testBrandSearchConnection,
-} from "@/lib/brandsearch.server";
-import { getSpyNiche } from "@/lib/cellumove/spy-niches";
+import { BRANDSEARCH_MEDIA_TTL_MS, isFeedStale } from "@/lib/brandsearch";
+import { fetchSpectreMetaAds } from "@/lib/brandsearch.server";
 import type { Json } from "@/lib/database.types";
 import type { SpyAd } from "./spy";
 
@@ -19,37 +15,68 @@ function competitorAdId(provider: string, platform: string, externalId: string):
   return `cad_${createHash("sha256").update(`${provider}:${platform}:${externalId}`).digest("hex").slice(0, 24)}`;
 }
 
-export async function verifyBrandSearch(): Promise<{
-  accountLabel: string;
-  dailyRemaining: number | null;
-  monthlyRemaining: number | null;
-}> {
-  await requireStrategist();
-  return testBrandSearchConnection();
-}
-
-export async function importBrandSearchMetaAds(input: {
-  nicheSlug?: string | null;
-  focus?: string | null;
-  limit?: number;
-}): Promise<{
+type SpyFeedResult = {
   id: string;
   ads: SpyAd[];
-  niche: ReturnType<typeof getSpyNiche>;
+  createdAt: string;
+  /** True when a fresh cached feed was returned instead of calling BrandSearch. */
+  reused: boolean;
   creditsUsed: number | null;
   dailyRemaining: number | null;
   monthlyRemaining: number | null;
   durableIndexUpdated: boolean;
-}> {
+};
+
+/** The newest cached Spectre feed, if its media links are still fresh. */
+async function freshCachedFeed(): Promise<SpyFeedResult | null> {
+  const res = await supabase
+    .from("Research")
+    .select("id, drafts, createdAt")
+    .eq("type", "competitor_spy")
+    .eq("queryPlan->>cohort", "spectre")
+    .order("createdAt", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (res.error || !res.data || isFeedStale(res.data.createdAt)) return null;
+  let ads: SpyAd[] = [];
+  try {
+    const parsed: unknown = JSON.parse(res.data.drafts);
+    if (Array.isArray(parsed)) ads = parsed as SpyAd[];
+  } catch {
+    return null;
+  }
+  return {
+    id: res.data.id,
+    ads,
+    createdAt: res.data.createdAt,
+    reused: true,
+    creditsUsed: null,
+    dailyRemaining: null,
+    monthlyRemaining: null,
+    durableIndexUpdated: true,
+  };
+}
+
+/**
+ * Fetch the active Meta ads of every competitor tracked in BrandSearch Spectre
+ * (top spenders per brand) and cache them as the spy feed. The page reads the
+ * newest cached feed; this runs on first load, when the cache's media links
+ * expire, or when the user hits Refresh.
+ * `ifStale` (the automatic path) re-checks the cache first, so several viewers
+ * opening an expired page don't each spend credits on the same refresh.
+ */
+export async function importBrandSearchMetaAds(input: {
+  maxAdsPerBrand?: number;
+  ifStale?: boolean;
+} = {}): Promise<SpyFeedResult> {
   await requireStrategist();
-  const niche = getSpyNiche(input.nicheSlug);
-  const imported = await discoverBrandSearchMetaAds({
-    nicheSlug: niche.slug,
-    focus: input.focus,
-    limit: input.limit,
-  });
+  if (input.ifStale) {
+    const cached = await freshCachedFeed();
+    if (cached) return cached;
+  }
+  const imported = await fetchSpectreMetaAds({ maxAdsPerBrand: input.maxAdsPerBrand });
   if (imported.ads.length === 0) {
-    throw new Error("BrandSearch found no scaling Meta ads for that filter. Try a broader focus.");
+    throw new Error("None of your Spectre competitors have active Meta ads right now.");
   }
 
   const now = new Date();
@@ -57,13 +84,12 @@ export async function importBrandSearchMetaAds(input: {
   const mediaExpiresAt = new Date(now.getTime() + BRANDSEARCH_MEDIA_TTL_MS).toISOString();
   const ads: SpyAd[] = imported.ads.map((ad) => ({
     brand: ad.brandName,
+    brandDomain: ad.brandDomain || undefined,
     imageUrl: ad.imageUrl,
     sourceUrl: ad.sourceUrl,
     caption: ad.copy,
     platform: ad.platform,
     mediaType: ad.mediaType,
-    verified: true,
-    contentMatch: true,
     provider: ad.provider,
     providerId: ad.externalId,
     providerUrl: ad.dashboardUrl || undefined,
@@ -116,20 +142,18 @@ export async function importBrandSearchMetaAds(input: {
     id,
     type: "competitor_spy",
     angleSlug: null,
-    focus: input.focus?.trim() || null,
+    focus: null,
     drafts: JSON.stringify(ads),
     queryPlan: {
-      niche,
       source: "brandsearch",
+      cohort: "spectre",
       platform: "meta",
-      seed: imported.seed,
-      winnerEvidence: "probable_winner",
       creditsUsed: imported.creditsUsed,
     },
     status: "pending",
     notes: durableIndexUpdated
-      ? "BrandSearch Meta discover import; provider signals are performance proxies, not ROAS proof."
-      : "BrandSearch Meta discover import; run migration 016 to enable durable provider indexing.",
+      ? "BrandSearch Spectre competitor import; provider signals are performance proxies, not ROAS proof."
+      : "BrandSearch Spectre competitor import; run migration 016 to enable durable provider indexing.",
     createdAt: fetchedAt,
   });
   if (research.error) throw new Error(research.error.message);
@@ -139,7 +163,8 @@ export async function importBrandSearchMetaAds(input: {
   return {
     id,
     ads,
-    niche,
+    createdAt: fetchedAt,
+    reused: false,
     creditsUsed: imported.creditsUsed,
     dailyRemaining: imported.dailyRemaining,
     monthlyRemaining: imported.monthlyRemaining,

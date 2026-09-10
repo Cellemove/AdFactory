@@ -1,10 +1,14 @@
 import "server-only";
 
 import {
-  BrandSearchDiscoverResponseSchema,
-  brandSearchNicheForSpy,
+  isOwnBrand,
   normalizeBrandSearchMetaAd,
+  normalizeDomain,
+  SpectreAdsResponseSchema,
+  SpectreFolderDetailSchema,
+  SpectreFolderListSchema,
   type NormalizedBrandSearchAd,
+  type SpectreCompetitor,
 } from "@/lib/brandsearch";
 
 const API_BASE = "https://api.brandsearch.co";
@@ -18,7 +22,6 @@ const META_FIELDS = [
 
 export type BrandSearchImportResult = {
   ads: NormalizedBrandSearchAd[];
-  seed: string;
   creditsUsed: number | null;
   dailyRemaining: number | null;
   monthlyRemaining: number | null;
@@ -50,63 +53,108 @@ function errorMessage(payload: unknown, status: number): string {
   return `BrandSearch request failed (${status}).`;
 }
 
-export async function testBrandSearchConnection(): Promise<{
-  ok: true;
-  accountLabel: string;
-  dailyRemaining: number | null;
-  monthlyRemaining: number | null;
-}> {
-  const response = await fetch(`${API_BASE}/v1/me`, {
+async function getJson(pathAndQuery: string): Promise<{ payload: unknown; headers: Headers }> {
+  const response = await fetch(`${API_BASE}${pathAndQuery}`, {
     headers: { "X-API-Key": apiKey(), Accept: "application/json" },
     cache: "no-store",
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) throw new Error(errorMessage(payload, response.status));
-  const record = payload && typeof payload === "object" ? payload as Record<string, unknown> : {};
-  const accountLabel = [record.email, record.name, record.user_id]
-    .find((value): value is string => typeof value === "string" && value.trim().length > 0) || "connected account";
-  return {
-    ok: true,
-    accountLabel,
-    dailyRemaining: headerNumber(response.headers, "X-Quota-Daily-Remaining"),
-    monthlyRemaining: headerNumber(response.headers, "X-Quota-Monthly-Remaining"),
-  };
+  return { payload, headers: response.headers };
 }
 
-export async function discoverBrandSearchMetaAds(input: {
-  nicheSlug: string;
-  focus?: string | null;
-  limit?: number;
-  now?: Date;
-}): Promise<BrandSearchImportResult> {
-  const now = input.now ?? new Date();
-  const seed = `adfactory-${now.toISOString().slice(0, 10)}-${input.nicheSlug}`.slice(0, 64);
-  const params = new URLSearchParams({
-    niche: brandSearchNicheForSpy(input.nicheSlug),
-    languages: "en",
-    limit: String(Math.min(50, Math.max(1, input.limit ?? 24))),
-    max_ads_per_brand: "3",
-    seed,
-    fields: META_FIELDS,
-  });
-  const focus = input.focus?.trim();
-  if (focus) params.set("q", focus.slice(0, 200));
+type SpectreFolder = { id: string; itemCount: number };
 
-  const response = await fetch(`${API_BASE}/v1/meta-ads/discover?${params}`, {
-    headers: { "X-API-Key": apiKey(), Accept: "application/json" },
-    cache: "no-store",
-  });
-  const payload: unknown = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(errorMessage(payload, response.status));
-  const parsed = BrandSearchDiscoverResponseSchema.safeParse(payload);
-  if (!parsed.success) throw new Error("BrandSearch returned an unexpected Meta ads response.");
+// Folder listing and folder details are unmetered (0 credits).
+async function listSpectreFolders(): Promise<SpectreFolder[]> {
+  const folders: SpectreFolder[] = [];
+  for (let page = 1; page <= 20; page++) {
+    const { payload } = await getJson(`/v1/swipe/spectre-folders?page=${page}&page_size=100`);
+    const parsed = SpectreFolderListSchema.safeParse(payload);
+    if (!parsed.success) throw new Error("BrandSearch returned an unexpected Spectre folder list.");
+    folders.push(...parsed.data.data.map((folder) => ({ id: folder.id, itemCount: folder.item_count ?? 0 })));
+    const totalPages = parsed.data.pagination?.total_pages ?? 1;
+    if (page >= totalPages || parsed.data.data.length === 0) break;
+  }
+  return folders;
+}
 
-  return {
-    ads: parsed.data.data.map(normalizeBrandSearchMetaAd),
-    seed: parsed.data.seed || seed,
-    creditsUsed: headerNumber(response.headers, "X-Credits-Used"),
-    dailyRemaining: headerNumber(response.headers, "X-Quota-Daily-Remaining"),
-    monthlyRemaining: headerNumber(response.headers, "X-Quota-Monthly-Remaining"),
-  };
+let cachedCompetitors: { competitors: SpectreCompetitor[]; exp: number } | null = null;
+
+/**
+ * The competitor brands tracked in BrandSearch Spectre (Swipe Files → Spectre),
+ * deduped across folders, minus CelluMove itself. Cached for 10 minutes, so a
+ * brand added in Spectre shows up on the spy page shortly after.
+ */
+export async function listSpectreCompetitors(): Promise<SpectreCompetitor[]> {
+  const now = Date.now();
+  if (cachedCompetitors && cachedCompetitors.exp > now) return cachedCompetitors.competitors;
+
+  const byDomain = new Map<string, SpectreCompetitor>();
+  for (const folder of await listSpectreFolders()) {
+    const { payload } = await getJson(`/v1/swipe/spectre-folders/${encodeURIComponent(folder.id)}`);
+    const parsed = SpectreFolderDetailSchema.safeParse(payload);
+    if (!parsed.success) throw new Error("BrandSearch returned an unexpected Spectre folder.");
+    for (const item of parsed.data.items) {
+      const domain = normalizeDomain(item.brand_id || item.url || "");
+      if (!domain || isOwnBrand(domain) || byDomain.has(domain)) continue;
+      byDomain.set(domain, { domain, name: item.name?.trim() || domain });
+    }
+  }
+
+  const competitors = [...byDomain.values()];
+  cachedCompetitors = { competitors, exp: now + 10 * 60 * 1000 };
+  return competitors;
+}
+
+/**
+ * Active Meta ads from every Spectre-tracked competitor, top spenders first per
+ * brand. Costs 1 BrandSearch credit per returned row (incl. own-brand rows,
+ * which are dropped here).
+ */
+export async function fetchSpectreMetaAds(input: { maxAdsPerBrand?: number } = {}): Promise<BrandSearchImportResult> {
+  const maxAdsPerBrand = Math.min(50, Math.max(1, input.maxAdsPerBrand ?? 3));
+  const byId = new Map<string, NormalizedBrandSearchAd>();
+  let creditsUsed: number | null = null;
+  let dailyRemaining: number | null = null;
+  let monthlyRemaining: number | null = null;
+
+  for (const folder of await listSpectreFolders()) {
+    if (folder.itemCount === 0) continue;
+    // Rows come back grouped per tracked brand, so the folder yields at most
+    // itemCount × maxAdsPerBrand rows; `pagination.total` counts every ad.
+    const expected = folder.itemCount * maxAdsPerBrand;
+    const pageSize = Math.min(100, expected);
+    let collected = 0;
+    for (let page = 1; page <= 5 && collected < expected; page++) {
+      const params = new URLSearchParams({
+        max_ads_per_brand: String(maxAdsPerBrand),
+        status: "active",
+        sort_by: "eu_total_spend",
+        sort_order: "desc",
+        fields: META_FIELDS,
+        page: String(page),
+        page_size: String(pageSize),
+      });
+      const { payload, headers } = await getJson(`/v1/swipe/spectre-folders/${encodeURIComponent(folder.id)}/ads?${params}`);
+      const parsed = SpectreAdsResponseSchema.safeParse(payload);
+      if (!parsed.success) throw new Error("BrandSearch returned an unexpected Spectre ads response.");
+
+      const credits = headerNumber(headers, "X-Credits-Used");
+      if (credits !== null) creditsUsed = (creditsUsed ?? 0) + credits;
+      dailyRemaining = headerNumber(headers, "X-Quota-Daily-Remaining") ?? dailyRemaining;
+      monthlyRemaining = headerNumber(headers, "X-Quota-Monthly-Remaining") ?? monthlyRemaining;
+
+      for (const row of parsed.data.data) {
+        const ad = normalizeBrandSearchMetaAd(row, "spectre");
+        if (ad.brandDomain && isOwnBrand(ad.brandDomain)) continue;
+        byId.set(ad.externalId, ad);
+      }
+      collected += parsed.data.data.length;
+      if (parsed.data.data.length < pageSize) break;
+    }
+  }
+
+  return { ads: [...byId.values()], creditsUsed, dailyRemaining, monthlyRemaining };
 }
 
