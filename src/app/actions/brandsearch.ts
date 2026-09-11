@@ -1,19 +1,14 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createHash } from "node:crypto";
 import { requireStrategist } from "@/lib/authorization";
 import { supabase, newId } from "@/lib/db";
 import { BRANDSEARCH_MEDIA_TTL_MS, isFeedStale } from "@/lib/brandsearch";
 import { fetchSpectreMetaAds } from "@/lib/brandsearch.server";
-import type { Json } from "@/lib/database.types";
+import { toCompetitorAdRow } from "@/lib/cellumove/corpus/ingest";
 import type { SpyAd } from "./spy";
 
 const TABLE_MISSING = "PGRST205";
-
-function competitorAdId(provider: string, platform: string, externalId: string): string {
-  return `cad_${createHash("sha256").update(`${provider}:${platform}:${externalId}`).digest("hex").slice(0, 24)}`;
-}
 
 type SpyFeedResult = {
   id: string;
@@ -101,33 +96,8 @@ export async function importBrandSearchMetaAds(input: {
   }));
 
   let durableIndexUpdated = true;
-  const rows = imported.ads.map((ad) => ({
-    id: competitorAdId(ad.provider, ad.platform.toLowerCase(), ad.externalId),
-    provider: ad.provider,
-    externalId: ad.externalId,
-    platform: ad.platform.toLowerCase(),
-    brandId: ad.brandId,
-    brandName: ad.brandName,
-    sourceUrl: ad.sourceUrl,
-    dashboardUrl: ad.dashboardUrl,
-    mediaType: ad.mediaType,
-    imageUrl: ad.imageUrl || null,
-    videoUrl: ad.videoUrl,
-    copy: ad.copy,
-    status: ad.status,
-    startedAt: ad.startedAt,
-    endedAt: ad.endedAt,
-    durationSec: ad.durationSec,
-    transcriptUrl: ad.transcriptUrl,
-    winnerEvidence: ad.winnerEvidence,
-    evidenceReasons: ad.evidenceReasons as Json,
-    metrics: ad.metrics as Json,
-    rawPayload: ad.rawPayload as Json,
-    mediaExpiresAt,
-    lastSeenAt: fetchedAt,
-    fetchedAt,
-    updatedAt: fetchedAt,
-  }));
+  // Same row shape the Corpus Miner writes, so both paths share the unique key.
+  const rows = imported.ads.map((ad) => toCompetitorAdRow(ad, fetchedAt, mediaExpiresAt));
   const indexed = await supabase.from("CompetitorAd").upsert(rows, {
     onConflict: "provider,platform,externalId",
     ignoreDuplicates: false,

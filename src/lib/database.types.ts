@@ -521,6 +521,200 @@ export type CompetitorAdRow = {
   fetchedAt: string;
   createdAt: string;
   updatedAt: string;
+  // Corpus Miner columns (migration 017). Optional so pre-017 rows still type.
+  winnerScore?: number | null;
+  winnerScoreVersion?: string | null;
+  winnerScoreInputs?: Json | null;
+  formatTag?: string | null;
+  angleTag?: string | null;
+  tagSource?: string | null;
+  corpusIncluded?: boolean;
+  // Why this ad is in the winners corpus (migration 020); null = not picked.
+  winnerPick?: Json | null;
+};
+
+// ─── Corpus Miner (migration 017) ────────────────────────────────────────────
+
+export type AdMediaRow = {
+  id: string;
+  competitorAdId: string;
+  status: string;
+  statusReason: string | null;
+  sourceUrl: string | null;
+  sourceKind: string | null;
+  sha256: string | null;
+  bytes: number | null;
+  mime: string | null;
+  // Pre-019 rows only: a file on the machine that downloaded it.
+  localPath: string | null;
+  // Object path in the "corpus-media" bucket (migration 019).
+  storagePath?: string | null;
+  durationSec: number | null;
+  downloadedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CorpusTranscriptRunRow = {
+  id: string;
+  runKey: string;
+  competitorAdId: string;
+  mediaId: string;
+  mediaSha256: string;
+  model: string;
+  promptVersion: string;
+  status: string;
+  language: string | null;
+  durationSec: number | null;
+  segmentCount: number;
+  brandSearchTranscript: string | null;
+  crossCheck: Json | null;
+  usage: Json | null;
+  errorSummary: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  createdAt: string;
+};
+
+export type CorpusTranscriptSegmentRow = {
+  id: string;
+  runId: string;
+  competitorAdId: string;
+  channel: string;
+  orderIndex: number;
+  tStart: number;
+  tEnd: number;
+  text: string;
+  confidence: number | null;
+  createdAt: string;
+};
+
+export type CorpusExtractRunRow = {
+  id: string;
+  runKey: string;
+  competitorAdId: string;
+  transcriptRunId: string;
+  taxonomyVersion: string;
+  extractorPromptVersion: string;
+  engineVersion: string;
+  model: string;
+  withVideo: boolean;
+  status: string;
+  attempts: number;
+  gateReport: Json | null;
+  rawResponse: Json | null;
+  usage: Json | null;
+  errorCode: string | null;
+  errorSummary: string | null;
+  reviewedByUserId: string | null;
+  reviewedAt: string | null;
+  reviewNote: string | null;
+  startedAt: string;
+  completedAt: string | null;
+  createdAt: string;
+};
+
+export type AdBeatRow = {
+  id: string;
+  runId: string;
+  competitorAdId: string;
+  taxonomyVersion: string;
+  orderIndex: number;
+  layer: string;
+  code: string;
+  startSec: number | null;
+  endSec: number | null;
+  evidenceQuote: string;
+  otherExplanation: string | null;
+  channel: string;
+  matchScore: number | null;
+  matchedSegmentId: string | null;
+  extractorPromptVersion: string;
+  model: string;
+  createdAt: string;
+};
+
+export type CorpusPatternReportRow = {
+  id: string;
+  taxonomyVersion: string;
+  engineVersion: string;
+  cohort: string;
+  cohortKey: string;
+  adCount: number;
+  inputHash: string;
+  report: Json;
+  createdAt: string;
+};
+
+export type CorpusEvalRunRow = {
+  id: string;
+  baselineVersion: string;
+  taxonomyVersion: string;
+  extractorPromptVersion: string;
+  engineVersion: string;
+  model: string;
+  goldAdCount: number;
+  layerAgreement: number | null;
+  codeAgreement: number | null;
+  orderAgreement: number | null;
+  passed: boolean;
+  perAd: Json;
+  usage: Json | null;
+  createdAt: string;
+};
+
+// Teardown workbook mirrored for a corpus winner (migration 018). Qualitative
+// reading layer only; never an input to MINE.
+export type AdTeardownRow = {
+  id: string;
+  competitorAdId: string;
+  teardownId: string;
+  status: "queued" | "processing" | "completed" | "failed";
+  sourceKind: "video_sd_url" | "video_hd_url" | "videoUrl" | "stored_copy";
+  sourceUrl: string | null;
+  mediaSha256: string | null;
+  winnerScore: number | null;
+  winnerScoreVersion: string | null;
+  workbook: Json | null;
+  rawOutput: string | null;
+  sheetRowLink: string | null;
+  promptTokens: number | null;
+  outputTokens: number | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  submittedAt: string;
+  completedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+// Computed per-ad pipeline stage (view "CorpusAdState").
+export type CorpusAdStateRow = {
+  id: string;
+  brandName: string;
+  mediaType: string;
+  adStatus: string | null;
+  winnerScore: number | null;
+  formatTag: string | null;
+  angleTag: string | null;
+  corpusIncluded: boolean;
+  mediaExpiresAt: string | null;
+  hasVideoUrl: boolean;
+  hasBrandSearchTranscript: boolean;
+  mediaId: string | null;
+  mediaStatus: string | null;
+  mediaReason: string | null;
+  mediaSha256: string | null;
+  durationSec: number | null;
+  transcriptRunId: string | null;
+  transcriptStatus: string | null;
+  segmentCount: number | null;
+  extractRunId: string | null;
+  extractStatus: string | null;
+  extractTaxonomyVersion: string | null;
+  extractError: string | null;
+  beatCount: number;
+  stage: "skipped" | "ingested" | "media" | "transcribed" | "extracted" | "needs_review" | "failed";
 };
 
 export type CopyTaxonomyCodeRow = {
@@ -721,8 +915,18 @@ export type Database = {
       ScriptScoreRun: { Row: ScriptScoreRunRow; Insert: Partial<ScriptScoreRunRow> & { id: string; runKey: string; projectId: string; scriptVersion: number; marketCode: string; inputHash: string; engineVersion: string; extractorPromptVersion: string; taxonomyVersion: string; baselineVersion: string; model: string; createdByUserId: string; contextSnapshot: Json }; Update: Partial<ScriptScoreRunRow>; Relationships: [] };
       ScriptScoreModule: { Row: ScriptScoreModuleRow; Insert: Partial<ScriptScoreModuleRow> & { runId: string; module: string; status: string; label: string; summary: string; metrics: Json }; Update: Partial<ScriptScoreModuleRow>; Relationships: [] };
       ScriptScoreFinding: { Row: ScriptScoreFindingRow; Insert: Partial<ScriptScoreFindingRow> & { id: string; runId: string; module: string; severity: string; message: string; metadata: Json }; Update: Partial<ScriptScoreFindingRow>; Relationships: [] };
+      AdMedia: { Row: AdMediaRow; Insert: Partial<AdMediaRow> & { id: string; competitorAdId: string; status: string }; Update: Partial<AdMediaRow>; Relationships: [] };
+      CorpusTranscriptRun: { Row: CorpusTranscriptRunRow; Insert: Partial<CorpusTranscriptRunRow> & { id: string; runKey: string; competitorAdId: string; mediaId: string; mediaSha256: string; model: string; promptVersion: string }; Update: Partial<CorpusTranscriptRunRow>; Relationships: [] };
+      CorpusTranscriptSegment: { Row: CorpusTranscriptSegmentRow; Insert: Partial<CorpusTranscriptSegmentRow> & { id: string; runId: string; competitorAdId: string; channel: string; orderIndex: number; tStart: number; tEnd: number; text: string }; Update: Partial<CorpusTranscriptSegmentRow>; Relationships: [] };
+      CorpusExtractRun: { Row: CorpusExtractRunRow; Insert: Partial<CorpusExtractRunRow> & { id: string; runKey: string; competitorAdId: string; transcriptRunId: string; taxonomyVersion: string; extractorPromptVersion: string; engineVersion: string; model: string }; Update: Partial<CorpusExtractRunRow>; Relationships: [] };
+      AdBeat: { Row: AdBeatRow; Insert: Partial<AdBeatRow> & { id: string; runId: string; competitorAdId: string; taxonomyVersion: string; orderIndex: number; layer: string; code: string; evidenceQuote: string; channel: string; extractorPromptVersion: string; model: string }; Update: Partial<AdBeatRow>; Relationships: [] };
+      CorpusPatternReport: { Row: CorpusPatternReportRow; Insert: Partial<CorpusPatternReportRow> & { id: string; taxonomyVersion: string; engineVersion: string; cohort: string; cohortKey: string; adCount: number; inputHash: string; report: Json }; Update: Partial<CorpusPatternReportRow>; Relationships: [] };
+      CorpusEvalRun: { Row: CorpusEvalRunRow; Insert: Partial<CorpusEvalRunRow> & { id: string; baselineVersion: string; taxonomyVersion: string; extractorPromptVersion: string; engineVersion: string; model: string; goldAdCount: number; perAd: Json }; Update: Partial<CorpusEvalRunRow>; Relationships: [] };
+      AdTeardown: { Row: AdTeardownRow; Insert: Partial<AdTeardownRow> & { id: string; competitorAdId: string; teardownId: string; sourceKind: AdTeardownRow["sourceKind"] }; Update: Partial<AdTeardownRow>; Relationships: [] };
     };
-    Views: Record<string, never>;
+    Views: {
+      CorpusAdState: { Row: CorpusAdStateRow; Relationships: [] };
+    };
     Functions: {
       match_research_evidence: {
         Args: { query_embedding: string; match_count?: number; filter_angle_slug?: string | null; filter_category?: string | null };

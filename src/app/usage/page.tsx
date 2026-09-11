@@ -14,6 +14,9 @@ const FEATURE_LABEL: Record<string, string> = {
   angle_research: "Angle research",
   concept_research: "Concept research",
   extraction: "Winner image extraction",
+  corpus_transcribe: "Corpus Miner · transcription",
+  corpus_extract: "Corpus Miner · beat extraction",
+  corpus_eval: "Corpus Miner · Gate 1 evaluation",
 };
 
 type Totals = { calls: number; input: number; output: number; thinking: number; cost: number };

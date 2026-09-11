@@ -63,6 +63,52 @@ async function getJson(pathAndQuery: string): Promise<{ payload: unknown; header
   return { payload, headers: response.headers };
 }
 
+async function postJson(path: string, body: unknown): Promise<{ payload: unknown; headers: Headers }> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method: "POST",
+    headers: { "X-API-Key": apiKey(), Accept: "application/json", "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+    cache: "no-store",
+  });
+  const payload: unknown = await response.json().catch(() => null);
+  if (!response.ok) throw new Error(errorMessage(payload, response.status));
+  return { payload, headers: response.headers };
+}
+
+export type BrandWinnersPage = BrandSearchImportResult & { total: number | null };
+
+/**
+ * One page of a brand's surviving video ads: still running although launched
+ * on or before `startedOnOrBefore`, highest EU spend first. Brands switch
+ * losing creatives off within days, so an ad still live weeks later is the
+ * closest public signal to BrandSearch's "Winning creative" badge (which the
+ * API does not expose). Costs 1 credit per returned row.
+ */
+export async function fetchBrandWinners(input: { domain: string; startedOnOrBefore: string; page: number; pageSize: number }): Promise<BrandWinnersPage> {
+  const { payload, headers } = await postJson("/v1/meta-ads/query", {
+    brand_ids: [input.domain],
+    status: "active",
+    is_video: true,
+    ad_started_to: input.startedOnOrBefore,
+    sort_by: "eu_total_spend",
+    sort_order: "desc",
+    fields: META_FIELDS,
+    page: input.page,
+    page_size: Math.min(100, Math.max(1, input.pageSize)),
+  });
+  const parsed = SpectreAdsResponseSchema.safeParse(payload);
+  if (!parsed.success) throw new Error("BrandSearch returned an unexpected Meta ads response.");
+  // Label by the tracked domain we asked for, the same way Spectre rows are.
+  const ads = parsed.data.data.map((row) => normalizeBrandSearchMetaAd({ ...row, _swipe: { ...row._swipe, brand_id: input.domain } }, "spectre"));
+  return {
+    ads,
+    total: parsed.data.pagination?.total ?? null,
+    creditsUsed: headerNumber(headers, "X-Credits-Used"),
+    dailyRemaining: headerNumber(headers, "X-Quota-Daily-Remaining"),
+    monthlyRemaining: headerNumber(headers, "X-Quota-Monthly-Remaining"),
+  };
+}
+
 type SpectreFolder = { id: string; itemCount: number };
 
 // Folder listing and folder details are unmetered (0 credits).
@@ -112,8 +158,16 @@ export async function listSpectreCompetitors(): Promise<SpectreCompetitor[]> {
  * brand. Costs 1 BrandSearch credit per returned row (incl. own-brand rows,
  * which are dropped here).
  */
-export async function fetchSpectreMetaAds(input: { maxAdsPerBrand?: number } = {}): Promise<BrandSearchImportResult> {
+export async function fetchSpectreMetaAds(input: {
+  maxAdsPerBrand?: number;
+  /** "active" (default, what /spy shows) or "all" — the corpus wants ended ads too, for their definitive run length. */
+  status?: "active" | "all";
+  /** Pages per folder. 5 suits the spy feed; a corpus pull at 25/brand needs more. */
+  maxPages?: number;
+} = {}): Promise<BrandSearchImportResult> {
   const maxAdsPerBrand = Math.min(50, Math.max(1, input.maxAdsPerBrand ?? 3));
+  const status = input.status ?? "active";
+  const maxPages = Math.min(50, Math.max(1, input.maxPages ?? 5));
   const byId = new Map<string, NormalizedBrandSearchAd>();
   let creditsUsed: number | null = null;
   let dailyRemaining: number | null = null;
@@ -126,10 +180,10 @@ export async function fetchSpectreMetaAds(input: { maxAdsPerBrand?: number } = {
     const expected = folder.itemCount * maxAdsPerBrand;
     const pageSize = Math.min(100, expected);
     let collected = 0;
-    for (let page = 1; page <= 5 && collected < expected; page++) {
+    for (let page = 1; page <= maxPages && collected < expected; page++) {
       const params = new URLSearchParams({
         max_ads_per_brand: String(maxAdsPerBrand),
-        status: "active",
+        ...(status === "active" ? { status: "active" } : {}),
         sort_by: "eu_total_spend",
         sort_order: "desc",
         fields: META_FIELDS,
