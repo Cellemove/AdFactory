@@ -28,6 +28,7 @@
     "scorer:verify-evidence": "tsx --conditions=react-server --env-file=.env scripts/verify-script-evidence.ts",
     "scorer:ingest-milanote": "tsx --conditions=react-server --env-file=.env scripts/ingest-milanote-evidence.ts",
     "scorer:embed-verbatims": "tsx --env-file=.env scripts/backfill-verbatim-embeddings.ts",
+    "scorer:import-cellumove-facts": "tsx --conditions=react-server --env-file=.env scripts/import-cellumove-facts-offers.ts",
     "verbatims:rebuild-verified": "tsx --env-file=.env scripts/rebuild-verified-verbatims.ts",
     "baseline:e2e": "tsx --env-file=.env scripts/baseline-end-to-end.ts",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",

@@ -8,8 +8,9 @@ import { FactsOffersManager } from "./FactsOffersManager";
 export const metadata: Metadata = { title: "Facts and Offers · Script Scorer" };
 export const dynamic = "force-dynamic";
 
-export default async function ScorerFactsPage() {
+export default async function ScorerFactsPage({ searchParams }: { searchParams: Promise<{ product?: string }> }) {
   await requireStrategist();
+  const query = await searchParams;
   const [productsResult, marketsResult, factsResult, offersResult] = await Promise.all([
     supabase.from("Product").select("*").order("name"),
     supabase.from("MarketProfile").select("*").order("code"),
@@ -31,6 +32,7 @@ export default async function ScorerFactsPage() {
         markets={(marketsResult.data as MarketProfileRow[]).map((row) => ({ code: row.code.toUpperCase(), name: row.name }))}
         facts={(factsResult.data ?? []) as BrandFactRow[]}
         offers={(offersResult.data ?? []) as ProductOfferRow[]}
+        initialProductId={query.product ?? null}
       />
     </div>
   );

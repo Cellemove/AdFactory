@@ -21,6 +21,14 @@ const CreateOfferSchema = CommonSchema.extend({
   validFrom: z.string().trim().nullable().optional(),
   validUntil: z.string().trim().nullable().optional(),
 });
+const UpdateEvidenceSchema = CommonSchema.omit({ productId: true }).extend({
+  kind: z.enum(["fact", "offer"]),
+  id: z.string().min(1),
+  type: z.string().trim().min(1).max(80),
+  expectedUpdatedAt: z.string().datetime({ offset: true }),
+  validFrom: z.string().trim().nullable().optional(),
+  validUntil: z.string().trim().nullable().optional(),
+});
 
 function normalizeStatement(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -112,5 +120,40 @@ export async function setFactOrOfferStatus(rawInput: { kind: "fact" | "offer"; i
     updatedAt: new Date().toISOString(),
   }).eq("id", input.id);
   if (result.error) throw new Error(result.error.message);
+  revalidateEvidencePages();
+}
+
+export async function updateFactOrOffer(rawInput: z.infer<typeof UpdateEvidenceSchema>) {
+  const actor = await requireStrategist();
+  const input = UpdateEvidenceSchema.parse(rawInput);
+  requireApprovalSource(input.status, input.sourceUrl);
+  const validFrom = input.kind === "offer" ? isoDate(input.validFrom) : null;
+  const validUntil = input.kind === "offer" ? isoDate(input.validUntil) : null;
+  if (validFrom && validUntil && validFrom > validUntil) throw new Error("Offer end date must be after its start date.");
+  const now = new Date().toISOString();
+  const commonUpdate = {
+    marketCode: input.marketCode?.toUpperCase() || null,
+    statement: input.statement,
+    sourceUrl: input.sourceUrl || null,
+    status: input.status,
+    ...approvedAudit(input.status, actor.id),
+    updatedAt: now,
+  };
+  const result = input.kind === "fact"
+    ? await supabase.from("BrandFact").update({
+        ...commonUpdate,
+        factType: input.type,
+        normalizedStatement: normalizeStatement(input.statement),
+      }).eq("id", input.id).eq("updatedAt", input.expectedUpdatedAt).select("id").maybeSingle()
+    : await supabase.from("ProductOffer").update({
+        ...commonUpdate,
+        offerType: input.type,
+        validFrom,
+        validUntil,
+      }).eq("id", input.id).eq("updatedAt", input.expectedUpdatedAt).select("id").maybeSingle();
+  if (result.error) throw new Error(result.error.message);
+  if (!result.data) {
+    throw new Error("This entry changed after you opened it. Reload the page, review the latest version, and try again.");
+  }
   revalidateEvidencePages();
 }
