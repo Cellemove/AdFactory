@@ -59,13 +59,38 @@ test("validates exact lines, quotes, and taxonomy codes", () => {
   }), /changed the source text/);
 });
 
-test("rejects taxonomy codes paired with the wrong layer", () => {
+test("derives taxonomy layers from codes instead of trusting extractor layers", () => {
   const wrongLayer = { lines: analysis.lines.map((line, index) => index === 0 ? { ...line, layer: "M" as const } : line) };
-  assert.throws(() => validateAnalyzedScript({
+  const result = validateAnalyzedScript({
     document,
     analysis: wrongLayer,
     allowedCodes: new Map([["H_OPENING", "H"], ["M_MECHANISM", "M"], ["O_CTA", "O"]] as const),
-  }), /expected H/);
+  });
+  assert.equal(result.lines[0]?.layer, "H");
+});
+
+test("normalizes OTHER from an offer-layer hint for an ambiguous CTA sentence", () => {
+  const ctaDocument: ScriptDocument = {
+    ...document,
+    modules: [{ ...document.modules[2]!, spokenText: "So I tried them, and wow." }],
+  };
+  const result = validateAnalyzedScript({
+    document: ctaDocument,
+    analysis: {
+      lines: [{
+        scriptModuleId: "m3",
+        lineIndex: 0,
+        text: "So I tried them, and wow.",
+        code: "OTHER",
+        layer: "O",
+        otherExplanation: "A reaction that does not fit the closed taxonomy.",
+        concreteSpans: [],
+        factualAssertions: [],
+      }],
+    },
+    allowedCodes: new Map([["OTHER", "OTHER"]] as const),
+  });
+  assert.equal(result.lines[0]?.layer, "OTHER");
 });
 
 test("scores structural coverage, order, and durations against five gold ads", () => {
