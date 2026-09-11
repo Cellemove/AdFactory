@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { requireStrategist } from "@/lib/authorization";
 import { parseScriptDocument } from "@/lib/cellumove/script-studio";
 import { normalizeScriptWorkflowStatus, SCRIPT_STATUS_META } from "@/lib/cellumove/script-workflow";
-import type { ScriptAssignmentRow, ScriptProjectRow } from "@/lib/database.types";
+import type { MarketProfileRow, ScriptAssignmentRow, ScriptProjectRow, ScriptScoreModuleRow, ScriptScoreRunRow, ScriptVersionRow } from "@/lib/database.types";
 import { supabase, unwrapOpt } from "@/lib/db";
 import { ScriptStudioClient } from "./ScriptStudioClient";
 import { AssignEditorControl } from "../AssignEditorControl";
@@ -15,12 +15,13 @@ export const dynamic = "force-dynamic";
 export default async function ScriptDetailPage({ params }: { params: Promise<{ id: string }> }) {
   await requireStrategist();
   const { id } = await params;
-  const [projectRaw, versionsRes, sourcesRes, strategistRes, editorRes] = await Promise.all([
+  const [projectRaw, versionsRes, sourcesRes, strategistRes, editorRes, marketsRes] = await Promise.all([
     unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", id).maybeSingle()),
     supabase.from("ScriptVersion").select("*").eq("projectId", id).order("version", { ascending: false }),
     supabase.from("ScriptSource").select("*").eq("projectId", id).order("createdAt", { ascending: true }),
     supabase.from("AppUser").select("*").then((result) => result),
     supabase.from("ScriptAssignment").select("*").eq("projectId", id).maybeSingle(),
+    supabase.from("MarketProfile").select("*").order("code"),
   ]);
   const project = projectRaw as ScriptProjectRow | null;
   if (!project) notFound();
@@ -34,6 +35,21 @@ export default async function ScriptDetailPage({ params }: { params: Promise<{ i
   const workflowStatus = normalizeScriptWorkflowStatus(project.status, assignment?.status);
   const statusMeta = SCRIPT_STATUS_META[workflowStatus];
   const handoffVersion = (versionsRes.data ?? []).find((version) => version.origin === "assigned")?.version ?? null;
+  const versions = (versionsRes.data ?? []) as ScriptVersionRow[];
+  const namedVersion = versions.find((item) => item.version === project.currentVersion) ?? null;
+  const namedVersionDocument = namedVersion ? parseScriptDocument(namedVersion.document) : null;
+  const markets = (marketsRes.data ?? []) as MarketProfileRow[];
+  const scorerMarkets = markets.length ? markets.map((market) => ({ code: market.code.toUpperCase(), name: market.name })) : [{ code: "PH", name: "Philippines" }, { code: "US", name: "United States" }];
+
+  const latestScoreRes = await supabase.from("ScriptScoreRun").select("*").eq("projectId", project.id).eq("scriptVersion", project.currentVersion).order("createdAt", { ascending: false }).limit(1).maybeSingle();
+  const latestScore = latestScoreRes.data as ScriptScoreRunRow | null;
+  const scoreModulesRes = latestScore
+    ? await supabase.from("ScriptScoreModule").select("*").eq("runId", latestScore.id)
+    : null;
+  const scorerSetupError = latestScoreRes.error?.message ?? scoreModulesRes?.error?.message ?? marketsRes.error?.message ?? null;
+  const initialScore = latestScore && !scoreModulesRes?.error
+    ? { run: latestScore, modules: (scoreModulesRes?.data ?? []) as ScriptScoreModuleRow[] }
+    : null;
 
   return (
     <div className="space-y-5">
@@ -48,7 +64,7 @@ export default async function ScriptDetailPage({ params }: { params: Promise<{ i
         </div>
       </header>
 
-      <ScriptStudioClient projectId={project.id} initialDocument={document} initialRevision={project.revision} initialVersion={project.currentVersion} initialHandoffVersion={handoffVersion} initialStatus={workflowStatus} editorName={editor?.username ?? null} />
+      <ScriptStudioClient projectId={project.id} initialDocument={document} initialRevision={project.revision} initialVersion={project.currentVersion} initialNamedVersionDocument={namedVersionDocument} initialHandoffVersion={handoffVersion} initialStatus={workflowStatus} editorName={editor?.username ?? null} scorerMarkets={scorerMarkets} initialScore={initialScore} scorerSetupError={scorerSetupError} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="card"><h2 className="font-semibold">Sources</h2><div className="divider" />{(sourcesRes.data ?? []).length === 0 ? <p className="text-sm text-ink-500">No imported sources.</p> : <ul className="space-y-2 text-sm">{(sourcesRes.data ?? []).map((source) => <li key={source.id}><span className="tag mr-2">{source.sourceType}</span>{source.url ? <a className="hover:underline" href={source.url} target="_blank" rel="noreferrer">{source.title}</a> : source.title}</li>)}</ul>}</section>
