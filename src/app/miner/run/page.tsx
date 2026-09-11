@@ -72,7 +72,7 @@ export default async function MinerRunPage() {
         <MinerTabs active="run" />
         <div className="card border-amber-300 bg-amber-50">
           <h2 className="font-semibold text-amber-900">Database setup required</h2>
-          <p className="mt-2 text-sm text-amber-800">Apply <code>migrations/017_corpus_miner.sql</code> through <code>020_corpus_winner_pick.sql</code>, then reload this page.</p>
+          <p className="mt-2 text-sm text-amber-800">Apply <code>migrations/017_corpus_miner.sql</code> through <code>021_corpus_opt_in.sql</code>, then reload this page.</p>
           <p className="mt-2 text-xs text-amber-700">{error instanceof Error ? error.message : String(error)}</p>
         </div>
       </div>

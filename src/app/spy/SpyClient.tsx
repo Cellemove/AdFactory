@@ -146,7 +146,7 @@ export function SpyClient({
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Spy</h1>
           <p className="text-sm text-ink-500">
-            The active Meta ads of the competitors you track in BrandSearch Spectre, top spenders first.
+            About 100 winning Meta ads from the competitors you track in BrandSearch Spectre, spread evenly across brands — ads still running 3+ weeks after launch, top spenders first.
           </p>
         </div>
         <div className="flex items-center gap-3">

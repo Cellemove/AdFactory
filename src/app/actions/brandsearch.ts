@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { requireStrategist } from "@/lib/authorization";
 import { supabase, newId } from "@/lib/db";
 import { BRANDSEARCH_MEDIA_TTL_MS, isFeedStale } from "@/lib/brandsearch";
-import { fetchSpectreMetaAds } from "@/lib/brandsearch.server";
 import { toCompetitorAdRow } from "@/lib/cellumove/corpus/ingest";
+import { WINNER_RULE_VERSION } from "@/lib/cellumove/corpus/winners";
+import { fetchWinnerPool } from "@/lib/cellumove/corpus/winners.server";
 import type { SpyAd } from "./spy";
 
 const TABLE_MISSING = "PGRST205";
@@ -53,15 +54,16 @@ async function freshCachedFeed(): Promise<SpyFeedResult | null> {
 }
 
 /**
- * Fetch the active Meta ads of every competitor tracked in BrandSearch Spectre
- * (top spenders per brand) and cache them as the spy feed. The page reads the
- * newest cached feed; this runs on first load, when the cache's media links
- * expire, or when the user hits Refresh.
+ * Fetch ~100 winning Meta ads spread evenly across every competitor tracked in
+ * BrandSearch Spectre — the same rule as the Corpus Miner's winners (still
+ * running 3+ weeks after launch, highest spend first), images included — and
+ * cache them as the spy feed. The page reads the newest cached feed; this runs
+ * on first load, when the cache's media links expire, or on Refresh.
  * `ifStale` (the automatic path) re-checks the cache first, so several viewers
  * opening an expired page don't each spend credits on the same refresh.
  */
 export async function importBrandSearchMetaAds(input: {
-  maxAdsPerBrand?: number;
+  target?: number;
   ifStale?: boolean;
 } = {}): Promise<SpyFeedResult> {
   await requireStrategist();
@@ -69,9 +71,11 @@ export async function importBrandSearchMetaAds(input: {
     const cached = await freshCachedFeed();
     if (cached) return cached;
   }
-  const imported = await fetchSpectreMetaAds({ maxAdsPerBrand: input.maxAdsPerBrand });
+  const pool = await fetchWinnerPool({ target: input.target, videoOnly: false });
+  // Brand by brand, each competitor's strongest winner first.
+  const imported = { ...pool, ads: [...pool.picked.values()].flat() };
   if (imported.ads.length === 0) {
-    throw new Error("None of your Spectre competitors have active Meta ads right now.");
+    throw new Error("None of your Spectre competitors have an ad that has kept running for 3+ weeks.");
   }
 
   const now = new Date();
@@ -97,6 +101,7 @@ export async function importBrandSearchMetaAds(input: {
 
   let durableIndexUpdated = true;
   // Same row shape the Corpus Miner writes, so both paths share the unique key.
+  // No corpusIncluded here: saving a Spy ad never changes the corpus (migration 021).
   const rows = imported.ads.map((ad) => toCompetitorAdRow(ad, fetchedAt, mediaExpiresAt));
   const indexed = await supabase.from("CompetitorAd").upsert(rows, {
     onConflict: "provider,platform,externalId",
@@ -118,11 +123,14 @@ export async function importBrandSearchMetaAds(input: {
       source: "brandsearch",
       cohort: "spectre",
       platform: "meta",
+      selection: WINNER_RULE_VERSION,
+      target: pool.target,
+      minDays: pool.minDays,
       creditsUsed: imported.creditsUsed,
     },
     status: "pending",
     notes: durableIndexUpdated
-      ? "BrandSearch Spectre competitor import; provider signals are performance proxies, not ROAS proof."
+      ? `BrandSearch Spectre winners (still running ${pool.minDays}+ days, spread across competitors); provider signals are performance proxies, not ROAS proof.`
       : "BrandSearch Spectre competitor import; run migration 016 to enable durable provider indexing.",
     createdAt: fetchedAt,
   });

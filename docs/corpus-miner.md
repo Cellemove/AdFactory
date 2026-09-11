@@ -6,7 +6,7 @@ Architecture rule: **structure comes from the data, the model only fills fixed s
 
 ## Setup
 
-1. Apply `migrations/017_corpus_miner.sql` through `020_corpus_winner_pick.sql` in order (Supabase SQL editor or MCP `apply_migration`).
+1. Apply `migrations/017_corpus_miner.sql` through `021_corpus_opt_in.sql` in order (Supabase SQL editor or MCP `apply_migration`).
 2. `.env` needs `BRANDSEARCH_API_KEY`, the Supabase service-role values, and Vertex credentials (`GOOGLE_CLOUD_PROJECT` + ADC or `GOOGLE_APPLICATION_CREDENTIALS_JSON`). Optional: `CORPUS_TAXONOMY_VERSION`, `CORPUS_TRANSCRIBE_MODEL`, `CORPUS_EXTRACT_MODEL`. `miner:teardown` needs `TEARDOWN_API_BASE_URL` pointing at the live Teardown API (`https://teardown-api-67886675912.us-central1.run.app/api/v1`); it only uses Teardown's public endpoints, so no token.
 3. Downloaded videos live in the private Supabase Storage bucket `corpus-media` at `<adId>/<sha256>.<ext>` (`AdMedia.storagePath`; the hash is re-verified on every read). One copy is shared by the CLI, local dev and the deployed app.
 
@@ -48,6 +48,8 @@ Compare `beats[]` (each with `evidenceQuote`, `matchScore`, `startSec`/`endSec`,
 ## Winners corpus
 
 The client brief: about 100 winning ads, spread across competitors, are enough to learn tone and voice. BrandSearch's "Winning Batch / Winning creative" badge is not in its API, so `miner:winners` rebuilds the signal behind it: brands switch losing creatives off within days, so a video still live three weeks after launch, with spend behind it, is a winner. Each ad's `winnerPick` records the rule version, its rank within its brand and when it was picked. Re-running replaces the pick; set-aside ads keep their media, transcripts and beats. `miner:ingest` (25 per brand, including stopped ads) remains for a larger, unfiltered pull.
+
+The `/spy` feed uses the same rule and the same fetch (`fetchWinnerPool`), with image ads included: ~100 winners spread across competitors per refresh (~1 credit per ad; the feed refreshes itself when its media links expire, about every 3 days). Only the two corpus pulls opt ads into the corpus — a Spy refresh saves its ads to `CompetitorAd` but never changes the corpus (migration 021 made `corpusIncluded` default to false).
 
 ## Teardown workbooks (winners only)
 

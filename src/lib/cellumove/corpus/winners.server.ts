@@ -39,9 +39,28 @@ export type CollectWinnersResult = {
 
 const spendOf = (ad: NormalizedBrandSearchAd) => (typeof ad.metrics.euTotalSpend === "number" ? ad.metrics.euTotalSpend : 0);
 
-export async function collectWinners(input: CollectWinnersInput = {}): Promise<CollectWinnersResult> {
+export type WinnerPool = {
+  /** Picked ads per competitor domain, best first, already labelled as winners. */
+  picked: Map<string, NormalizedBrandSearchAd[]>;
+  perBrand: Array<{ domain: string; picked: number; available: number | null }>;
+  empty: string[];
+  target: number;
+  minDays: number;
+  cutoff: string;
+  creditsUsed: number;
+  dailyRemaining: number | null;
+  monthlyRemaining: number | null;
+};
+
+/**
+ * Fetch ~`target` winners spread evenly across every Spectre competitor and
+ * balance them. Writes nothing — the corpus (collectWinners) and the /spy feed
+ * both build on this. `videoOnly: false` also takes image ads.
+ */
+export async function fetchWinnerPool(input: { target?: number; minDays?: number; videoOnly?: boolean } = {}): Promise<WinnerPool> {
   const target = Math.max(1, Math.min(500, input.target ?? WINNER_DEFAULT_TARGET));
   const minDays = Math.max(1, input.minDays ?? WINNER_DEFAULT_MIN_DAYS);
+  const videoOnly = input.videoOnly ?? true;
   const competitors = await listSpectreCompetitors();
   if (!competitors.length) throw new Error("No competitors are tracked in BrandSearch Spectre yet.");
 
@@ -58,12 +77,12 @@ export async function collectWinners(input: CollectWinnersInput = {}): Promise<C
   const fetchNextPage = async (domain: string) => {
     const state = progress.get(domain)!;
     state.page += 1;
-    const page = await fetchBrandWinners({ domain, startedOnOrBefore: cutoff, page: state.page, pageSize: share });
+    const page = await fetchBrandWinners({ domain, startedOnOrBefore: cutoff, page: state.page, pageSize: share, videoOnly });
     creditsUsed += page.creditsUsed ?? page.ads.length;
     dailyRemaining = page.dailyRemaining ?? dailyRemaining;
     monthlyRemaining = page.monthlyRemaining ?? monthlyRemaining;
     for (const ad of page.ads) {
-      if (ad.mediaType !== "video" || seen.has(ad.externalId)) continue;
+      if ((videoOnly && ad.mediaType !== "video") || seen.has(ad.externalId)) continue;
       seen.add(ad.externalId);
       pool.get(domain)!.push(ad);
     }
@@ -88,18 +107,43 @@ export async function collectWinners(input: CollectWinnersInput = {}): Promise<C
   }
 
   for (const ads of pool.values()) ads.sort((a, b) => spendOf(b) - spendOf(a));
-  const picked = balancedTrim(pool, target, spendOf);
+  const trimmed = balancedTrim(pool, target, spendOf);
+  // Relabel as winners: the survival itself is the evidence.
+  const picked = new Map([...trimmed].map(([domain, ads]) => [domain, ads.map((ad): NormalizedBrandSearchAd => {
+    const days = typeof ad.metrics.totalActiveTimeSec === "number" ? Math.floor(ad.metrics.totalActiveTimeSec / 86_400) : null;
+    return {
+      ...ad,
+      winnerEvidence: "probable_winner",
+      evidenceReasons: [`still running${days != null ? ` after ${days} days` : ` ${minDays}+ days after launch`}`, ...ad.evidenceReasons.filter((reason) => !reason.endsWith("days active"))],
+    };
+  })]));
+
+  return {
+    picked,
+    perBrand: competitors.map((brand) => ({ domain: brand.domain, picked: picked.get(brand.domain)?.length ?? 0, available: progress.get(brand.domain)!.total })),
+    empty: competitors.filter((brand) => !(picked.get(brand.domain)?.length)).map((brand) => brand.domain),
+    target,
+    minDays,
+    cutoff,
+    creditsUsed,
+    dailyRemaining,
+    monthlyRemaining,
+  };
+}
+
+/** Pick ~100 video winners and make them the corpus. */
+export async function collectWinners(input: CollectWinnersInput = {}): Promise<CollectWinnersResult> {
+  const pool = await fetchWinnerPool({ target: input.target, minDays: input.minDays, videoOnly: true });
+  const { target, minDays, cutoff } = pool;
 
   const now = new Date();
   const pickedAt = now.toISOString();
   const mediaExpiresAt = new Date(now.getTime() + BRANDSEARCH_MEDIA_TTL_MS).toISOString();
   const rows: WinnerRow[] = [];
-  for (const [domain, ads] of picked) {
+  for (const [domain, ads] of pool.picked) {
     ads.forEach((ad, index) => {
-      const days = typeof ad.metrics.totalActiveTimeSec === "number" ? Math.floor(ad.metrics.totalActiveTimeSec / 86_400) : null;
-      const row = toCompetitorAdRow({ ...ad, winnerEvidence: "probable_winner", evidenceReasons: [`still running${days != null ? ` after ${days} days` : ` ${minDays}+ days after launch`}`, ...ad.evidenceReasons.filter((reason) => !reason.endsWith("days active"))] }, pickedAt, mediaExpiresAt);
       rows.push({
-        ...row,
+        ...toCompetitorAdRow(ad, pickedAt, mediaExpiresAt),
         corpusIncluded: true,
         winnerPick: { ruleVersion: WINNER_RULE_VERSION, rule: winnerRuleLabel(minDays), minDays, cutoff, brand: domain, brandRank: index + 1, target, pickedAt },
       });
@@ -134,16 +178,16 @@ export async function collectWinners(input: CollectWinnersInput = {}): Promise<C
 
   return {
     rows,
-    perBrand: competitors.map((brand) => ({ domain: brand.domain, picked: picked.get(brand.domain)?.length ?? 0, available: progress.get(brand.domain)!.total })),
-    empty: competitors.filter((brand) => !(picked.get(brand.domain)?.length)).map((brand) => brand.domain),
+    perBrand: pool.perBrand,
+    empty: pool.empty,
     newIds: ids.filter((id) => !existing.has(id)),
     videoChangedIds: rows.filter((row) => row.videoUrl && existing.get(row.id) !== row.videoUrl).map((row) => row.id),
     excluded: toExclude.length,
     target,
     cutoff,
-    creditsUsed,
-    dailyRemaining,
-    monthlyRemaining,
+    creditsUsed: pool.creditsUsed,
+    dailyRemaining: pool.dailyRemaining,
+    monthlyRemaining: pool.monthlyRemaining,
     written: !input.dryRun,
   };
 }

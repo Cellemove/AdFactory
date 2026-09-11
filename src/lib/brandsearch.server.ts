@@ -78,17 +78,17 @@ async function postJson(path: string, body: unknown): Promise<{ payload: unknown
 export type BrandWinnersPage = BrandSearchImportResult & { total: number | null };
 
 /**
- * One page of a brand's surviving video ads: still running although launched
+ * One page of a brand's surviving ads (videos only unless `videoOnly` is false): still running although launched
  * on or before `startedOnOrBefore`, highest EU spend first. Brands switch
  * losing creatives off within days, so an ad still live weeks later is the
  * closest public signal to BrandSearch's "Winning creative" badge (which the
  * API does not expose). Costs 1 credit per returned row.
  */
-export async function fetchBrandWinners(input: { domain: string; startedOnOrBefore: string; page: number; pageSize: number }): Promise<BrandWinnersPage> {
+export async function fetchBrandWinners(input: { domain: string; startedOnOrBefore: string; page: number; pageSize: number; videoOnly?: boolean }): Promise<BrandWinnersPage> {
   const { payload, headers } = await postJson("/v1/meta-ads/query", {
     brand_ids: [input.domain],
     status: "active",
-    is_video: true,
+    ...(input.videoOnly === false ? {} : { is_video: true }),
     ad_started_to: input.startedOnOrBefore,
     sort_by: "eu_total_spend",
     sort_order: "desc",

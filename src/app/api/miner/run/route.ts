@@ -64,7 +64,7 @@ export async function POST(request: Request): Promise<Response> {
     const message = error instanceof Error ? error.message : String(error);
     const setupRequired = /schema cache|relation .* does not exist|Could not find the table|bucket not found/i.test(message);
     return Response.json(
-      { error: setupRequired ? `Database setup is incomplete (${message}). Apply migrations 017–020.` : message },
+      { error: setupRequired ? `Database setup is incomplete (${message}). Apply migrations 017–021.` : message },
       { status: setupRequired ? 503 : 500 },
     );
   }

@@ -88,7 +88,7 @@ export default async function MinerPage({ searchParams }: { searchParams: Promis
     return (
       <div className="space-y-6">
         <header><h1 className="text-2xl font-semibold tracking-tight">Corpus Miner</h1><p className="mt-1 text-sm text-ink-500">Competitor ads → two-channel transcripts → coded beats → mined patterns.</p></header>
-        <div className="card border-amber-300 bg-amber-50"><h2 className="font-semibold text-amber-900">Database setup required</h2><p className="mt-2 text-sm text-amber-800">Apply <code>migrations/017_corpus_miner.sql</code> through <code>020_corpus_winner_pick.sql</code>, then reload this page.</p><p className="mt-2 text-xs text-amber-700">{error instanceof Error ? error.message : String(error)}</p></div>
+        <div className="card border-amber-300 bg-amber-50"><h2 className="font-semibold text-amber-900">Database setup required</h2><p className="mt-2 text-sm text-amber-800">Apply <code>migrations/017_corpus_miner.sql</code> through <code>021_corpus_opt_in.sql</code>, then reload this page.</p><p className="mt-2 text-xs text-amber-700">{error instanceof Error ? error.message : String(error)}</p></div>
       </div>
     );
   }

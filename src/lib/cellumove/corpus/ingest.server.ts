@@ -16,7 +16,7 @@ export type IngestCorpusInput = {
 };
 
 export type IngestCorpusResult = {
-  rows: CompetitorAdUpsertRow[];
+  rows: Array<CompetitorAdUpsertRow & { corpusIncluded: boolean }>;
   /** Ids that did not exist before this run. */
   newIds: string[];
   /** Ids whose video URL changed (or appeared) — their media should be (re)downloaded promptly. */
@@ -39,7 +39,8 @@ export async function ingestSpectreCorpus(input: IngestCorpusInput = {}): Promis
   const now = new Date();
   const fetchedAt = now.toISOString();
   const mediaExpiresAt = new Date(now.getTime() + BRANDSEARCH_MEDIA_TTL_MS).toISOString();
-  const rows = imported.ads.map((ad) => toCompetitorAdRow(ad, fetchedAt, mediaExpiresAt));
+  // A corpus pull opts its ads in; /spy saves ads without touching the corpus (migration 021).
+  const rows = imported.ads.map((ad) => ({ ...toCompetitorAdRow(ad, fetchedAt, mediaExpiresAt), corpusIncluded: true }));
 
   const ids = rows.map((row) => row.id);
   const existingById = new Map<string, { videoUrl: string | null }>();
