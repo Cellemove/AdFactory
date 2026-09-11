@@ -26,7 +26,7 @@ export type MilanoteScriptExtraction = z.infer<typeof MilanoteScriptExtractionSc
 export function normalizeMilanoteExtraction(value: unknown): MilanoteScriptExtraction {
   const parsed = MilanoteScriptExtractionSchema.parse(value);
   const sections = parsed.sections
-    .filter((section) => !isExcludedSection(section))
+    .filter((section) => !isExcludedMilanoteSection(section))
     .map(removeRepeatedHeading)
     .filter((section) => section.content.trim().length > 0);
   if (!sections.length) {
@@ -53,7 +53,7 @@ export function isPdfBytes(bytes: Uint8Array): boolean {
     && bytes[4] === 0x2d;
 }
 
-function isExcludedSection(section: { label: string; content: string }): boolean {
+export function isExcludedMilanoteSection(section: { label: string; content: string }): boolean {
   return EXCLUDED_LABEL_PATTERN.test(section.label) || EXCLUDED_CONTENT_PATTERN.test(section.content);
 }
 

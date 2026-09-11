@@ -23,6 +23,18 @@ type Filters = {
 };
 type Metrics = { spend: number | null; roas: number | null; hookRate: number | null; holdRate: number | null; cpc: number | null; cpatc: number | null };
 type Draft = EvidencePatch & { metrics: Metrics };
+type MilanoteSummary = {
+  jobsTotal: number;
+  jobsComplete: number;
+  jobsNeedsReview: number;
+  jobsFailed: number;
+  recordsTotal: number;
+  recordsMatched: number;
+  recordsUpdated: number;
+  recordsPreserved: number;
+  recordsAvailable: number;
+  recordsNeedsReview: number;
+};
 
 const emptyFilters: Filters = { q: "", sheetName: "all", sourceType: "all", reviewStatus: "all", evidenceLevel: "all", angleSlug: "all", hasScript: "all", conflicts: "all" };
 const emptyMetrics: Metrics = { spend: null, roas: null, hookRate: null, holdRate: null, cpc: null, cpatc: null };
@@ -44,6 +56,8 @@ export function EvidenceLibraryClient({ angles, markets }: { angles: Option[]; m
   const [importRunId, setImportRunId] = useState<string | null>(null);
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [importCounts, setImportCounts] = useState<Record<string, unknown> | null>(null);
+  const [milanoteEnriching, setMilanoteEnriching] = useState(false);
+  const [milanoteSummary, setMilanoteSummary] = useState<MilanoteSummary | null>(null);
   const [bulkField, setBulkField] = useState<"angleSlug" | "format" | "marketCode" | "evidenceLevel" | "reviewStatus">("reviewStatus");
   const [bulkValue, setBulkValue] = useState("shortlisted");
 
@@ -106,6 +120,24 @@ export function EvidenceLibraryClient({ angles, markets }: { angles: Option[]; m
     }
     setImportRunId(body.runId);
     setImportStatus(body.status ?? "pending");
+  };
+
+  const ingestMilanote = async () => {
+    setError(null);
+    setMessage(null);
+    setMilanoteEnriching(true);
+    try {
+      const response = await fetch("/api/scorer/evidence/enrich-milanote", { method: "POST" });
+      const body = await response.json() as { summary?: MilanoteSummary; error?: string };
+      if (!response.ok || !body.summary) throw new Error(body.error ?? "Could not ingest Milanote evidence.");
+      setMilanoteSummary(body.summary);
+      setMessage(`Milanote ingestion finished: ${body.summary.recordsAvailable} of ${body.summary.recordsTotal} linked entries now have script text. ${body.summary.recordsNeedsReview} require source review.`);
+      await loadEvidence();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setMilanoteEnriching(false);
+    }
   };
 
   const openEvidence = async (id: string) => {
@@ -212,6 +244,16 @@ export function EvidenceLibraryClient({ angles, markets }: { angles: Option[]; m
         </div>
         <div className="grid gap-px bg-ink-200 sm:grid-cols-3">
           {GOOGLE_SHEET_TABS.map((tab) => <div key={tab} className="bg-white p-4"><p className="text-xs font-semibold text-ink-700">{tab}</p><p className="mt-1 text-xs text-ink-500">{perTabCount(importCounts, tab)} candidates in latest run</p></div>)}
+        </div>
+        <div className="flex flex-wrap items-center justify-between gap-4 border-t border-ink-200 bg-violet-50 p-5">
+          <div className="max-w-2xl">
+            <div className="flex items-center gap-2"><h3 className="text-sm font-semibold text-violet-950">Milanote script ingestion</h3><span className="tag">exact text</span></div>
+            <p className="mt-1 text-xs leading-5 text-violet-800">Loads linked boards, matches each external ID or unique title, and stores final script cards. System prompts and prompt-only planning cards are excluded; deconstructions remain a separate field. Script cards may still include their authored visual or production directions. Manual edits are preserved.</p>
+            {milanoteSummary && <p className="mt-2 text-xs font-semibold text-violet-950">{milanoteSummary.recordsAvailable}/{milanoteSummary.recordsTotal} scripts available · {milanoteSummary.jobsComplete}/{milanoteSummary.jobsTotal} boards complete · {milanoteSummary.recordsNeedsReview} entries need review</p>}
+          </div>
+          <button className="btn btn-primary" onClick={() => void ingestMilanote()} disabled={milanoteEnriching}>
+            {milanoteEnriching ? "Ingesting Milanotes…" : "Ingest all Milanotes"}
+          </button>
         </div>
       </section>
 
@@ -373,7 +415,7 @@ function EvidenceDrawer({ item, draft, revisions, angles, markets, saving, onCha
 
         {milanoteLink && <section className="rounded-xl border border-violet-200 bg-violet-50 p-4">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div className="max-w-xl"><h3 className="text-sm font-semibold text-violet-950">Import from Milanote</h3><p className="mt-1 text-xs leading-5 text-violet-800">Open the linked board, export it as PDF (Board menu → Export → PDF), then upload it here. Only the cards inside columns titled HOOK 1/2/3, BODY, SCRIPT or CTA are read, verbatim, into Exact script text; a column titled Deconstruction of the ads is copied into Ad deconstruction; system prompts, instructions, research and reference material are never opened.</p></div>
+            <div className="max-w-xl"><h3 className="text-sm font-semibold text-violet-950">Import from Milanote</h3><p className="mt-1 text-xs leading-5 text-violet-800">The library can ingest this linked board automatically. PDF upload remains available as a fallback: export the board as PDF, then upload it here. Final script cards—including authored visual directions—are stored in Exact script text; deconstruction is separate; system prompts and prompt-only planning cards are excluded.</p></div>
             <div className="flex flex-wrap gap-2"><a className="btn text-xs" href={milanoteLink.url} target="_blank" rel="noreferrer">Open Milanote</a><button className="btn btn-primary text-xs" type="button" disabled={saving || extracting} onClick={() => fileInputRef.current?.click()}>{extracting ? "Extracting…" : "Upload Milanote PDF"}</button></div>
           </div>
           <input ref={fileInputRef} className="hidden" type="file" accept="application/pdf,.pdf" onChange={(event) => { const file = event.target.files?.[0]; if (file) void extractPdf(file); }} />

@@ -48,17 +48,23 @@ export default async function ScorerPage({ searchParams }: { searchParams: Promi
   const markets = (marketsResult.data ?? []) as MarketProfileRow[];
   const marketOptions = markets.length ? markets.map((market) => ({ code: market.code.toUpperCase(), name: market.name })) : [{ code: "PH", name: "Philippines" }, { code: "US", name: "United States" }];
   const readiness = [
-    { label: "Gold baseline ads", value: goldCountResult.count ?? 0, ready: (goldCountResult.count ?? 0) >= 5, note: "Needs ≥5 per matching cohort" },
-    { label: "Verified embedded verbatims", value: verbatimCountResult.count ?? 0, ready: (verbatimCountResult.count ?? 0) >= 10, note: "Needs ≥10 per audience cohort" },
-    { label: "Approved facts and offers", value: (factCountResult.count ?? 0) + (offerCountResult.count ?? 0), ready: ((factCountResult.count ?? 0) + (offerCountResult.count ?? 0)) > 0, note: "Scoped again by product and market" },
-    { label: "Evidence scripts attached", value: evidenceCountResult.count ?? 0, ready: (evidenceCountResult.count ?? 0) >= 5, note: "Source-only rows do not count; review and beat coding still required" },
+    { label: "Gold baseline ads", value: goldCountResult.count ?? 0, ready: (goldCountResult.count ?? 0) >= 5, note: "Needs ≥5 per matching cohort", href: "/scorer/gold" },
+    { label: "Verified embedded verbatims", value: verbatimCountResult.count ?? 0, ready: (verbatimCountResult.count ?? 0) >= 10, note: "Needs ≥10 per audience cohort", href: "/verbatims" },
+    { label: "Approved facts and offers", value: (factCountResult.count ?? 0) + (offerCountResult.count ?? 0), ready: ((factCountResult.count ?? 0) + (offerCountResult.count ?? 0)) > 0, note: "Scoped again by product and market", href: "/scorer/facts" },
+    { label: "Evidence scripts attached", value: evidenceCountResult.count ?? 0, ready: (evidenceCountResult.count ?? 0) >= 5, note: "Source-only rows do not count; review and beat coding still required", href: "/scorer/evidence" },
   ];
 
   return (
     <div className="space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-4"><div><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-semibold tracking-tight">Script Scorer</h1><span className="tag tag-warn">Experimental</span></div><p className="mt-1 max-w-3xl text-sm text-ink-500">Score an immutable version across four independent modules. There is deliberately no overall score.</p></div><Link href="/scorer/evidence" className="btn-secondary">Manage evidence →</Link></header>
       <section className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-        {readiness.map((item) => <div key={item.label} className="card"><div className="flex items-start justify-between gap-3"><div className="text-sm font-medium">{item.label}</div><span className={item.ready ? "tag tag-ok" : "tag tag-warn"}>{item.ready ? "Available" : "Limited"}</span></div><div className="mt-3 text-2xl font-semibold">{item.value}</div><p className="mt-1 text-xs text-ink-500">{item.note}</p></div>)}
+        {readiness.map((item) => (
+          <Link key={item.label} href={item.href} aria-label={`Manage ${item.label}`} className="card card-interactive group block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900 focus-visible:ring-offset-2">
+            <div className="flex items-start justify-between gap-3"><div className="text-sm font-medium">{item.label}</div><span className={item.ready ? "tag tag-ok" : "tag tag-warn"}>{item.ready ? "Available" : "Limited"}</span></div>
+            <div className="mt-3 text-2xl font-semibold">{item.value}</div>
+            <div className="mt-1 flex items-end justify-between gap-3"><p className="text-xs text-ink-500">{item.note}</p><span className="shrink-0 text-xs font-semibold text-ink-700 transition group-hover:translate-x-0.5">Manage →</span></div>
+          </Link>
+        ))}
       </section>
       {projects.length ? (
         <ScorerClient
