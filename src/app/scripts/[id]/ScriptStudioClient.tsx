@@ -6,6 +6,7 @@ import { assistScriptModule, generateScriptProjectDraft, saveScriptDocument, sen
 import { appendHookAlternatives, MAX_SCRIPT_HOOK_ALTERNATIVES } from "@/lib/cellumove/script-hook-alternatives";
 import { inspectScriptQuality, renderScriptDownload, scriptDownloadFilename, type ScriptDocument, type ScriptModule } from "@/lib/cellumove/script-studio";
 import { canEditScript, canSendScript, SCRIPT_STATUS_META, type ScriptWorkflowStatus } from "@/lib/cellumove/script-workflow";
+import { ScriptScoreWidget, type ScriptScoreWidgetResult } from "./ScriptScoreWidget";
 
 type View = "modules" | "document";
 
@@ -36,11 +37,13 @@ function AutoResizeTextarea({ className = "", onInput, value, ...props }: Textar
   );
 }
 
-export function ScriptStudioClient({ projectId, initialDocument, initialRevision, initialVersion, initialHandoffVersion, initialStatus, editorName }: { projectId: string; initialDocument: ScriptDocument; initialRevision: number; initialVersion: number; initialHandoffVersion: number | null; initialStatus: ScriptWorkflowStatus; editorName: string | null }) {
+export function ScriptStudioClient({ projectId, initialDocument, initialRevision, initialVersion, initialNamedVersionDocument, initialHandoffVersion, initialStatus, editorName, scorerMarkets, initialScore, scorerSetupError }: { projectId: string; initialDocument: ScriptDocument; initialRevision: number; initialVersion: number; initialNamedVersionDocument: ScriptDocument | null; initialHandoffVersion: number | null; initialStatus: ScriptWorkflowStatus; editorName: string | null; scorerMarkets: Array<{ code: string; name: string }>; initialScore: ScriptScoreWidgetResult | null; scorerSetupError: string | null }) {
   const router = useRouter();
   const [document, setDocument] = useState(initialDocument);
   const [revision, setRevision] = useState(initialRevision);
   const [version, setVersion] = useState(initialVersion);
+  const [namedVersionDocument, setNamedVersionDocument] = useState<ScriptDocument | null>(initialNamedVersionDocument);
+  const [lastSavedDocument, setLastSavedDocument] = useState(initialDocument);
   const [handoffVersion, setHandoffVersion] = useState(initialHandoffVersion);
   const [status, setStatus] = useState(initialStatus);
   const [view, setView] = useState<View>("modules");
@@ -69,6 +72,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
   const editable = canEditScript(status);
   const sendable = canSendScript(status);
   const assistModule = document.modules.find((module) => module.id === assistModuleId) ?? null;
+  const draftMatchesVersion = useMemo(() => namedVersionDocument !== null && JSON.stringify(document) === JSON.stringify(namedVersionDocument), [document, namedVersionDocument]);
 
   useEffect(() => {
     if (!assistModuleId) return;
@@ -141,6 +145,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
       try {
         const result = await saveScriptDocument({ projectId, expectedRevision: revision, document });
         setRevision(result.revision);
+        setLastSavedDocument(document);
         setMessage(`Saved revision ${result.revision}.`);
       } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
     });
@@ -153,6 +158,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
       try {
         const result = await snapshotScriptProject({ projectId, changeSummary: summary });
         setVersion(result.version);
+        setNamedVersionDocument(lastSavedDocument);
         setMessage(`Created version ${result.version}.`);
       } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
     });
@@ -165,6 +171,8 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
         setDocument(result.document);
         setRevision(result.revision);
         setVersion(result.version);
+        setLastSavedDocument(result.document);
+        setNamedVersionDocument(result.document);
         setMessage(`AI filled every unlocked module using the project's resources. Created version ${result.version}.`);
       } catch (error) { setMessage(error instanceof Error ? error.message : String(error)); }
     });
@@ -246,6 +254,8 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
         const result = await sendScriptProjectToEditor({ projectId, expectedRevision: revision, document });
         setRevision(result.revision);
         setVersion(result.version);
+        setLastSavedDocument(document);
+        setNamedVersionDocument(document);
         setHandoffVersion(result.version);
         setStatus(result.status);
         setMessage(`Version ${result.version} is ready for ${editorName ? `@${editorName}` : "the video editor queue"}. Your working script remains editable.`);
@@ -267,6 +277,8 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
         <div className="flex flex-wrap items-center gap-2"><div className="rounded-full bg-ink-100 p-1"><button className={`rounded-full px-3 py-1 text-sm ${view === "modules" ? "bg-white shadow-sm" : "text-ink-500"}`} onClick={() => setView("modules")}>Modules</button><button className={`rounded-full px-3 py-1 text-sm ${view === "document" ? "bg-white shadow-sm" : "text-ink-500"}`} onClick={() => setView("document")}>Document</button></div><span className={statusMeta.className}>{statusMeta.label}</span><span className="text-xs text-ink-500">{totalDuration}s / {document.targetDurationSec}s · {issues.length} checks</span></div>
         <div className="flex flex-wrap gap-2"><button className="btn" onClick={generateDraft} disabled={pending || hooksPending || !editable}>{pending ? "Generating…" : "AI fill all"}</button><button className="btn" onClick={downloadScript}>Download script</button><button className="btn" onClick={snapshot} disabled={pending || !editable}>Create version</button><button className="btn" onClick={save} disabled={pending || !editable}>{pending ? "Working…" : "Save changes"}</button><button className="btn btn-primary" onClick={sendToEditor} disabled={pending || !sendable}>{sendLabel}</button></div>
       </div>
+      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_17.5rem]">
+      <div className="order-last min-w-0 space-y-4 lg:order-none">
       {message && <div className={`rounded-lg border p-3 text-sm ${/changed|error|could not/i.test(message) ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`}>{message}</div>}
       {handoffVersion !== null && <div className="rounded-xl border border-brand-purple/20 bg-brand-purple/5 px-4 py-3 text-sm text-ink-700"><span className="font-semibold">Video editor handoff is frozen at version {handoffVersion}.</span> Your working script remains editable. Saved changes do not alter the video editor's copy until you explicitly send an updated handoff.</div>}
 
@@ -286,6 +298,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
           : <p className="text-xs text-ink-500">No hook options yet. Use More hooks, or AI fill all for a complete draft.</p>}
       </section>
 
+      <div className="min-w-0">
       {view === "modules" ? (
         <div className="space-y-3">
           {document.modules.map((module, index) => {
@@ -306,9 +319,21 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
           {document.modules.map((module, index) => <div key={module.id} className="grid grid-cols-[5.5rem_1fr] gap-4 border-t border-ink-200 pt-5"><div className="space-y-2 text-xs text-ink-500"><div>{index + 1}. {module.label}</div><div>{module.durationSec}s</div><button className="btn btn-ghost h-8 px-2 text-xs" disabled={!editable || module.locked || pending || assistPending} onClick={() => openModuleAssist(module.id)}>AI Assist</button></div><div className="space-y-3"><AutoResizeTextarea aria-label={`${module.label} spoken copy`} className="min-h-7 w-full bg-transparent text-base leading-7 outline-none placeholder:text-ink-300" placeholder="Spoken copy…" value={module.spokenText} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { spokenText: event.target.value })} /><input aria-label={`${module.label} on-screen text`} className="w-full border-l-2 border-brand-pink/40 bg-transparent pl-3 text-sm font-medium outline-none" placeholder="On-screen text…" value={module.onScreenText} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { onScreenText: event.target.value })} /><AutoResizeTextarea aria-label={`${module.label} visual direction`} className="min-h-10 w-full bg-ink-50 p-3 text-sm leading-6 text-ink-600 outline-none" placeholder="Visual direction…" value={module.visualDirection} disabled={!editable || module.locked} onChange={(event) => updateModule(module.id, { visualDirection: event.target.value })} /></div></div>)}
         </section>
       )}
+      </div>
       {assistModule && <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-950/45 p-4" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeModuleAssist(); }}><section role="dialog" aria-modal="true" aria-labelledby="module-assist-title" className="w-full max-w-2xl rounded-2xl border border-ink-200 bg-white p-5 shadow-2xl"><div className="flex items-start justify-between gap-4"><div><p className="label">Module AI Assist</p><h2 id="module-assist-title" className="text-xl font-semibold">Revise “{assistModule.label}”</h2><p className="mt-1 text-sm text-ink-500">Describe what should change. AI will update only this module and preserve its matched B-roll.</p></div><button type="button" className="btn btn-ghost px-3" aria-label="Close AI Assist" disabled={assistPending} onClick={closeModuleAssist}>×</button></div><div className="mt-5"><label className="label" htmlFor="module-assist-notes">Change notes</label><textarea id="module-assist-notes" className="input min-h-36" autoFocus placeholder="Example: Make the spoken copy more conversational, remove repeated filler, and show the compression fabric in use." value={assistNotes} disabled={assistPending} onChange={(event) => setAssistNotes(event.target.value)} /></div>{assistError && <div className="mt-3 rounded-lg border border-red-300 bg-red-50 p-3 text-sm text-red-700">{assistError}</div>}<div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-ink-400">The rewrite is not saved until you click Save changes.</p><div className="flex gap-2"><button type="button" className="btn" disabled={assistPending} onClick={closeModuleAssist}>Cancel</button><button type="button" className="btn btn-primary" disabled={assistPending || assistNotes.trim().length < 2} onClick={applyModuleAssist}>{assistPending ? "Revising module…" : "Apply AI changes"}</button></div></div></section></div>}
       {issues.some((issue) => issue.moduleId === "document") && <div className="card border-amber-300 bg-amber-50"><h3 className="text-sm font-semibold text-amber-900">Document checks</h3>{issues.filter((issue) => issue.moduleId === "document").map((issue) => <p key={issue.message} className="mt-1 text-sm text-amber-800">{issue.message}</p>)}</div>}
-      <p className="text-xs text-ink-400">Working revision {revision} · named version {version}. Locked modules remain editable only after unlocking.</p>
+            <p className="text-xs text-ink-400">Working revision {revision} · named version {version}. Locked modules remain editable only after unlocking.</p>
+      </div>
+      <ScriptScoreWidget
+        projectId={projectId}
+        version={version}
+        hasImmutableVersion={namedVersionDocument !== null}
+        draftMatchesVersion={draftMatchesVersion}
+        markets={scorerMarkets}
+        initialResult={initialScore}
+        setupError={scorerSetupError}
+      />
+      </div>
     </div>
   );
 }

@@ -4,7 +4,7 @@ import type { ScriptDocument, ScriptModule } from "@/lib/cellumove/script-studio
 
 export const SCORER_ENGINE_VERSION = "script-scorer-v1";
 export const SCORER_TAXONOMY_VERSION = "copy-taxonomy-v1";
-export const SCORER_EXTRACTOR_PROMPT_VERSION = "script-scorer-extractor-v1";
+export const SCORER_EXTRACTOR_PROMPT_VERSION = "script-scorer-extractor-v2";
 export const SCORER_BASELINE_VERSION = "gold-35-v1";
 export const GROUNDING_THRESHOLD = 0.72;
 
@@ -48,6 +48,18 @@ export const AnalyzedScriptLineSchema = z.object({
 
 export const AnalyzedScriptSchema = z.object({
   lines: z.array(AnalyzedScriptLineSchema),
+}).strict();
+
+// `layer` is derived from the selected taxonomy code. Older extractor prompts
+// also returned a model-authored layer, so accept and ignore that field while
+// stored/analyzed output continues to use the complete deterministic shape.
+const ExtractorAnalyzedScriptLineSchema = AnalyzedScriptLineSchema
+  .omit({ layer: true })
+  .extend({ layer: z.unknown().optional() })
+  .strict();
+
+const ExtractorAnalyzedScriptSchema = z.object({
+  lines: z.array(ExtractorAnalyzedScriptLineSchema),
 }).strict();
 
 export type AnalyzedScriptLine = z.infer<typeof AnalyzedScriptLineSchema>;
@@ -147,7 +159,13 @@ export function validateAnalyzedScript(input: {
   analysis: unknown;
   allowedCodes: ReadonlyMap<string, ScorerLayer>;
 }): AnalyzedScript {
-  const parsed = AnalyzedScriptSchema.parse(input.analysis);
+  const extracted = ExtractorAnalyzedScriptSchema.parse(input.analysis);
+  const normalizedLines = extracted.lines.map((line) => {
+    const expectedLayer = input.allowedCodes.get(line.code);
+    if (!expectedLayer) throw new Error(`Extractor returned unknown taxonomy code ${line.code}.`);
+    return { ...line, layer: expectedLayer };
+  });
+  const parsed = AnalyzedScriptSchema.parse({ lines: normalizedLines });
   const source = scriptSourceLines(input.document);
   if (parsed.lines.length !== source.length) {
     throw new Error(`Extractor returned ${parsed.lines.length} lines; expected ${source.length}.`);
@@ -161,9 +179,6 @@ export function validateAnalyzedScript(input: {
     if (seen.has(key)) throw new Error(`Extractor returned duplicate line ${key}.`);
     seen.add(key);
     if (line.text !== expected.text) throw new Error(`Extractor changed the source text for ${key}.`);
-    const expectedLayer = input.allowedCodes.get(line.code);
-    if (!expectedLayer) throw new Error(`Extractor returned unknown taxonomy code ${line.code}.`);
-    if (line.layer !== expectedLayer) throw new Error(`Extractor paired ${line.code} with ${line.layer}; expected ${expectedLayer}.`);
     if (line.layer === "OTHER" && !line.otherExplanation?.trim()) {
       throw new Error(`Extractor must explain OTHER classification for ${key}.`);
     }
