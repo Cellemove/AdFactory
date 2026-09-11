@@ -523,6 +523,86 @@ export type CompetitorAdRow = {
   updatedAt: string;
 };
 
+export type EvidenceImportRunRow = {
+  id: string;
+  provider: string;
+  sourceId: string;
+  status: string;
+  selectedSheets: Json;
+  workbookVersion: string | null;
+  counts: Json;
+  warnings: Json;
+  errors: Json;
+  requestedByUserId: string | null;
+  startedAt: string | null;
+  completedAt: string | null;
+  createdAt: string;
+};
+
+export type ScriptEvidenceRow = {
+  id: string;
+  sourceProvider: string;
+  sourceKey: string;
+  spreadsheetId: string | null;
+  sheetName: string | null;
+  sourceRow: number | null;
+  externalId: string | null;
+  title: string;
+  format: string | null;
+  avatar: string | null;
+  angleSlug: string | null;
+  marketCode: string | null;
+  adDate: string | null;
+  launchedStatus: string | null;
+  sourceStatus: string | null;
+  notes: string | null;
+  metrics: Json;
+  sourceLinks: Json;
+  primarySourceUrl: string | null;
+  sourceTypes: Json;
+  scriptText: string | null;
+  deconstructionText: string | null;
+  evidenceLevel: string;
+  performanceEvidence: string | null;
+  reviewStatus: string;
+  intent: string;
+  contentStatus: string;
+  sourceValues: Json;
+  overrideFields: Json;
+  conflictFields: Json;
+  latestSourceHash: string | null;
+  lastImportedAt: string | null;
+  createdByUserId: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScriptEvidenceRevisionRow = {
+  id: string;
+  evidenceId: string;
+  importRunId: string | null;
+  spreadsheetId: string | null;
+  sheetName: string | null;
+  rowNumber: number | null;
+  rawHeaders: Json;
+  rawCells: Json;
+  sourceHash: string;
+  extractedSourceUrls: Json;
+  importedAt: string;
+};
+
+export type EvidenceEnrichmentJobRow = {
+  id: string;
+  provider: string;
+  boardUrl: string;
+  evidenceIds: Json;
+  status: string;
+  matchCount: number | null;
+  errorSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CopyTaxonomyCodeRow = {
   version: string;
   code: string;
@@ -543,6 +623,7 @@ export type GoldAdRow = {
   scriptText: string;
   baselineVersion: string;
   taxonomyVersion: string;
+  sourceEvidenceId: string | null;
   createdAt: string;
 };
 
@@ -707,6 +788,10 @@ export type Database = {
       BrollClip: { Row: BrollClipRow; Insert: Partial<BrollClipRow> & { id: string; driveId: string; name: string; mimeType: string }; Update: Partial<BrollClipRow>; Relationships: [] };
       BankedAd: { Row: BankedAdRow; Insert: Partial<BankedAdRow> & { id: string; sourceUrl: string }; Update: Partial<BankedAdRow>; Relationships: [] };
       CompetitorAd: { Row: CompetitorAdRow; Insert: Partial<CompetitorAdRow> & { id: string; provider: string; externalId: string; platform: string }; Update: Partial<CompetitorAdRow>; Relationships: [] };
+      EvidenceImportRun: { Row: EvidenceImportRunRow; Insert: Partial<EvidenceImportRunRow> & { id: string; provider: string; sourceId: string }; Update: Partial<EvidenceImportRunRow>; Relationships: [] };
+      ScriptEvidence: { Row: ScriptEvidenceRow; Insert: Partial<ScriptEvidenceRow> & { id: string; sourceProvider: string; sourceKey: string; title: string }; Update: Partial<ScriptEvidenceRow>; Relationships: [] };
+      ScriptEvidenceRevision: { Row: ScriptEvidenceRevisionRow; Insert: Partial<ScriptEvidenceRevisionRow> & { id: string; evidenceId: string; sourceHash: string }; Update: Partial<ScriptEvidenceRevisionRow>; Relationships: [] };
+      EvidenceEnrichmentJob: { Row: EvidenceEnrichmentJobRow; Insert: Partial<EvidenceEnrichmentJobRow> & { id: string; provider: string; boardUrl: string }; Update: Partial<EvidenceEnrichmentJobRow>; Relationships: [] };
       BrollSuggestion: { Row: BrollSuggestionRow; Insert: Partial<BrollSuggestionRow> & { id: string; clipId: string; clipName: string; source: string }; Update: Partial<BrollSuggestionRow>; Relationships: [] };
       ScriptProject: { Row: ScriptProjectRow; Insert: Partial<ScriptProjectRow> & { id: string; title: string; strategistUserId: string; createdByUserId: string; productId: string; angleId: string; idea: string; adNumber: string; creativeName: string; format: string; document: Json; displayName: string }; Update: Partial<ScriptProjectRow>; Relationships: [] };
       ScriptVersion: { Row: ScriptVersionRow; Insert: Partial<ScriptVersionRow> & { id: string; projectId: string; version: number; document: Json; origin: string; changeSummary: string; createdByUserId: string }; Update: Partial<ScriptVersionRow>; Relationships: [] };
