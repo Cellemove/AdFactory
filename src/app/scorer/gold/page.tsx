@@ -11,13 +11,14 @@ export const dynamic = "force-dynamic";
 
 export default async function GoldBaselinePage() {
   await requireStrategist();
-  const [adsResult, beatsResult, candidatesResult, taxonomyResult] = await Promise.all([
+  const [adsResult, beatsResult, candidatesResult, taxonomyResult, anglesResult] = await Promise.all([
     supabase.from("GoldAd").select("*").eq("baselineVersion", SCORER_BASELINE_VERSION).eq("taxonomyVersion", SCORER_TAXONOMY_VERSION).order("createdAt", { ascending: false }),
     supabase.from("GoldBeat").select("*").eq("taxonomyVersion", SCORER_TAXONOMY_VERSION).order("orderIndex"),
     supabase.from("ScriptEvidence").select("*").eq("evidenceLevel", "verified_winner").eq("reviewStatus", "approved").not("scriptText", "is", null).order("adDate", { ascending: false, nullsFirst: false }),
     supabase.from("CopyTaxonomyCode").select("*").eq("version", SCORER_TAXONOMY_VERSION).order("layer").order("code"),
+    supabase.from("Angle").select("slug,name").order("order", { ascending: true }),
   ]);
-  const error = adsResult.error ?? beatsResult.error ?? candidatesResult.error ?? taxonomyResult.error;
+  const error = adsResult.error ?? beatsResult.error ?? candidatesResult.error ?? taxonomyResult.error ?? anglesResult.error;
   if (error) throw new Error(error.message);
   const beats = (beatsResult.data ?? []) as GoldBeatRow[];
 
@@ -32,6 +33,7 @@ export default async function GoldBaselinePage() {
         beatCounts={Object.fromEntries((adsResult.data ?? []).map((ad) => [ad.id, beats.filter((beat) => beat.goldAdId === ad.id).length]))}
         candidates={(candidatesResult.data ?? []) as ScriptEvidenceRow[]}
         taxonomy={(taxonomyResult.data ?? []) as CopyTaxonomyCodeRow[]}
+        angles={(anglesResult.data ?? []) as { slug: string; name: string }[]}
         baselineVersion={SCORER_BASELINE_VERSION}
       />
     </div>

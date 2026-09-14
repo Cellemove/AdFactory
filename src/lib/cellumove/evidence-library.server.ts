@@ -85,13 +85,7 @@ export async function bulkUpdateEvidence(ids: string[], patch: EvidencePatch): P
 }
 
 function applyEvidencePatch(current: ScriptEvidenceRow, patch: EvidencePatch): Partial<ScriptEvidenceRow> {
-  const nextLevel = patch.evidenceLevel ?? current.evidenceLevel;
-  const nextPerformance = Object.prototype.hasOwnProperty.call(patch, "performanceEvidence")
-    ? patch.performanceEvidence
-    : current.performanceEvidence;
-  if (nextLevel === "verified_winner" && !nextPerformance?.trim()) {
-    throw new EvidenceValidationError("Verified winner requires explicit performance evidence.");
-  }
+  // Winners are selected manually; performance metrics are optional extra detail.
   const sourceValues = asRecord(current.sourceValues);
   const overrides = new Set(getJsonStringArray(current.overrideFields));
   const conflicts = new Set(getJsonStringArray(current.conflictFields));

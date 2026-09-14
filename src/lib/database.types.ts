@@ -948,7 +948,27 @@ export type VerbatimRow = {
   embedding?: string | null;
   embeddingModel?: string | null;
   embeddingVersion?: string;
+  // Migration 019 — Apify ingestion provenance. Optional so legacy rows and
+  // pre-migration databases stay valid.
+  sourceFingerprint?: string | null;
+  sourceAuthor?: string | null;
+  sourcePublishedAt?: string | null;
   createdAt: string;
+};
+
+// VerbatimScrapeTarget = one row per post/video whose comments we ever paid to
+// scrape (Migration 019), so re-runs never re-pay for the same target.
+export type VerbatimScrapeTargetRow = {
+  id: string;
+  platform: string;          // 'reddit' | 'meta' | 'tiktok'
+  externalId: string;
+  url: string;
+  angleSlug: string | null;
+  status: string;            // 'scraped' | 'failed'
+  commentCount: number;
+  keptCount: number;
+  costUsd: number | null;
+  scrapedAt: string;
 };
 
 // Usage = one row per Gemini call. We aggregate by feature/day on the Usage page.
@@ -992,6 +1012,7 @@ export type Database = {
       ReferenceFormat: { Row: ReferenceFormatRow; Insert: Partial<ReferenceFormatRow> & { slug: string; name: string; description: string; beats: string }; Update: Partial<ReferenceFormatRow>; Relationships: [] };
       MarketProfile: { Row: MarketProfileRow; Insert: Partial<MarketProfileRow> & { code: string; name: string; tone: string }; Update: Partial<MarketProfileRow>; Relationships: [] };
       Verbatim: { Row: VerbatimRow; Insert: Partial<VerbatimRow> & { category: string; text: string; sourceType: string }; Update: Partial<VerbatimRow>; Relationships: [] };
+      VerbatimScrapeTarget: { Row: VerbatimScrapeTargetRow; Insert: Partial<VerbatimScrapeTargetRow> & { id: string; platform: string; externalId: string; url: string }; Update: Partial<VerbatimScrapeTargetRow>; Relationships: [] };
       EditorClaim: { Row: EditorClaimRow; Insert: Partial<EditorClaimRow> & { runId: string; label: string; claimedByEmail: string }; Update: Partial<EditorClaimRow>; Relationships: [] };
       AppUser: { Row: AppUserRow; Insert: Partial<AppUserRow> & { id: string; username: string; passwordHash: string }; Update: Partial<AppUserRow>; Relationships: [] };
       BrollClip: { Row: BrollClipRow; Insert: Partial<BrollClipRow> & { id: string; driveId: string; name: string; mimeType: string }; Update: Partial<BrollClipRow>; Relationships: [] };

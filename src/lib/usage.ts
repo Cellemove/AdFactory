@@ -55,6 +55,9 @@ export interface RecordUsageInput {
   usage: GeminiUsageMetadata | undefined | null;
   grounded?: boolean;
   metadata?: Record<string, unknown>;
+  // Flat USD amount for non-token spend (e.g. an Apify actor run). When set it
+  // replaces the token-computed estimate; token counts still record as-is.
+  costUsdOverride?: number;
 }
 
 export function computeCostUsd(opts: {
@@ -79,7 +82,7 @@ export async function recordUsage(input: RecordUsageInput): Promise<void> {
   const inputTokens = input.usage?.promptTokenCount ?? 0;
   const outputTokens = input.usage?.candidatesTokenCount ?? 0;
   const thinkingTokens = input.usage?.thoughtsTokenCount ?? 0;
-  const estimatedCostUsd = computeCostUsd({
+  const estimatedCostUsd = input.costUsdOverride ?? computeCostUsd({
     inputTokens,
     outputTokens,
     thinkingTokens,

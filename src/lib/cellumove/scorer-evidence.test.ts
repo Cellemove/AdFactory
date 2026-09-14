@@ -28,9 +28,9 @@ test("validates and normalizes scorer evidence", () => {
   assert.equal(scorerEvidenceHash(parsed).length, 64);
 });
 
-test("verified winner requires real performance evidence", () => {
+test("verified winner is a manual call — performance evidence is optional", () => {
   const parsed = CreateScorerEvidenceSchema.safeParse({ ...base, evidenceLevel: "verified_winner", performanceEvidence: "" });
-  assert.equal(parsed.success, false);
+  assert.equal(parsed.success, true);
 });
 
 test("detects alternative hooks without treating them as sequence", () => {

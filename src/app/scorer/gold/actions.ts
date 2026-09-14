@@ -12,6 +12,10 @@ import { SCORER_BASELINE_VERSION, SCORER_TAXONOMY_VERSION, ScorerLayerSchema } f
 const OptionalNumber = z.number().nonnegative().nullable().optional();
 const PromoteSchema = z.object({
   evidenceId: z.string().min(1),
+  // Typed on the gold page when the evidence row is missing them; persisted
+  // back to the evidence record as overrides.
+  angleSlug: z.string().trim().min(1).nullable().optional(),
+  format: z.string().trim().min(1).max(100).nullable().optional(),
   durationSec: z.number().positive().max(600).nullable().optional(),
   beats: z.array(z.object({
     code: z.string().min(1),
@@ -27,6 +31,37 @@ function revalidateGoldPages() {
   revalidatePath("/scorer/gold");
 }
 
+const ScriptEditSchema = z.object({
+  evidenceId: z.string().min(1),
+  scriptText: z.string().trim().min(20, "Paste the complete script, not only its title.").max(200_000),
+});
+
+/**
+ * Edit a candidate's script from the gold page (e.g. repairing timestamp lines
+ * that got flattened into the prose). Saved as an override so sheet re-imports
+ * never clobber the fix.
+ */
+export async function updateGoldCandidateScript(rawInput: z.infer<typeof ScriptEditSchema>) {
+  await requireStrategist();
+  const input = ScriptEditSchema.parse(rawInput);
+  const current = await supabase.from("ScriptEvidence").select("overrideFields").eq("id", input.evidenceId).single();
+  if (current.error) throw new Error(current.error.message);
+  const overrides = new Set(Array.isArray(current.data.overrideFields) ? (current.data.overrideFields as unknown as string[]) : []);
+  overrides.add("scriptText");
+  const update = await supabase
+    .from("ScriptEvidence")
+    .update({
+      scriptText: input.scriptText,
+      overrideFields: [...overrides] as unknown as ScriptEvidenceRow["overrideFields"],
+      contentStatus: "script_available",
+      updatedAt: new Date().toISOString(),
+    })
+    .eq("id", input.evidenceId);
+  if (update.error) throw new Error(update.error.message);
+  revalidateGoldPages();
+  revalidatePath("/scorer/evidence");
+}
+
 export async function promoteEvidenceToGold(rawInput: z.infer<typeof PromoteSchema>) {
   await requireStrategist();
   const input = PromoteSchema.parse(rawInput);
@@ -40,17 +75,31 @@ export async function promoteEvidenceToGold(rawInput: z.infer<typeof PromoteSche
   if (evidence.evidenceLevel !== "verified_winner" || evidence.reviewStatus !== "approved") {
     throw new Error("Only approved evidence marked verified winner can enter the gold baseline.");
   }
-  if (!evidence.performanceEvidence?.trim()) throw new Error("Add performance evidence before promoting this script.");
   if (!evidence.scriptText?.trim()) throw new Error("Attach the exact script before promoting this evidence.");
-  if (!evidence.angleSlug || !evidence.format) throw new Error("Set the angle and format in the evidence library before promotion.");
+  const angleSlug = input.angleSlug?.trim() || evidence.angleSlug;
+  const format = input.format?.trim() || evidence.format;
+  if (!angleSlug || !format) throw new Error("Set the angle and format before promotion.");
+
+  // Persist gold-page edits onto the evidence row as overrides, so the library
+  // shows the same values and sheet re-imports don't clobber them.
+  if (angleSlug !== evidence.angleSlug || format !== evidence.format) {
+    const overrides = new Set(Array.isArray(evidence.overrideFields) ? (evidence.overrideFields as unknown as string[]) : []);
+    overrides.add("angleSlug");
+    overrides.add("format");
+    const patch = await supabase
+      .from("ScriptEvidence")
+      .update({ angleSlug, format, overrideFields: [...overrides] as unknown as ScriptEvidenceRow["overrideFields"], updatedAt: new Date().toISOString() })
+      .eq("id", evidence.id);
+    if (patch.error) throw new Error(patch.error.message);
+  }
 
   const taxonomy = (taxonomyResult.data ?? []) as CopyTaxonomyCodeRow[];
   const allowedCodes = new Map(taxonomy.map((row) => [row.code, ScorerLayerSchema.parse(row.layer)] as const));
   const normalized = {
     externalId: evidence.externalId || evidence.id,
     title: evidence.title,
-    angleSlug: evidence.angleSlug,
-    format: evidence.format,
+    angleSlug,
+    format,
     marketCode: evidence.marketCode,
     durationSec: input.durationSec ?? null,
     scriptText: evidence.scriptText,

@@ -9,6 +9,7 @@ import {
   classifyEvidenceUrl,
   parseCsv,
   parseSheetEvidenceRow,
+  reviewStatusFromSheetStatus,
   sortEvidenceNewestFirst,
 } from "./evidence-library";
 
@@ -85,10 +86,21 @@ test("a changed source creates a conflict without overwriting a manual override"
     primarySourceUrl: "https://example.com/new",
     sourceLinks: [{ url: "https://example.com/new", type: "external_html", cellIndex: 2, cellLabel: "Link" }],
     sourceTypes: ["external_html"],
+    reviewStatus: "approved",
   });
   assert.equal(result.normalized.title, undefined);
   assert.equal(result.normalized.primarySourceUrl, "https://example.com/new");
+  assert.equal(result.normalized.reviewStatus, "approved");
   assert.deepEqual(result.conflictFields, ["title"]);
+});
+
+test("sheet STATUS labels map to review statuses, unknown labels never stomp", () => {
+  assert.equal(reviewStatusFromSheetStatus("Approved"), "approved");
+  assert.equal(reviewStatusFromSheetStatus("Needs Approval"), "needs_review");
+  assert.equal(reviewStatusFromSheetStatus("Needs Revision"), "needs_review");
+  assert.equal(reviewStatusFromSheetStatus("Rejected"), "rejected");
+  assert.equal(reviewStatusFromSheetStatus(""), null);
+  assert.equal(reviewStatusFromSheetStatus("Something Else"), null);
 });
 
 test("evidence is sorted newest to oldest by explicit date, sheet period, and row", () => {

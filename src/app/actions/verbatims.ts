@@ -7,6 +7,8 @@ import { filterNovel } from "@/lib/cellumove/novelty";
 import { resolveAngle } from "@/lib/cellumove/angles";
 import { fetchYouTubeThreads } from "@/lib/youtube";
 import { buildVerifiedVerbatimQueries, verifiedCandidatesFromYouTube } from "@/lib/cellumove/verified-verbatims";
+import { ingestPlatformVerbatims, type IngestSummary } from "@/lib/cellumove/verbatim-ingest.server";
+import { requireStrategist } from "@/lib/authorization";
 import type { VerbatimRow } from "@/lib/database.types";
 
 const MineSchema = z.object({
@@ -14,7 +16,10 @@ const MineSchema = z.object({
   subAvatarId: z.string().optional().nullable(),
   focus: z.string().optional().nullable(),
   market: z.string().optional().nullable(),
-  platforms: z.array(z.string()).optional(),
+  // "youtube" is the free YouTube Data API path; the rest scrape via Apify.
+  platforms: z.array(z.enum(["youtube", "reddit", "meta", "tiktok"])).optional(),
+  targetUrls: z.array(z.string().url()).max(20).optional(),
+  maxUsd: z.number().positive().max(20).optional(),
   targetCount: z.number().int().min(4).max(60).optional(),
 });
 
@@ -68,45 +73,90 @@ export async function mineVerbatims(rawInput: z.infer<typeof MineSchema>) {
 
   const target = input.targetCount ?? 24;
   if (!angleName) throw new Error("Choose an angle or sub-avatar before mining.");
-  const threads = await fetchYouTubeThreads(
-    buildVerifiedVerbatimQueries({ angleName, mechanism, focus: input.focus }),
-    { maxVideos: 12, maxComments: 50 },
-  );
-  if (threads.length === 0) {
-    throw new Error("No directly verifiable YouTube comments were returned. Check the YouTube API key/quota or refine the focus.");
+  const platforms = input.platforms?.length ? [...new Set(input.platforms)] : ["youtube" as const];
+  const paidPlatforms = platforms.filter((p): p is "reddit" | "meta" | "tiktok" => p !== "youtube");
+  // Apify platforms spend real money — strategists only. YouTube stays free-for-all.
+  if (paidPlatforms.length) await requireStrategist();
+
+  let count = 0;
+  let duplicatesSkipped = 0;
+  let rejectedByQuality = 0;
+  const summaries: IngestSummary[] = [];
+  const warnings: string[] = [];
+
+  if (platforms.includes("youtube")) {
+    const threads = await fetchYouTubeThreads(
+      buildVerifiedVerbatimQueries({ angleName, mechanism, focus: input.focus }),
+      { maxVideos: 12, maxComments: 50 },
+    );
+    if (threads.length === 0 && platforms.length === 1) {
+      throw new Error("No directly verifiable YouTube comments were returned. Check the YouTube API key/quota or refine the focus.");
+    }
+    const now = new Date().toISOString();
+    const rows = verifiedCandidatesFromYouTube({
+      threads,
+      angleSlug,
+      subAvatarId: input.subAvatarId,
+      market: input.market,
+    })
+      .sort((a, b) => b.sourceWeight - a.sourceWeight)
+      .slice(0, target)
+      .map(({ sourceAuthor: _sourceAuthor, sourcePublishedAt: _sourcePublishedAt, sourceFingerprint: _sourceFingerprint, ...v }) => ({
+        ...v,
+        id: newId(),
+        createdAt: now,
+      }));
+
+    if (rows.length === 0 && platforms.length === 1) {
+      throw new Error("Sources loaded, but no specific first-person customer comments passed the quality gate. Refine the angle or focus.");
+    }
+
+    // Dedup against the existing corpus so re-mining doesn't pile up the same quotes.
+    // Lexical near-exact only (high threshold): we keep DISTINCT quotes even when the
+    // sentiment is similar — semantic dedup would wrongly merge different verbatims.
+    const existingTexts = await loadExistingVerbatimTexts({ subAvatarId: input.subAvatarId, angleSlug });
+    const { novel, dropped } = filterNovel(rows, existingTexts, (r) => r.text, 0.85);
+
+    if (novel.length > 0) {
+      const ins = await supabase.from("Verbatim").insert(novel);
+      if (ins.error) throw new Error(ins.error.message);
+    }
+    count += novel.length;
+    duplicatesSkipped += dropped.length;
+    rejectedByQuality += threads.reduce((n, t) => n + t.comments.length, 0) - rows.length;
   }
-  const now = new Date().toISOString();
-  const rows = verifiedCandidatesFromYouTube({
-    threads,
-    angleSlug,
-    subAvatarId: input.subAvatarId,
-    market: input.market,
-  })
-    .sort((a, b) => b.sourceWeight - a.sourceWeight)
-    .slice(0, target)
-    .map(({ sourceAuthor: _sourceAuthor, sourcePublishedAt: _sourcePublishedAt, sourceFingerprint: _sourceFingerprint, ...v }) => ({
-      ...v,
-      id: newId(),
-      createdAt: now,
-    }));
 
-  if (rows.length === 0) {
-    throw new Error("Sources loaded, but no specific first-person customer comments passed the quality gate. Refine the angle or focus.");
-  }
-
-  // Dedup against the existing corpus so re-mining doesn't pile up the same quotes.
-  // Lexical near-exact only (high threshold): we keep DISTINCT quotes even when the
-  // sentiment is similar — semantic dedup would wrongly merge different verbatims.
-  const existingTexts = await loadExistingVerbatimTexts({ subAvatarId: input.subAvatarId, angleSlug });
-  const { novel, dropped } = filterNovel(rows, existingTexts, (r) => r.text, 0.85);
-
-  if (novel.length > 0) {
-    const ins = await supabase.from("Verbatim").insert(novel);
-    if (ins.error) throw new Error(ins.error.message);
+  // Remaining per-platform budget: split the run budget evenly so one platform
+  // can't eat the whole cap.
+  const perPlatformUsd = input.maxUsd ? input.maxUsd / paidPlatforms.length : undefined;
+  for (const platform of paidPlatforms) {
+    const summary = await ingestPlatformVerbatims({
+      platform,
+      angleSlug,
+      subAvatarId: input.subAvatarId ?? null,
+      angleName,
+      mechanism,
+      focus: input.focus,
+      market: input.market,
+      targetUrls: input.targetUrls,
+      maxUsd: perPlatformUsd,
+    });
+    summaries.push(summary);
+    warnings.push(...summary.warnings);
+    count += summary.inserted;
+    duplicatesSkipped += summary.killedDedupe;
+    rejectedByQuality += summary.killedGate + summary.killedLLM;
   }
 
   revalidatePath("/verbatims");
-  return { count: novel.length, duplicatesSkipped: dropped.length, rejectedByQuality: threads.reduce((n, t) => n + t.comments.length, 0) - rows.length };
+  return {
+    count,
+    duplicatesSkipped,
+    rejectedByQuality,
+    summaries,
+    estUsd: Math.round(summaries.reduce((s, x) => s + x.estUsd, 0) * 1000) / 1000,
+    warnings,
+  };
 }
 
 export async function deleteVerbatim(id: string) {

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ScriptDocument, ScriptModule } from "@/lib/cellumove/script-studio";
 
-export const SCORER_ENGINE_VERSION = "script-scorer-v1";
+export const SCORER_ENGINE_VERSION = "script-scorer-v2";
 export const SCORER_TAXONOMY_VERSION = "copy-taxonomy-v1";
 export const SCORER_EXTRACTOR_PROMPT_VERSION = "script-scorer-extractor-v2";
 export const SCORER_BASELINE_VERSION = "gold-35-v1";
@@ -468,8 +468,28 @@ export function scoreSpecificity(analysis: AnalyzedScript): ScriptScorerModuleRe
 }
 
 function normalizedTokens(value: string): Set<string> {
-  const stop = new Set(["a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in", "is", "it", "of", "on", "or", "that", "the", "this", "to", "with", "you", "your"]);
-  return new Set(value.toLowerCase().match(/[a-z0-9]+/g)?.filter((token) => token.length > 1 && !stop.has(token)) ?? []);
+  const stop = new Set([
+    "a", "an", "and", "are", "as", "at", "be", "by", "come", "different", "for", "from", "go", "in", "is", "it", "its", "of", "on", "or", "that", "the", "their", "them", "they", "this", "to", "up", "with", "you", "your",
+  ]);
+  const canonicalize = (token: string): string => {
+    const aliases: Record<string, string> = {
+      colours: "color", colour: "color", colors: "color",
+      sizes: "size", options: "option", variants: "variant",
+      supports: "support", supported: "support", supporting: "support", supportive: "support",
+      provides: "provide", provided: "provide", providing: "provide",
+      designed: "design", designs: "design",
+      targeted: "target", targeting: "target",
+      textured: "texture", textures: "texture",
+      sculpted: "sculpt", sculpting: "sculpt",
+      listed: "list", listing: "list",
+      ranges: "range", ranging: "range",
+      leggings: "legging", wearers: "wearer",
+    };
+    return aliases[token] ?? token;
+  };
+  return new Set(value.toLowerCase().match(/[a-z0-9]+/g)
+    ?.filter((token) => token.length > 1 && !stop.has(token))
+    .map(canonicalize) ?? []);
 }
 
 function tokenOverlap(a: string, b: string): number {
@@ -523,7 +543,9 @@ export function scoreFactVerification(input: {
     const comparable = (best?.overlap ?? 0) >= 0.35;
     const numericConflict = comparable && claimNumbers.length > 0 && evidenceNumbers.length > 0
       && claimNumbers.some((number) => !evidenceNumbers.includes(number));
-    const supported = comparable && !numericConflict && (best?.overlap ?? 0) >= 0.55;
+    // Catalog claims are frequently paraphrased by the script extractor. The
+    // canonical token pass keeps this deterministic while avoiding exact-wording failures.
+    const supported = comparable && !numericConflict && (best?.overlap ?? 0) >= 0.45;
     if (supported) {
       supportedCount += 1;
       findings.push({
