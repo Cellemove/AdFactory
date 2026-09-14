@@ -19,6 +19,9 @@ out
 # Local run output: verbatim backups and baseline timing artifacts. The stamped
 # filenames already match *-*-*.json, but latest.json does not.
 backups/
+# Corpus Miner: local copies of competitor ad videos (sha256 recorded in AdMedia).
+corpus-media/*
+!corpus-media/.gitkeep
 dev.db
 dev.db-journal
 prisma/migrations

@@ -2,16 +2,30 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { validateGoldSetImport } from "../src/lib/cellumove/gold-set-import";
-import { SCORER_BASELINE_VERSION, SCORER_TAXONOMY_VERSION } from "../src/lib/cellumove/script-scorer";
+import { SCORER_BASELINE_VERSION as DEFAULT_BASELINE_VERSION, SCORER_TAXONOMY_VERSION as DEFAULT_TAXONOMY_VERSION } from "../src/lib/cellumove/script-scorer";
 import { ScorerLayerSchema } from "../src/lib/cellumove/script-scorer";
 import type { CopyTaxonomyCodeRow } from "../src/lib/database.types";
 import { newId, supabase } from "../src/lib/db";
 
+/** `--name value` or `--name=value`; null when absent. */
+function flagValue(args: string[], name: string): string | null {
+  const inline = args.find((arg) => arg.startsWith(`--${name}=`));
+  if (inline) return inline.slice(name.length + 3);
+  const index = args.indexOf(`--${name}`);
+  const value = index >= 0 ? args[index + 1] : undefined;
+  return value && !value.startsWith("--") ? value : null;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const commit = args.includes("--commit");
-  const fileArg = args.find((arg) => !arg.startsWith("--"));
-  if (!fileArg) throw new Error("Usage: npm run scorer:import-gold -- <normalized.json> [--commit]");
+  // Overrides so the Corpus Miner's Gate 1 can import the hand decompositions
+  // under a newer taxonomy/baseline (e.g. copy-taxonomy-v2 / gold-35-v2).
+  const SCORER_TAXONOMY_VERSION = flagValue(args, "taxonomy") ?? DEFAULT_TAXONOMY_VERSION;
+  const SCORER_BASELINE_VERSION = flagValue(args, "baseline") ?? DEFAULT_BASELINE_VERSION;
+  const consumed = new Set([flagValue(args, "taxonomy"), flagValue(args, "baseline")].filter(Boolean));
+  const fileArg = args.find((arg) => !arg.startsWith("--") && !consumed.has(arg));
+  if (!fileArg) throw new Error("Usage: npm run scorer:import-gold -- <normalized.json> [--commit] [--taxonomy <version>] [--baseline <version>]");
   const filePath = path.resolve(process.cwd(), fileArg);
   const raw = JSON.parse(await readFile(filePath, "utf8")) as unknown;
   const taxonomyResult = await supabase.from("CopyTaxonomyCode").select("*").eq("version", SCORER_TAXONOMY_VERSION);
