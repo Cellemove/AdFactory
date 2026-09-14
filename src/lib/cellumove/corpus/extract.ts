@@ -7,11 +7,29 @@
 import { z } from "zod";
 import { SCRIPT_FORMATS } from "@/lib/cellumove/script-studio";
 import { ScorerLayerSchema, type ScorerLayer } from "@/lib/cellumove/script-scorer";
-import { TRANSCRIPT_CHANNELS, type TranscriptChannel } from "./constants";
+import { TRANSCRIPT_CHANNELS, VISUAL_CHANNEL, type TranscriptChannel } from "./constants";
 import { gateBeats, type GateReport, type GateSegment } from "./evidence-gate";
 import type { TranscriptSegment } from "./transcribe";
 
 export const CORPUS_FORMAT_TAGS = [...SCRIPT_FORMATS, "Other"] as const;
+
+/**
+ * The ad's big idea — the angle the whole ad hangs on — from a closed list so
+ * the miner can count concepts per brand the same way it counts formats.
+ */
+export const CORPUS_CONCEPT_TAGS = [
+  "Hidden cause",
+  "Tried everything",
+  "Same start, different result",
+  "Protect your progress",
+  "Transformation",
+  "Us vs the industry",
+  "New way vs old way",
+  "Everyone is switching",
+  "The deal",
+  "How it works",
+  "Other",
+] as const;
 
 export const ExtractedBeatSchema = z.object({
   order_index: z.number().int().nonnegative(),
@@ -26,6 +44,7 @@ export const ExtractedBeatSchema = z.object({
 
 export const ExtractResponseSchema = z.object({
   format: z.string().trim().min(1).nullish(),
+  concept: z.string().trim().min(1).nullish(),
   beats: z.array(ExtractedBeatSchema).min(1),
 });
 
@@ -51,6 +70,7 @@ export type ValidatedBeat = {
 export type ValidatedExtraction = {
   beats: ValidatedBeat[];
   format: (typeof CORPUS_FORMAT_TAGS)[number] | null;
+  concept: (typeof CORPUS_CONCEPT_TAGS)[number] | null;
   gate: GateReport;
 };
 
@@ -76,9 +96,10 @@ export function buildExtractPrompt(input: {
   withVideo?: boolean;
 }): string {
   const formats = CORPUS_FORMAT_TAGS.join(" | ");
+  const concepts = CORPUS_CONCEPT_TAGS.join(" | ");
   return [
     "Decompose this video ad transcript into an ordered list of BEATS using ONLY the closed taxonomy below. This is mechanical labelling, not copywriting.",
-    'Return exactly one JSON object {"format": string, "beats": [...]} and no prose.',
+    'Return exactly one JSON object {"format": string, "concept": string, "beats": [...]} and no prose.',
     input.withVideo ? "The video itself is attached as well; use it to see demos, before/after shots and visual proof, but every evidence_quote must still come from the transcript." : "",
     "",
     "Rules:",
@@ -91,6 +112,8 @@ export function buildExtractPrompt(input: {
     "- order_index starts at 0 and increases by 1 with no gaps, in time order.",
     "- Layers may appear in any order and may repeat; do not force the H→Q→P→B→M→PR→O order.",
     `- format is the ad's production format, exactly one of: ${formats}.`,
+    `- concept is the one big idea the ad hangs on, exactly one of: ${concepts}. "Hidden cause" = the real reason is something they never told you; "Tried everything" = last resort after failures; "Same start, different result" = two people or paths compared; "Protect your progress" = do not waste what you already did; "Transformation" = the after state; "Us vs the industry" = an enemy is called out; "New way vs old way" = a modern replacement; "Everyone is switching" = social momentum; "The deal" = the offer is the idea; "How it works" = the mechanism is the idea.`,
+    `- Lines tagged [${VISUAL_CHANNEL} ...] describe what is on screen. Use them to understand demos, split screens and before/after shots, but never quote them: evidence_quote must come from a "vo" or "ost" line.`,
     "",
     'Required beat shape: {"order_index": int, "layer": string, "code": string, "t_start": number, "t_end": number, "evidence_quote": string, "channel": "vo" | "ost", "other_explanation": string | null}',
     input.previousError ? `\nYour previous response failed validation: ${input.previousError}\nFix exactly that issue and return the full corrected list.` : "",
@@ -107,6 +130,12 @@ function normalizeFormat(value: string | null | undefined): ValidatedExtraction[
   if (!value) return null;
   const wanted = value.trim().toLowerCase();
   return CORPUS_FORMAT_TAGS.find((format) => format.toLowerCase() === wanted) ?? "Other";
+}
+
+function normalizeConcept(value: string | null | undefined): ValidatedExtraction["concept"] {
+  if (!value) return null;
+  const wanted = value.trim().toLowerCase();
+  return CORPUS_CONCEPT_TAGS.find((concept) => concept.toLowerCase() === wanted) ?? "Other";
 }
 
 /**
@@ -143,9 +172,10 @@ export function validateExtractedBeats(input: {
     }
   }
 
-  const gateSegments: GateSegment[] = input.segments.map((segment) => ({
+  // Visual notes are context, not evidence: only the word channels reach the gate.
+  const gateSegments: GateSegment[] = input.segments.filter((segment) => segment.channel !== VISUAL_CHANNEL).map((segment) => ({
     id: segment.id,
-    channel: segment.channel,
+    channel: segment.channel as TranscriptChannel,
     orderIndex: segment.orderIndex,
     tStart: segment.tStart,
     tEnd: segment.tEnd,
@@ -165,6 +195,7 @@ export function validateExtractedBeats(input: {
   const byIndex = new Map(gate.perBeat.map((item) => [item.orderIndex, item]));
   return {
     format: normalizeFormat(parsed.data.format),
+    concept: normalizeConcept(parsed.data.concept),
     gate,
     beats: beats.map((beat) => {
       const result = byIndex.get(beat.order_index)!;

@@ -7,12 +7,12 @@
 // prompt in place under the same version.
 
 export const CORPUS_ENGINE_VERSION = "corpus-miner-v1";
-export const CORPUS_TRANSCRIBE_PROMPT_VERSION = "corpus-transcribe-v1";
-export const CORPUS_EXTRACT_PROMPT_VERSION = "corpus-extract-v1";
+export const CORPUS_TRANSCRIBE_PROMPT_VERSION = "corpus-transcribe-v2";
+export const CORPUS_EXTRACT_PROMPT_VERSION = "corpus-extract-v2";
 export const WINNER_SCORE_VERSION = "winner-score-v1";
 
-/** Taxonomy the extractor selects from. Flip to v2 once the hand-built list is seeded. */
-export const CORPUS_TAXONOMY_VERSION = process.env.CORPUS_TAXONOMY_VERSION?.trim() || "copy-taxonomy-v1";
+/** Taxonomy the extractor selects from: v2 is the named-beat list built from the strategist's script board. */
+export const CORPUS_TAXONOMY_VERSION = process.env.CORPUS_TAXONOMY_VERSION?.trim() || "copy-taxonomy-v2";
 
 /** Vertex inline request cap is ~20MB; base64 inflates by 4/3, so 15MB of video is the ceiling. */
 export const CORPUS_MEDIA_MAX_BYTES = 15 * 1024 * 1024;
@@ -42,5 +42,15 @@ export const USAGE_FEATURES = {
 export const GATE1_LAYER_THRESHOLD = 0.8;
 export const GATE1_CODE_THRESHOLD = 0.7;
 
+/** The two channels a beat may quote: spoken words and on-screen text. */
 export const TRANSCRIPT_CHANNELS = ["vo", "ost"] as const;
 export type TranscriptChannel = (typeof TRANSCRIPT_CHANNELS)[number];
+
+/**
+ * The third transcript channel: one line per shot saying what is on screen and
+ * the editing cue. Context for the extractor and material for the playbook's
+ * visual direction; never evidence, so beats cannot quote it.
+ */
+export const VISUAL_CHANNEL = "vis" as const;
+export const SEGMENT_CHANNELS = [...TRANSCRIPT_CHANNELS, VISUAL_CHANNEL] as const;
+export type SegmentChannel = (typeof SEGMENT_CHANNELS)[number];

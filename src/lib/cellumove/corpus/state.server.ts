@@ -58,7 +58,7 @@ export async function loadCompetitorAds(filters: { ids?: string[]; brand?: strin
 
 export type ReviewQueueItem = { run: CorpusExtractRunRow; ad: Pick<CompetitorAdRow, "id" | "brandName" | "sourceUrl"> };
 
-export async function loadReviewQueue(): Promise<ReviewQueueItem[]> {
+export async function loadReviewQueue(filters: { brand?: string | null } = {}): Promise<ReviewQueueItem[]> {
   const runs = await supabase.from("CorpusExtractRun").select("*").eq("status", "needs_human_review").order("createdAt", { ascending: false });
   if (runs.error) throw new Error(runs.error.message);
   const rows = (runs.data ?? []) as CorpusExtractRunRow[];
@@ -66,7 +66,9 @@ export async function loadReviewQueue(): Promise<ReviewQueueItem[]> {
   const ads = await supabase.from("CompetitorAd").select("id, brandName, sourceUrl").in("id", [...new Set(rows.map((run) => run.competitorAdId))]);
   if (ads.error) throw new Error(ads.error.message);
   const byId = new Map((ads.data ?? []).map((ad) => [ad.id, ad]));
-  return rows.map((run) => ({ run, ad: byId.get(run.competitorAdId) ?? { id: run.competitorAdId, brandName: "Unknown", sourceUrl: null } }));
+  const queue = rows.map((run) => ({ run, ad: byId.get(run.competitorAdId) ?? { id: run.competitorAdId, brandName: "Unknown", sourceUrl: null } }));
+  const brand = filters.brand?.trim().toLowerCase();
+  return brand ? queue.filter((item) => item.ad.brandName.toLowerCase() === brand) : queue;
 }
 
 export type AdDetail = {

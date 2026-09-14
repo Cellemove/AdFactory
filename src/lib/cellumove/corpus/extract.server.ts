@@ -3,7 +3,7 @@ import "server-only";
 import { DEFAULT_MODEL } from "@/lib/llm";
 import type { AdBeatRow, AdMediaRow, CompetitorAdRow, CorpusExtractRunRow, CorpusTranscriptRunRow, Json } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
-import { CORPUS_ENGINE_VERSION, CORPUS_EXTRACT_PROMPT_VERSION, CORPUS_TAXONOMY_VERSION, USAGE_FEATURES, type TranscriptChannel } from "./constants";
+import { CORPUS_ENGINE_VERSION, CORPUS_EXTRACT_PROMPT_VERSION, CORPUS_TAXONOMY_VERSION, USAGE_FEATURES, type SegmentChannel } from "./constants";
 import { ExtractValidationError, buildExtractPrompt, validateExtractedBeats, type ValidatedExtraction } from "./extract";
 import { beatId, extractRunId, runKey } from "./ids";
 import { addUsage, generateStructured, parseJsonObject, type StructuredPart, type UsageSummary } from "./llm-seam.server";
@@ -73,7 +73,7 @@ export async function extractAdBeats(
   if (!segmentRows.length) throw new Error(`Transcript run ${transcriptRun.id} has no segments.`);
   const segments = segmentRows.map((row) => ({
     id: row.id,
-    channel: row.channel as TranscriptChannel,
+    channel: row.channel as SegmentChannel,
     orderIndex: row.orderIndex,
     tStart: row.tStart,
     tEnd: row.tEnd,
@@ -209,8 +209,15 @@ export async function extractAdBeats(
     }).eq("id", runId).select("*").single();
     if (completed.error) throw new Error(completed.error.message);
 
-    if (validated.format && (!ad.formatTag || ad.tagSource === "llm")) {
-      await supabase.from("CompetitorAd").update({ formatTag: validated.format, tagSource: "llm", updatedAt: new Date().toISOString() }).eq("id", ad.id);
+    // Format and concept tags feed the format/angle cohorts in MINE. A manual
+    // tag always wins over the model's.
+    if ((validated.format || validated.concept) && (!ad.tagSource || ad.tagSource === "llm")) {
+      await supabase.from("CompetitorAd").update({
+        ...(validated.format ? { formatTag: validated.format } : {}),
+        ...(validated.concept ? { angleTag: validated.concept } : {}),
+        tagSource: "llm",
+        updatedAt: new Date().toISOString(),
+      }).eq("id", ad.id);
     }
     return { run: completed.data as CorpusExtractRunRow, beats: beatRows, reused: false };
   } catch (error) {

@@ -1,15 +1,16 @@
 import "server-only";
 
-// The /miner/run page drives the pipeline one ad per request so no single call
+// The /miner run page drives the pipeline one ad per request so no single call
 // can outlive a serverless time limit, and closing the tab simply stops after
 // the ads in flight. Every step calls exactly what the CLI runner for that
 // stage calls; stages are idempotent, so "Run" again resumes where it stopped.
 
-import { CORPUS_TAXONOMY_VERSION } from "./constants";
+import { CORPUS_TAXONOMY_VERSION, MINE_MIN_SUPPORT } from "./constants";
 import { latestGate1 } from "./eval.server";
 import { extractAdBeats } from "./extract.server";
 import { downloadAdMedia, loadAdMedia } from "./media.server";
 import { mineAndSaveReports } from "./mine.server";
+import { buildAndSavePlaybook } from "./playbook.server";
 import { planTeardown, selectStageRows, type AdStage, type QueueOptions } from "./queue";
 import { loadCompetitorAds, loadCorpusState } from "./state.server";
 import { teardownCostUsd } from "./teardown";
@@ -37,7 +38,10 @@ function usageCostUsd(usage: unknown): number | null {
 
 /** The ads a stage would process next, best winnerScore first. */
 export async function stageQueue(stage: AdStage, options: QueueOptions = {}): Promise<QueueItem[]> {
-  if (stage === "teardown") await refreshWinnerScores();
+  // Teardown picks the top quarter by rank, so the ranks must be current. Scoped
+  // to the brand: concept-reuse fingerprints are already keyed per brand, so a
+  // brand-scoped rescore gives the same numbers as a full-table one.
+  if (stage === "teardown") await refreshWinnerScores({ brand: options.brand ?? undefined });
   const state = await loadCorpusState();
   const rows = stage === "teardown"
     ? planTeardown(state.rows, await loadAdTeardowns(), options).todo
@@ -117,33 +121,45 @@ export async function syncTeardowns(adIds: string[]): Promise<StepResult[]> {
 
 export type BatchResult = { title: string; lines: string[] };
 
-export async function runWinners(target: number): Promise<BatchResult> {
-  const result = await collectWinners({ target });
-  const brands = result.perBrand.filter((brand) => brand.picked > 0).length;
+export async function runWinners(input: { brand?: string | null; target?: number }): Promise<BatchResult> {
+  const result = await collectWinners({ brand: input.brand, target: input.target });
   const spread = [...result.perBrand].filter((brand) => brand.picked > 0).sort((a, b) => b.picked - a.picked).map((brand) => `${brand.domain} ${brand.picked}`);
   return {
-    title: `${result.rows.length} winners from ${brands} competitors`,
+    title: result.brand
+      ? `${result.rows.length} winning ads for ${result.brand}`
+      : `${result.rows.length} winners from ${spread.length} competitors`,
     lines: [
-      `Launched on or before ${result.cutoff} and still running · per brand: ${spread.join(" · ")}`,
-      result.empty.length ? `No qualifying winners yet: ${result.empty.join(", ")}` : "Every tracked competitor contributed.",
-      `${result.newIds.length} new ads · ${result.excluded} earlier ads left the corpus (kept, not deleted)`,
+      result.brand
+        ? `Launched on or before ${result.cutoff} and still running · highest spend first`
+        : `Launched on or before ${result.cutoff} and still running · per brand: ${spread.join(" · ")}`,
+      result.empty.length
+        ? `No qualifying winners yet: ${result.empty.join(", ")}`
+        : result.brand ? "" : "Every tracked competitor contributed.",
+      `${result.newIds.length} new ads · ${result.excluded} earlier ads left this brand's corpus (kept, not deleted)`,
       `BrandSearch credits used: ${result.creditsUsed} · ${result.monthlyRemaining ?? "?"} left this month`,
       "Download the videos next — the links expire in 3 days.",
-    ],
+    ].filter(Boolean),
   };
 }
 
-export async function runScore(): Promise<BatchResult> {
-  const result = await refreshWinnerScores();
-  return { title: `${result.scored} ads ranked`, lines: [`${result.updated} rank(s) changed.`] };
+export async function runScore(input: { brand?: string | null } = {}): Promise<BatchResult> {
+  const result = await refreshWinnerScores({ brand: input.brand ?? undefined });
+  return { title: `${result.scored} ads ranked${input.brand ? ` for ${input.brand}` : ""}`, lines: [`${result.updated} rank(s) changed.`] };
 }
 
-export async function runMine(): Promise<BatchResult> {
-  const result = await mineAndSaveReports();
-  if (!result.all) return { title: "Nothing to mine yet", lines: ["Break at least a few ads into beats first."] };
-  const report = result.all;
+export async function runMine(input: { brand?: string | null } = {}): Promise<BatchResult> {
+  const result = await mineAndSaveReports({ brand: input.brand });
+  const report = input.brand ? result.brand : result.all;
+  if (!report) {
+    return {
+      title: "Nothing to mine yet",
+      lines: [input.brand
+        ? `Break at least ${MINE_MIN_SUPPORT} of ${input.brand}'s ads into beats first.`
+        : "Break at least a few ads into beats first."],
+    };
+  }
   return {
-    title: `Patterns mined from ${report.adCount} ads`,
+    title: `Patterns mined from ${report.adCount} ${input.brand ? `${input.brand} ` : ""}ads`,
     lines: [
       `${report.codeFrequency.length} beat types · ${report.positionalLaws.codes.length} ordering laws · ${report.sequences.codeSpines.length} common sequences`,
       report.lift.status === "scored" ? `Winners vs. the rest compared on ${report.lift.nTop} top and ${report.lift.nBottom} bottom ads.` : `Winners vs. the rest needs ${report.lift.minimum}+ ranked ads.`,
@@ -152,7 +168,27 @@ export async function runMine(): Promise<BatchResult> {
   };
 }
 
-/** Existing Teardown rows for the plan's pending winners — lets the page resume polling. */
-export async function pendingTeardownIds(): Promise<string[]> {
-  return (await loadAdTeardowns({ pendingOnly: true })).map((row) => row.competitorAdId);
+export async function runPlaybook(input: { brand: string }): Promise<BatchResult> {
+  const result = await buildAndSavePlaybook(input.brand);
+  if (!result.playbook) {
+    return { title: "No playbook yet", lines: [`Break some of ${input.brand}'s ads into beats first.`] };
+  }
+  const playbook = result.playbook;
+  return {
+    title: `Playbook for ${input.brand}: ${playbook.adCount} ads`,
+    lines: [
+      `${playbook.hooks.length} hook types · ${playbook.beats.length} beats · ${playbook.copy.rules.length} copywriting rules · ${playbook.formats.length} formats · ${playbook.concepts.length} concepts`,
+      result.written ? "Saved a new snapshot." : "Unchanged since the last snapshot.",
+      ...playbook.caveats.slice(0, 2),
+    ],
+  };
+}
+
+/** Teardowns still running — lets the page resume polling after a reload. */
+export async function pendingTeardownIds(brand?: string | null): Promise<string[]> {
+  const pending = await loadAdTeardowns({ pendingOnly: true });
+  if (!brand) return pending.map((row) => row.competitorAdId);
+  const state = await loadCorpusState();
+  const ofBrand = new Set(state.rows.filter((row) => row.brandName.toLowerCase() === brand.toLowerCase()).map((row) => row.id));
+  return pending.map((row) => row.competitorAdId).filter((id) => ofBrand.has(id));
 }

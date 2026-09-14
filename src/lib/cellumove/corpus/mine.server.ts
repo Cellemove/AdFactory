@@ -50,16 +50,28 @@ export async function loadMinedAds(taxonomyVersion: string = CORPUS_TAXONOMY_VER
 
 export type SaveReportsResult = { written: number; unchanged: number; cohorts: string[] };
 
-/** Mine every cohort and store a snapshot per cohort; unchanged inputs are a no-op. */
-export async function mineAndSaveReports(input: { taxonomyVersion?: string; minSupport?: number } = {}): Promise<SaveReportsResult & { all: CorpusPatternReportJson | null }> {
+/**
+ * Mine every cohort and store a snapshot per cohort; unchanged inputs are a no-op.
+ *
+ * `brand` narrows what is WRITTEN, never what is loaded. Mining a brand off a
+ * brand-filtered load would file one brand's ads under the global "all" key and
+ * rewrite the shared format/angle cohorts with brand-local numbers — so the
+ * whole corpus is always mined, and only the "all" and "brand:<domain>"
+ * snapshots are saved when a brand is given.
+ */
+export async function mineAndSaveReports(input: { taxonomyVersion?: string; minSupport?: number; brand?: string | null } = {}): Promise<SaveReportsResult & { all: CorpusPatternReportJson | null; brand: CorpusPatternReportJson | null }> {
   const taxonomyVersion = input.taxonomyVersion ?? CORPUS_TAXONOMY_VERSION;
   const minSupport = input.minSupport ?? MINE_MIN_SUPPORT;
+  const wantedBrand = input.brand?.trim().toLowerCase() || null;
   const ads = await loadMinedAds(taxonomyVersion);
-  const result: SaveReportsResult & { all: CorpusPatternReportJson | null } = { written: 0, unchanged: 0, cohorts: [], all: null };
+  const result: SaveReportsResult & { all: CorpusPatternReportJson | null; brand: CorpusPatternReportJson | null } = { written: 0, unchanged: 0, cohorts: [], all: null, brand: null };
   for (const cohort of cohortsOf(ads, minSupport)) {
+    const isWantedBrand = cohort.cohort === "brand" && cohort.cohortKey.toLowerCase() === wantedBrand;
+    if (wantedBrand && cohort.cohort !== "all" && !isWantedBrand) continue;
     const inputHash = reportInputHash(cohort.ads as MinedAdWithRun[]);
     const report = mineCorpus(cohort.ads, { taxonomyVersion, engineVersion: CORPUS_ENGINE_VERSION, cohort: cohort.cohort, cohortKey: cohort.cohortKey, minSupport });
     if (cohort.cohort === "all") result.all = report;
+    if (isWantedBrand) result.brand = report;
     result.cohorts.push(`${cohort.cohort}:${cohort.cohortKey}`);
     const existing = await supabase.from("CorpusPatternReport").select("id")
       .eq("taxonomyVersion", taxonomyVersion).eq("engineVersion", CORPUS_ENGINE_VERSION)
@@ -86,6 +98,17 @@ export async function mineAndSaveReports(input: { taxonomyVersion?: string; minS
 }
 
 export type LatestReport = { row: CorpusPatternReportRow; report: CorpusPatternReportJson };
+
+/** Newest snapshot for one brand, or null when that brand has never been mined. */
+export async function latestBrandReport(brand: string, taxonomyVersion: string = CORPUS_TAXONOMY_VERSION): Promise<LatestReport | null> {
+  const result = await supabase.from("CorpusPatternReport").select("*")
+    .eq("taxonomyVersion", taxonomyVersion).eq("engineVersion", CORPUS_ENGINE_VERSION)
+    .eq("cohort", "brand").eq("cohortKey", brand)
+    .order("createdAt", { ascending: false }).limit(1).maybeSingle();
+  if (result.error) throw new Error(result.error.message);
+  const row = result.data as CorpusPatternReportRow | null;
+  return row ? { row, report: row.report as unknown as CorpusPatternReportJson } : null;
+}
 
 /** Newest snapshot per cohort for the current taxonomy and engine. */
 export async function latestReports(taxonomyVersion: string = CORPUS_TAXONOMY_VERSION): Promise<LatestReport[]> {

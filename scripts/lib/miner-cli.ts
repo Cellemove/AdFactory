@@ -155,7 +155,7 @@ export function fail(error: unknown): never {
 
 export type StageName = "media" | "transcribe" | "extract";
 
-/** The ads a stage should process — the same rule the /miner/run page uses (corpus/queue.ts). */
+/** The ads a stage should process — the same rule the /miner run page uses (corpus/queue.ts). */
 export async function selectAdsForStage(stage: StageName, args: MinerArgs): Promise<CompetitorAdRow[]> {
   const state = await loadCorpusState();
   const selected = selectStageRows(stage, state.rows, { force: args.force, retryReview: args.retryReview, ids: args.ads, brand: args.brand, limit: args.limit });

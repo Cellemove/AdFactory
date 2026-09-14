@@ -64,3 +64,24 @@ test("unknown formats fall back to Other and the prompt only carries the retry b
   assert.match(buildExtractPrompt({ ...base, previousError: "Beat 0 is wrong." }), /previous response failed validation: Beat 0 is wrong\./);
   assert.match(buildExtractPrompt({ ...base, withVideo: true }), /video itself is attached/);
 });
+
+test("the concept tag is normalised, and visual lines never satisfy the evidence gate", () => {
+  const withVisual = [
+    ...segments,
+    { id: "vis0", channel: "vis" as const, orderIndex: 0, tStart: 0, tEnd: 2.4, text: "clinically proven circulation booster on screen", confidence: null },
+  ];
+  const tagged = validateExtractedBeats({ raw: { ...good, concept: "hidden CAUSE" }, allowedCodes, segments: withVisual, transcriptEnd: 6 });
+  assert.equal(tagged.concept, "Hidden cause");
+  assert.equal(validateExtractedBeats({ raw: { ...good, concept: "Something new" }, allowedCodes, segments, transcriptEnd: 6 }).concept, "Other");
+  assert.equal(validateExtractedBeats({ raw: good, allowedCodes, segments, transcriptEnd: 6 }).concept, null);
+  try {
+    validateExtractedBeats({ raw: { beats: [{ ...good.beats[0], evidence_quote: "clinically proven circulation booster" }] }, allowedCodes, segments: withVisual, transcriptEnd: 6 });
+    assert.fail("a quote that only exists in the visual channel must be rejected");
+  } catch (error) {
+    assert.ok(error instanceof ExtractValidationError);
+    assert.equal(error.code, "EVIDENCE_GATE");
+  }
+  const prompt = buildExtractPrompt({ taxonomyVersion: "v2", taxonomy: [], transcriptText: "", durationSec: 6, language: null });
+  assert.match(prompt, /concept is the one big idea/);
+  assert.match(prompt, /never quote them/);
+});

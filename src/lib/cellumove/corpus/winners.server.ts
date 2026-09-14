@@ -6,11 +6,13 @@ import type { Json } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
 import { toCompetitorAdRow, type CompetitorAdUpsertRow } from "./ingest";
 import {
-  balancedTrim, brandsToExtend, fairShare, WINNER_DEFAULT_MIN_DAYS, WINNER_DEFAULT_TARGET, WINNER_RULE_VERSION,
-  winnerCutoff, winnerRuleLabel, type BrandProgress,
+  balancedTrim, brandsToExtend, pageSizeFor, resolveCompetitors, WINNER_DEFAULT_MIN_DAYS, WINNER_DEFAULT_TARGET,
+  WINNER_RULE_VERSION, winnerCutoff, winnerRuleLabel, type BrandProgress,
 } from "./winners";
 
 export type CollectWinnersInput = {
+  /** Spectre competitor domain. Omitted = the cross-brand pull the CLI still supports. */
+  brand?: string | null;
   target?: number;
   minDays?: number;
   /** Fetch and report only; write nothing. Still spends credits. */
@@ -20,6 +22,8 @@ export type CollectWinnersInput = {
 export type WinnerRow = CompetitorAdUpsertRow & { corpusIncluded: boolean; winnerPick: Json };
 
 export type CollectWinnersResult = {
+  /** Canonical competitor domain, or null for a cross-brand pull. */
+  brand: string | null;
   rows: WinnerRow[];
   perBrand: Array<{ domain: string; picked: number; available: number | null }>;
   /** Tracked competitors with no qualifying winner at all. */
@@ -40,6 +44,8 @@ export type CollectWinnersResult = {
 const spendOf = (ad: NormalizedBrandSearchAd) => (typeof ad.metrics.euTotalSpend === "number" ? ad.metrics.euTotalSpend : 0);
 
 export type WinnerPool = {
+  /** Canonical competitor domain, or null when every competitor was pulled. */
+  brand: string | null;
   /** Picked ads per competitor domain, best first, already labelled as winners. */
   picked: Map<string, NormalizedBrandSearchAd[]>;
   perBrand: Array<{ domain: string; picked: number; available: number | null }>;
@@ -57,15 +63,19 @@ export type WinnerPool = {
  * balance them. Writes nothing — the corpus (collectWinners) and the /spy feed
  * both build on this. `videoOnly: false` also takes image ads.
  */
-export async function fetchWinnerPool(input: { target?: number; minDays?: number; videoOnly?: boolean } = {}): Promise<WinnerPool> {
+export async function fetchWinnerPool(input: { brand?: string | null; target?: number; minDays?: number; videoOnly?: boolean } = {}): Promise<WinnerPool> {
   const target = Math.max(1, Math.min(500, input.target ?? WINNER_DEFAULT_TARGET));
   const minDays = Math.max(1, input.minDays ?? WINNER_DEFAULT_MIN_DAYS);
   const videoOnly = input.videoOnly ?? true;
-  const competitors = await listSpectreCompetitors();
-  if (!competitors.length) throw new Error("No competitors are tracked in BrandSearch Spectre yet.");
+  const tracked = await listSpectreCompetitors();
+  if (!tracked.length) throw new Error("No competitors are tracked in BrandSearch Spectre yet.");
+  const competitors = resolveCompetitors(tracked, input.brand);
+  // The canonical domain from Spectre, never the caller's spelling: the picked
+  // rows carry this too, so the corpus swap below can match on it.
+  const brand = input.brand ? competitors[0]!.domain : null;
 
   const cutoff = winnerCutoff(Date.now(), minDays);
-  const share = fairShare(target, competitors.length);
+  const share = pageSizeFor(target, competitors.length);
   const pool = new Map<string, NormalizedBrandSearchAd[]>(competitors.map((brand) => [brand.domain, []]));
   const progress = new Map<string, BrandProgress & { page: number }>(competitors.map((brand) => [brand.domain, { domain: brand.domain, fetched: 0, total: null, exhausted: false, page: 0 }]));
   const seen = new Set<string>();
@@ -119,9 +129,10 @@ export async function fetchWinnerPool(input: { target?: number; minDays?: number
   })]));
 
   return {
+    brand,
     picked,
-    perBrand: competitors.map((brand) => ({ domain: brand.domain, picked: picked.get(brand.domain)?.length ?? 0, available: progress.get(brand.domain)!.total })),
-    empty: competitors.filter((brand) => !(picked.get(brand.domain)?.length)).map((brand) => brand.domain),
+    perBrand: competitors.map((item) => ({ domain: item.domain, picked: picked.get(item.domain)?.length ?? 0, available: progress.get(item.domain)!.total })),
+    empty: competitors.filter((item) => !(picked.get(item.domain)?.length)).map((item) => item.domain),
     target,
     minDays,
     cutoff,
@@ -131,9 +142,9 @@ export async function fetchWinnerPool(input: { target?: number; minDays?: number
   };
 }
 
-/** Pick ~100 video winners and make them the corpus. */
+/** Pick ~100 of a brand's video winners and make them that brand's corpus. */
 export async function collectWinners(input: CollectWinnersInput = {}): Promise<CollectWinnersResult> {
-  const pool = await fetchWinnerPool({ target: input.target, minDays: input.minDays, videoOnly: true });
+  const pool = await fetchWinnerPool({ brand: input.brand, target: input.target, minDays: input.minDays, videoOnly: true });
   const { target, minDays, cutoff } = pool;
 
   const now = new Date();
@@ -145,7 +156,7 @@ export async function collectWinners(input: CollectWinnersInput = {}): Promise<C
       rows.push({
         ...toCompetitorAdRow(ad, pickedAt, mediaExpiresAt),
         corpusIncluded: true,
-        winnerPick: { ruleVersion: WINNER_RULE_VERSION, rule: winnerRuleLabel(minDays), minDays, cutoff, brand: domain, brandRank: index + 1, target, pickedAt },
+        winnerPick: { ruleVersion: WINNER_RULE_VERSION, rule: winnerRuleLabel(minDays, pool.brand), minDays, cutoff, brand: domain, brandRank: index + 1, target, pickedAt },
       });
     });
   }
@@ -157,7 +168,11 @@ export async function collectWinners(input: CollectWinnersInput = {}): Promise<C
     if (before.error) throw new Error(before.error.message);
     for (const row of before.data ?? []) existing.set(row.id, row.videoUrl);
   }
-  const previouslyIncluded = await supabase.from("CompetitorAd").select("id").eq("corpusIncluded", true);
+  // A pick replaces only its own brand's slice of the corpus, so a corpus built
+  // brand by brand accumulates instead of each pull evicting the brand before it.
+  let previousQuery = supabase.from("CompetitorAd").select("id").eq("corpusIncluded", true);
+  if (pool.brand) previousQuery = previousQuery.eq("brandName", pool.brand);
+  const previouslyIncluded = await previousQuery;
   if (previouslyIncluded.error) throw new Error(previouslyIncluded.error.message);
   const pickedIds = new Set(ids);
   const toExclude = (previouslyIncluded.data ?? []).map((row) => row.id).filter((id) => !pickedIds.has(id));
@@ -177,6 +192,7 @@ export async function collectWinners(input: CollectWinnersInput = {}): Promise<C
   }
 
   return {
+    brand: pool.brand,
     rows,
     perBrand: pool.perBrand,
     empty: pool.empty,

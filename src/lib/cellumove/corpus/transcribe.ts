@@ -1,16 +1,18 @@
 // TRANSCRIBE — pure half. The prompt, the response contract, and the
 // normalisation that turns a model transcript into clean two-channel segments.
 //
-// Two channels are mandatory. A large share of the copy in this category lives
-// in text-on-screen, not voiceover; an audio-only transcript silently drops a
-// third of the signal and every pattern mined downstream is then wrong.
+// Two word channels are mandatory. A large share of the copy in this category
+// lives in text-on-screen, not voiceover; an audio-only transcript silently
+// drops a third of the signal and every pattern mined downstream is then wrong.
+// A third channel, "vis", records what is on screen shot by shot: the visual
+// direction the strategist's script table needs. It is never evidence.
 
 import { z } from "zod";
-import { TRANSCRIPT_CHANNELS, type TranscriptChannel } from "./constants";
+import { SEGMENT_CHANNELS, VISUAL_CHANNEL, type SegmentChannel } from "./constants";
 import { normalizeForMatch, tokens } from "./evidence-gate";
 
 export const TranscriptSegmentResponseSchema = z.object({
-  channel: z.enum(TRANSCRIPT_CHANNELS),
+  channel: z.enum(SEGMENT_CHANNELS),
   t_start: z.number().finite(),
   t_end: z.number().finite(),
   text: z.string(),
@@ -26,7 +28,7 @@ export const TranscriptResponseSchema = z.object({
 export type TranscriptResponse = z.infer<typeof TranscriptResponseSchema>;
 
 export type TranscriptSegment = {
-  channel: TranscriptChannel;
+  channel: SegmentChannel;
   orderIndex: number;
   tStart: number;
   tEnd: number;
@@ -45,16 +47,17 @@ export function buildTranscribePrompt(): string {
     "You are transcribing ONE paid social video ad for a structural analysis. This is mechanical transcription, not summarising.",
     "Watch and listen to the whole video. Return exactly one JSON object and no prose.",
     "",
-    "Produce two channels:",
+    "Produce three channels:",
     '1. "vo" — every spoken word (voiceover or on-camera speech), verbatim, in the original language. Do not translate, do not clean up grammar, do not paraphrase. Split into short segments at natural pauses (roughly one sentence or 3-8 seconds each). Music lyrics are NOT vo unless they carry the ad\'s message.',
     '2. "ost" — every piece of on-screen text: captions burned into the video, headlines, price tags, stickers, product labels, CTA buttons. One entry per distinct text element at the moment it FIRST appears; never repeat the same text for later frames. Reproduce the exact characters shown, including numbers, currency symbols, emoji and casing. Do NOT include subtitles that merely duplicate the vo word-for-word; DO include them when the wording differs.',
+    '3. "vis" — the visual direction, one entry per shot or scene change: what is on screen (who, where, framing, what they do, any product, demo, before-after or graphic) and the editing cue (cut, split screen, zoom, text pop, transition, b-roll, animation). Plain description, 8-25 words, present tense, no interpretation of intent. Example: "Split screen: woman on scale left, same woman in leggings right; hard cut, doctor points at the seam."',
     "",
     "Timecodes are seconds from the start of the video with one decimal (e.g. 12.4). t_end must be greater than t_start and no later than the video's end. Segments in each channel must be in time order and must not overlap.",
     'If a channel has no content, return an empty array for it. Never invent text you cannot see or hear; write "[inaudible]" for unclear speech.',
     "confidence is your 0..1 certainty that the text is exactly what was shown or said.",
     "",
     "Required shape:",
-    '{"duration_sec": number, "language": "ISO 639-1 code of the dominant spoken language, or null", "segments": [{"channel": "vo" | "ost", "t_start": number, "t_end": number, "text": string, "confidence": number}]}',
+    '{"duration_sec": number, "language": "ISO 639-1 code of the dominant spoken language, or null", "segments": [{"channel": "vo" | "ost" | "vis", "t_start": number, "t_end": number, "text": string, "confidence": number}]}',
   ].join("\n");
 }
 
@@ -72,7 +75,7 @@ function round1(value: number): number {
  */
 export function normalizeTranscript(raw: TranscriptResponse): NormalizedTranscript {
   const segments: TranscriptSegment[] = [];
-  for (const channel of TRANSCRIPT_CHANNELS) {
+  for (const channel of SEGMENT_CHANNELS) {
     const own = raw.segments
       .filter((segment) => segment.channel === channel)
       .map((segment) => {
@@ -107,16 +110,20 @@ export function normalizeTranscript(raw: TranscriptResponse): NormalizedTranscri
   }
   const maxEnd = segments.reduce((max, segment) => Math.max(max, segment.tEnd), 0);
   const durationSec = round1(Math.max(raw.duration_sec, maxEnd));
-  if (!segments.length) {
-    throw new Error("The transcript has no segments in either channel.");
+  // Visual notes alone are not a transcript: an ad with no words in either
+  // channel has nothing a beat could quote.
+  if (!segments.some((segment) => segment.channel !== VISUAL_CHANNEL)) {
+    throw new Error("The transcript has no spoken or on-screen words in either channel.");
   }
   return { durationSec, language: raw.language?.toLowerCase() ?? null, segments };
 }
 
-/** One segment per line, the way EXTRACT sees the transcript. */
+const CHANNEL_ORDER: Record<SegmentChannel, number> = { vo: 0, ost: 1, vis: 2 };
+
+/** One segment per line, the way EXTRACT sees the transcript. Visual notes come last at each moment. */
 export function renderTranscript(segments: TranscriptSegment[]): string {
   return [...segments]
-    .sort((a, b) => a.tStart - b.tStart || (a.channel === b.channel ? a.orderIndex - b.orderIndex : a.channel === "vo" ? -1 : 1))
+    .sort((a, b) => a.tStart - b.tStart || (a.channel === b.channel ? a.orderIndex - b.orderIndex : CHANNEL_ORDER[a.channel] - CHANNEL_ORDER[b.channel]))
     .map((segment) => `[${segment.channel} ${segment.tStart.toFixed(1)}-${segment.tEnd.toFixed(1)}] ${segment.text}`)
     .join("\n");
 }

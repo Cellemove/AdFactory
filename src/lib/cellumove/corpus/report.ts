@@ -96,58 +96,59 @@ export function reportInputHash(ads: Array<{ id: string; extractRunId: string; w
 export function formatReportTables(report: CorpusPatternReportJson): ReportTable[] {
   const tables: ReportTable[] = [];
   tables.push({
-    title: "Code frequency",
-    note: "How often each code appears, where in the ad it sits (0 = first beat, 1 = last), and how long it runs.",
-    columns: ["Code", "Layer", "Ads", "Share", "Occurrences", "Median position", "Median start", "Median seconds"],
+    title: "Which parts they use",
+    note: "How often each part appears, where in the ad it usually sits (0 = the very start, 1 = the very end) and how long it runs.",
+    columns: ["Part", "Stage", "Ads", "Share of ads", "Times used", "Usual position", "Usual start", "Usual length"],
     rows: report.codeFrequency.map((row) => [row.code, row.layer, String(row.ads), pct(row.adShare), String(row.occurrences), num(row.medianRelPosition, 2), pct(row.medianRelStart), num(row.medianDurationSec)]),
   });
   tables.push({
-    title: "Layer frequency",
-    columns: ["Layer", "Ads", "Share", "Median position"],
+    title: "Which stages they use",
+    note: "The seven stages of an ad: hook, qualify, pain, belief, mechanism, proof, offer.",
+    columns: ["Stage", "Ads", "Share of ads", "Usual position"],
     rows: report.layerFrequency.map((row) => [row.layer, String(row.ads), pct(row.adShare), num(row.medianRelPosition, 2)]),
   });
   tables.push({
-    title: "Positional laws — layers",
-    note: `Share of co-occurring ads where X comes before Y. ≥${Math.round(report.lawShare * 100)}% with ≥${report.minSupport} ads is a law.`,
-    columns: ["X before Y", "Ads", "Share", "Law"],
+    title: "Order rules, by stage",
+    note: `When both appear in an ad, how often the first comes before the second. ${Math.round(report.lawShare * 100)}% or more, across at least ${report.minSupport} ads, counts as a rule.`,
+    columns: ["Comes before", "Ads", "Share", "Rule"],
     rows: report.positionalLaws.layers.map((row) => [`${row.x} → ${row.y}`, String(row.support), pct(row.share), row.law ? "LAW" : ""]),
     highlightRows: report.positionalLaws.layers.map((row, index) => (row.law ? index : -1)).filter((index) => index >= 0),
   });
   tables.push({
-    title: "Positional laws — codes",
-    columns: ["X before Y", "Ads", "Share", "Law"],
+    title: "Order rules, by part",
+    columns: ["Comes before", "Ads", "Share", "Rule"],
     rows: report.positionalLaws.codes.map((row) => [`${row.x} → ${row.y}`, String(row.support), pct(row.share), row.law ? "LAW" : ""]),
     highlightRows: report.positionalLaws.codes.map((row, index) => (row.law ? index : -1)).filter((index) => index >= 0),
   });
   tables.push({
-    title: "Dominant spines — layers",
-    note: "Frequent ordered sub-sequences (PrefixSpan). Closed = no longer pattern has the same support.",
-    columns: ["Pattern", "Ads", "Share", "Closed"],
+    title: "Common structures, by stage",
+    note: "Sequences that repeat across ads. \"Longest\" marks a sequence no longer version of which is equally common.",
+    columns: ["Structure", "Ads", "Share of ads", "Longest"],
     rows: report.sequences.layerSpines.map((row) => [row.pattern.join(" → "), String(row.support), pct(row.share), row.closed ? "yes" : ""]),
   });
   tables.push({
-    title: "Dominant spines — codes",
-    columns: ["Pattern", "Ads", "Share", "Closed"],
+    title: "Common structures, by part",
+    columns: ["Structure", "Ads", "Share of ads", "Longest"],
     rows: report.sequences.codeSpines.map((row) => [row.pattern.join(" → "), String(row.support), pct(row.share), row.closed ? "yes" : ""]),
   });
   const liftNote = report.lift.status === "scored"
-    ? `Top quartile (winnerScore ≥ ${num(report.lift.q3)}, n=${report.lift.nTop}) vs bottom quartile (≤ ${num(report.lift.q1)}, n=${report.lift.nBottom}). Lift > 1 = winners do this more. The score is a longevity ranking, not performance truth.`
-    : `Needs at least ${report.lift.minimum} scored ads; ${report.scoredAdCount} available.`;
+    ? `The ${report.lift.nTop} strongest-ranked ads compared with the ${report.lift.nBottom} weakest. Above 1 means the strongest ads do it more. The ranking comes from how long ads ran, not from real sales.`
+    : `Needs at least ${report.lift.minimum} ranked ads; ${report.scoredAdCount} available so far.`;
   tables.push({
-    title: "Lift — codes",
+    title: "What the strongest ads do more",
     note: liftNote,
-    columns: ["Code", "Top quartile", "Bottom quartile", "Lift"],
+    columns: ["Part", "Strongest ads", "Weakest ads", "How much more"],
     rows: report.lift.codes.map((row) => [row.key, pct(row.pTop), pct(row.pBottom), num(row.lift, 2)]),
   });
   tables.push({
-    title: "Lift — layer spines",
-    columns: ["Spine", "Top quartile", "Bottom quartile", "Lift"],
+    title: "Structures the strongest ads use more",
+    columns: ["Structure", "Strongest ads", "Weakest ads", "How much more"],
     rows: report.lift.spines.map((row) => [row.key, pct(row.pTop), pct(row.pBottom), num(row.lift, 2)]),
   });
   tables.push({
-    title: "Layer duration",
-    note: `Median seconds and share of runtime per layer (${report.layerDurations.adsWithDuration} ads with a known duration). The mechanism layer (M) is the known weak zone in this category.`,
-    columns: ["Layer", "All · sec", "All · share", "Top · sec", "Top · share", "Bottom · sec", "Bottom · share", "Δ share (top−bottom)"],
+    title: "Time spent on each stage",
+    note: `Seconds per stage and the share of the ad it takes up, from ${report.layerDurations.adsWithDuration} ads whose length is known. The mechanism stage — explaining how it works — is the known weak spot in this category.`,
+    columns: ["Stage", "All ads", "Share", "Strongest", "Share", "Weakest", "Share", "Difference"],
     rows: report.layerDurations.rows.map((row) => [row.layer, num(row.all.medianSec), pct(row.all.medianShare), num(row.top.medianSec), pct(row.top.medianShare), num(row.bottom.medianSec), pct(row.bottom.medianShare), row.deltaShare == null ? "—" : `${row.deltaShare >= 0 ? "+" : ""}${Math.round(row.deltaShare * 100)}pp`]),
     highlightRows: report.layerDurations.rows.map((row, index) => (row.highlight ? index : -1)).filter((index) => index >= 0),
   });

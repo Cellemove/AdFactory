@@ -1,8 +1,9 @@
 import Link from "next/link";
 
 const TABS = [
-  { key: "overview", href: "/miner", label: "Overview" },
-  { key: "run", href: "/miner/run", label: "Run pipeline" },
+  { key: "run", href: "/miner", label: "Run pipeline" },
+  { key: "playbook", href: "/miner/playbook", label: "Playbook" },
+  { key: "results", href: "/miner/results", label: "Results" },
 ] as const;
 
 export function MinerTabs({ active }: { active: (typeof TABS)[number]["key"] }) {

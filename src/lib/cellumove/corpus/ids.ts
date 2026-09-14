@@ -43,6 +43,10 @@ export function reportId(parts: string[]): string {
   return `cpr_${sha(parts.join(":")).slice(0, 24)}`;
 }
 
+export function playbookId(parts: string[]): string {
+  return `cbp_${sha(parts.join(":")).slice(0, 24)}`;
+}
+
 export function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }

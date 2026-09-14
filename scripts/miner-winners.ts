@@ -1,13 +1,14 @@
-// WINNERS: build the corpus from ~100 winning ads spread across every Spectre
-// competitor — videos still running 21+ days after launch, highest EU spend
-// first. The pick becomes the corpus; other ads stay stored but excluded.
-// 1 BrandSearch credit per ad fetched. Then chains the video download, because
-// BrandSearch media links die after three days.
+// WINNERS: build one brand's corpus from ~100 of its winning ads — videos still
+// running 21+ days after launch, highest EU spend first. The pick replaces that
+// brand's slice of the corpus; every other brand keeps its own. 1 BrandSearch
+// credit per ad fetched. Then chains the video download, because BrandSearch
+// media links die after three days.
 //
-//   npm run miner:winners -- --dry-run            (fetch + report, write nothing; still spends credits)
-//   npm run miner:winners                         (100 winners)
-//   npm run miner:winners -- --limit 200          (a bigger corpus)
-//   npm run miner:winners -- --no-media           (skip the download)
+//   npm run miner:winners -- --brand getionix.com            (100 winners for that brand)
+//   npm run miner:winners -- --brand getionix.com --limit 50
+//   npm run miner:winners -- --brand getionix.com --no-media (skip the download)
+//   npm run miner:winners -- --dry-run             (fetch + report, write nothing; still spends credits)
+//   npm run miner:winners                          (no --brand: the cross-brand pull, spread evenly)
 
 import { downloadAdMedia } from "../src/lib/cellumove/corpus/media.server";
 import { loadCompetitorAds } from "../src/lib/cellumove/corpus/state.server";
@@ -21,15 +22,15 @@ async function main() {
   const minDays = minDaysFlag > -1 ? Number(process.argv[minDaysFlag + 1]) : WINNER_DEFAULT_MIN_DAYS;
   if (!Number.isInteger(minDays) || minDays < 1) throw new Error("--min-days must be a positive integer.");
 
-  console.log(`Collecting ${args.limit ?? 100} winners · ${winnerRuleLabel(minDays)}${args.dryRun ? " · DRY RUN" : ""}`);
-  const result = await collectWinners({ target: args.limit ?? undefined, minDays, dryRun: args.dryRun });
+  console.log(`Collecting ${args.limit ?? 100} winners · ${winnerRuleLabel(minDays, args.brand)}${args.dryRun ? " · DRY RUN" : ""}`);
+  const result = await collectWinners({ brand: args.brand, target: args.limit ?? undefined, minDays, dryRun: args.dryRun });
 
   console.log(`\n${result.rows.length} winners picked (launched on or before ${result.cutoff}):`);
   for (const brand of [...result.perBrand].sort((a, b) => b.picked - a.picked)) {
     console.log(`  ${String(brand.picked).padStart(3)}  ${brand.domain}  (${brand.available ?? "?"} qualifying)`);
   }
   if (result.empty.length) console.log(`No qualifying winners: ${result.empty.join(", ")}`);
-  console.log(`\n${result.newIds.length} new to the index · ${result.excluded} earlier corpus ads ${result.written ? "now excluded" : "would be excluded"} (kept, not deleted)`);
+  console.log(`\n${result.newIds.length} new to the index · ${result.excluded} earlier ${result.brand ? `${result.brand} ` : ""}corpus ads ${result.written ? "now excluded" : "would be excluded"} (kept, not deleted)`);
   console.log(`BrandSearch credits used: ${result.creditsUsed} · daily remaining ${result.dailyRemaining ?? "?"} · monthly remaining ${result.monthlyRemaining ?? "?"}`);
   if (!result.written) {
     console.log("Dry run — nothing written.");
