@@ -26,6 +26,7 @@ const PRIMARY: NavLink[] = [
 
 const OTHER: NavLink[] = [
   { href: "/scorer", label: "Script Scorer" },
+  { href: "/miner", label: "Corpus Miner" },
   { href: "/research", label: "Research" },
   { href: "/winners", label: "Winners" },
   { href: "/runs", label: "History" },
