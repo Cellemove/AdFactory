@@ -50,6 +50,11 @@ test("isPlatformNoise kills laughter, emoji, bait, mentions, praise — keeps re
   assert.ok(!isPlatformNoise(GOOD_TEXT));
 });
 
+test("laughter noise detection stays linear on long adversarial input", () => {
+  assert.ok(isPlatformNoise("ha".repeat(5_000)));
+  assert.ok(!isPlatformNoise(`${"ha".repeat(5_000)}x`));
+});
+
 test("gateComments keeps quality first-person comments, kills noise and in-batch dupes", () => {
   const batch = [
     comment(GOOD_TEXT),

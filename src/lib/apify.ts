@@ -222,7 +222,7 @@ export function normalizeTiktokComments(items: unknown[], videoId: string, video
 // Social-comment noise the YouTube-era gate never saw. Runs BEFORE
 // isUsefulCustomerVerbatim so obviously-worthless comments die instantly.
 
-const LAUGHING = /^(?:[\s.!,]*(?:a?h[ae]h[ahe]*|l+o+l+|lmaoo*|lmfaoo*|rofl|omg|dead|💀|😂|🤣|😭))+[\s.!,]*$/i;
+const LAUGHTER_EMOJIS = new Set(["💀", "😂", "🤣", "😭"]);
 const MENTION_ONLY = /^[\s@\w.,!?]*@\w[\w.]*[\s@\w.,!?]*$/;
 const ENGAGEMENT_BAIT = /^(?:first|second|early|pin (me|this)|who'?s (here|watching)|anyone (else )?(here|watching)|notification (squad|gang))(?: in \d{4})?[\s!.]*$/i;
 const CREATOR_PRAISE = /^(?:i )?(?:love|luv|adore)\s+(?:you|u|your (videos?|content|page|channel))\b[\s\S]{0,40}$/i;
@@ -234,11 +234,62 @@ function emojiRatio(text: string): number {
   return emoji / chars.length;
 }
 
+function isLaughingOnly(text: string): boolean {
+  const tokens = text
+    .toLocaleLowerCase("en")
+    .split(/[\s.,!?;:，。…]+/u)
+    .filter(Boolean);
+  return tokens.length > 0 && tokens.every(isLaughterToken);
+}
+
+function isLaughterToken(token: string): boolean {
+  const letters = [...token].filter((char) => !LAUGHTER_EMOJIS.has(char)).join("");
+  if (!letters) return true;
+  if (letters === "rofl" || letters === "omg" || letters === "dead") return true;
+  if (isExtendedEnding(letters, "lma") || isExtendedEnding(letters, "lmfa")) return true;
+  if (isLolSequence(letters)) return true;
+  return isHaSequence(letters);
+}
+
+function isExtendedEnding(value: string, prefix: string): boolean {
+  if (!value.startsWith(prefix) || value.length === prefix.length) return false;
+  for (let index = prefix.length; index < value.length; index += 1) {
+    if (value[index] !== "o") return false;
+  }
+  return true;
+}
+
+function isLolSequence(value: string): boolean {
+  let index = 0;
+  while (value[index] === "l") index += 1;
+  if (index === 0) return false;
+  const firstO = index;
+  while (value[index] === "o") index += 1;
+  if (index === firstO) return false;
+  const finalL = index;
+  while (value[index] === "l") index += 1;
+  return index > finalL && index === value.length;
+}
+
+function isHaSequence(value: string): boolean {
+  let index = value[0] === "a" ? 1 : 0;
+  let syllables = 0;
+  while (index < value.length) {
+    if (value[index] !== "h") return false;
+    index += 1;
+    if (index === value.length) return syllables > 0;
+    if (value[index] !== "a" && value[index] !== "e") return false;
+    syllables += 1;
+    index += 1;
+  }
+  return syllables > 0;
+}
+
 export function isPlatformNoise(text: string): boolean {
   const clean = text.replace(/\s+/g, " ").trim();
   if (!clean) return true;
   if (emojiRatio(clean) > 0.5) return true;
-  if (LAUGHING.test(clean)) return true;
+  if (isLaughingOnly(clean)) return true;
   if (ENGAGEMENT_BAIT.test(clean)) return true;
   if (CREATOR_PRAISE.test(clean)) return true;
   // Mention-only: contains an @handle and nothing of substance besides it.
