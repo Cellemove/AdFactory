@@ -93,27 +93,40 @@ function option(metadata: ShopifyProductMetadata, pattern: RegExp): string[] {
   return metadata.options.find((item) => pattern.test(item.name))?.values ?? [];
 }
 
-function publicProductUrl(metadata: ShopifyProductMetadata): string {
-  return metadata.onlineStoreUrl || `https://cellumove.com/products/${encodeURIComponent(metadata.handle)}`;
+function productSourceUrl(metadata: ShopifyProductMetadata): string {
+  if (metadata.onlineStoreUrl) return metadata.onlineStoreUrl;
+  const storeHandle = metadata.storeDomain.replace(/\.myshopify\.com$/i, "");
+  const numericProductId = metadata.productId.split("/").at(-1);
+  return `https://admin.shopify.com/store/${storeHandle}/products/${numericProductId}`;
 }
 
-function buildPriceOffers(product: CellumoveImportProduct): CellumoveOfferSeed[] {
+function currencyAmount(value: string, currencyCode: string): string {
+  const symbols: Record<string, string> = { GBP: "£", EUR: "€", USD: "$", AUD: "A$", CAD: "C$" };
+  return `${symbols[currencyCode] ?? `${currencyCode} `}${value}`;
+}
+
+function marketForCurrency(currencyCode: string): string | null {
+  return ({ GBP: "UK", AUD: "AU", CAD: "CA", CZK: "CZ", PLN: "PL", SEK: "SE" } as Record<string, string>)[currencyCode] ?? null;
+}
+
+function buildPriceOffers(product: CellumoveImportProduct, currencyCode: string): CellumoveOfferSeed[] {
   const { metadata } = product;
   const title = metadata.title?.trim() || product.name;
-  const sourceUrl = publicProductUrl(metadata);
+  const sourceUrl = productSourceUrl(metadata);
+  const marketCode = marketForCurrency(currencyCode);
   const prices = [...new Set(metadata.variants.map((variant) => variant.price).filter(Boolean))];
   const compareAtPrices = [...new Set(metadata.variants.map((variant) => variant.compareAtPrice).filter((value): value is string => Boolean(value)))];
   if (!prices.length) return [];
 
   if (prices.length === 1) {
-    const compareAt = compareAtPrices.length === 1 ? `, compared with £${compareAtPrices[0]}` : "";
+    const compareAt = compareAtPrices.length === 1 ? `, compared with ${currencyAmount(compareAtPrices[0]!, currencyCode)}` : "";
     return [offer(
       product.id,
-      "current_uk_catalog_price",
-      `The current UK storefront price is £${prices[0]}${compareAt} for the listed variants of ${title}.`,
+      "current_catalog_price",
+      `The current ${currencyCode} Shopify catalog price is ${currencyAmount(prices[0]!, currencyCode)}${compareAt} for the listed variants of ${title}.`,
       sourceUrl,
       "approved",
-      "UK",
+      marketCode,
     )];
   }
 
@@ -125,26 +138,26 @@ function buildPriceOffers(product: CellumoveImportProduct): CellumoveOfferSeed[]
     if (stylePrices.length !== 1) return [];
     return [offer(
       product.id,
-      `current_uk_catalog_price_${normalizeStatement(style).replaceAll(" ", "_")}`,
-      `The current UK storefront price is £${stylePrices[0]} for ${style} variants of ${title}.`,
+      `current_catalog_price_${normalizeStatement(style).replaceAll(" ", "_")}`,
+      `The current ${currencyCode} Shopify catalog price is ${currencyAmount(stylePrices[0]!, currencyCode)} for ${style} variants of ${title}.`,
       sourceUrl,
       "approved",
-      "UK",
+      marketCode,
     )];
   });
   if (byStyle.length) return byStyle;
 
   return [offer(
     product.id,
-    "current_uk_catalog_price_range",
-    `Current UK storefront prices for ${title} range from £${prices.sort((a, b) => Number(a) - Number(b))[0]} to £${prices.at(-1)} depending on the selected variant.`,
+    "current_catalog_price_range",
+    `Current ${currencyCode} Shopify catalog prices for ${title} range from ${currencyAmount(prices.sort((a, b) => Number(a) - Number(b))[0]!, currencyCode)} to ${currencyAmount(prices.at(-1)!, currencyCode)} depending on the selected variant.`,
     sourceUrl,
     "approved",
-    "UK",
+    marketCode,
   )];
 }
 
-export function buildCellumoveFactsAndOffers(products: CellumoveImportProduct[]): {
+export function buildCellumoveFactsAndOffers(products: CellumoveImportProduct[], currencyCode = "GBP"): {
   facts: CellumoveFactSeed[];
   offers: CellumoveOfferSeed[];
 } {
@@ -152,20 +165,34 @@ export function buildCellumoveFactsAndOffers(products: CellumoveImportProduct[])
   const offers: CellumoveOfferSeed[] = [];
 
   for (const product of products) {
-    const sourceUrl = publicProductUrl(product.metadata);
+    const sourceUrl = productSourceUrl(product.metadata);
     const title = product.metadata.title?.trim() || product.name;
     const description = product.metadata.description?.trim() || "";
     const colors = option(product.metadata, /^colou?r$/i);
     const sizes = option(product.metadata, /^size$/i);
     const styles = option(product.metadata, /^style$/i);
 
-    facts.push(fact(product.id, "official_catalog_name", `The official Shopify catalog name is “${title}”.`, sourceUrl));
+    facts.push(
+      fact(product.id, "official_catalog_name", `The official Shopify catalog name is “${title}”.`, sourceUrl),
+      fact(product.id, "shopify_catalog_status", `The Shopify product status is ${product.metadata.status}.`, sourceUrl),
+      fact(product.id, "shopify_vendor", `The Shopify catalog vendor is ${product.metadata.vendor || "Cellumove"}.`, sourceUrl),
+      fact(product.id, "listed_variant_count", `The Shopify catalog contains ${product.metadata.variants.length} listed variants for this product.`, sourceUrl),
+    );
+    if (product.metadata.productType) facts.push(fact(product.id, "shopify_product_type", `The Shopify product type is ${product.metadata.productType}.`, sourceUrl));
     if (description) {
-      facts.push(fact(product.id, "official_catalog_description", description, sourceUrl));
+      const requiresClaimReview = /\b(?:clinically|medical|doctor|pain|swelling|circulation|lymph|lipedema|lipoedema|lymphedema|varicose|calorie|weight loss|burn|results? in|days?|weeks?|cure|treat|prevent|relief)\b/i.test(description);
+      facts.push(fact(product.id, requiresClaimReview ? "catalog_description_claim_review" : "official_catalog_description", description, sourceUrl, requiresClaimReview ? "draft" : "approved"));
     }
-    if (colors.length) facts.push(fact(product.id, "available_colors", `Listed colors: ${colors.join(", ")}.`, sourceUrl));
-    if (sizes.length) facts.push(fact(product.id, "available_sizes", `Listed sizes: ${sizes.join(", ")}.`, sourceUrl));
-    if (styles.length) facts.push(fact(product.id, "available_styles", `Listed styles: ${styles.join(", ")}.`, sourceUrl));
+    for (const productOption of product.metadata.options) {
+      if (!productOption.values.length) continue;
+      const rawOptionKey = normalizeStatement(productOption.name).replaceAll(" ", "_").slice(0, 48) || "option";
+      const optionKey = ({ color: "colors", colour: "colors", size: "sizes", style: "styles" } as Record<string, string>)[rawOptionKey] ?? rawOptionKey;
+      facts.push(fact(product.id, `available_${optionKey}`, `Listed ${productOption.name.toLowerCase()} options: ${productOption.values.join(", ")}.`, sourceUrl));
+    }
+    if (colors.length && sizes.length) {
+      facts.push(fact(product.id, "available_color_and_size_summary", `This product is available in ${colors.length} listed colors and sizes ranging from ${sizes[0]} through ${sizes.at(-1)}.`, sourceUrl));
+    }
+    if (styles.length) facts.push(fact(product.id, "available_style_summary", `This product has ${styles.join(" and ")} style options.`, sourceUrl));
 
     const looksLikeCompressionLegging = /legging|compression/i.test(`${product.name} ${title} ${description}`);
     if (looksLikeCompressionLegging) {
@@ -174,6 +201,7 @@ export function buildCellumoveFactsAndOffers(products: CellumoveImportProduct[])
         fact(product.id, "movement_mechanism", "As the wearer moves, the raised texture is designed to press gently against the skin and create a continuous hands-free micro-massage.", CELLUMOVE_HOMEPAGE_URL),
         fact(product.id, "compression_profile", "The compression is described as firmest at the ankle and progressively lighter higher up the leg.", CELLUMOVE_HOMEPAGE_URL),
         fact(product.id, "brand_product_design", "Cellumove describes its 3D™ technology as combining textured fabric, targeted compression, and sculpting support.", CELLUMOVE_HOMEPAGE_URL),
+        fact(product.id, "everyday_wear_design", "Cellumove describes its pieces as made to move with the wearer during workouts, errands, and everyday life while providing support throughout the day.", CELLUMOVE_HOMEPAGE_URL),
         fact(product.id, "customer_support_contact", "Customer support is available at contact@cellumove.com, and the contact page states that replies are provided within 72 hours.", CELLUMOVE_CONTACT_URL),
         fact(product.id, "first_wear_outcome_claim_review", "Cellumove claims smoother, firmer, lighter legs from the first wear.", CELLUMOVE_HOMEPAGE_URL, "draft"),
         fact(product.id, "cellulite_outcome_claim_review", "Cellumove claims the product is designed to smooth the look of cellulite with every week of movement.", CELLUMOVE_HOMEPAGE_URL, "draft"),
@@ -189,7 +217,7 @@ export function buildCellumoveFactsAndOffers(products: CellumoveImportProduct[])
     );
 
     offers.push(
-      ...buildPriceOffers(product),
+      ...buildPriceOffers(product, currencyCode),
       offer(product.id, "free_standard_shipping", "Standard shipping is free for orders placed on the Cellumove website.", CELLUMOVE_SHIPPING_URL),
       offer(product.id, "order_processing_time", "Orders are generally processed within 1 to 3 working days after receipt.", CELLUMOVE_SHIPPING_URL),
       offer(product.id, "delivery_time", "Delivery is stated as 3 to 14 working days after dispatch, subject to location and peak-period variation.", CELLUMOVE_SHIPPING_URL),

@@ -128,7 +128,13 @@ export function FactsOffersManager({ products, markets, facts, offers, initialPr
       <section className="card">
         <label className="max-w-xl">
           <span className="label">Product scope</span>
-          <select className="input" value={productId} onChange={(event) => { setProductId(event.target.value); setEditing(null); setMessage(null); }}>
+          <select className="input" value={productId} onChange={(event) => {
+            const nextProductId = event.target.value;
+            setProductId(nextProductId);
+            setEditing(null);
+            setMessage(null);
+            router.replace(`/scorer/facts?product=${encodeURIComponent(nextProductId)}`);
+          }}>
             {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
           </select>
         </label>

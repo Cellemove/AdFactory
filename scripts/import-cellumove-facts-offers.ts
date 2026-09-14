@@ -27,30 +27,35 @@ async function main() {
   const approverArg = process.argv.find((argument) => argument.startsWith("--approver="));
   const approverUsername = approverArg?.slice("--approver=".length) || "kamino";
 
-  const [projectsResult, productsResult, approverResult, shopifyResult, sitemapIndex] = await Promise.all([
-    supabase.from("ScriptProject").select("productId"),
+  const [productsResult, approverResult, shopifyResult] = await Promise.all([
     supabase.from("Product").select("id,name,context"),
     supabase.from("AppUser").select("id,username,role").eq("username", approverUsername).maybeSingle(),
     fetchAllShopifyProducts(),
-    fetch(SITEMAP_INDEX_URL, { cache: "no-store" }).then((response) => response.text()),
   ]);
-  if (projectsResult.error) throw new Error(projectsResult.error.message);
   if (productsResult.error) throw new Error(productsResult.error.message);
   if (approverResult.error) throw new Error(approverResult.error.message);
   if (!approverResult.data || approverResult.data.role !== "creative_strategist") {
     throw new Error(`Approver ${approverUsername} is not an active creative strategist.`);
   }
-  const [pageSitemap, productSitemap] = await Promise.all([
-    fetch(findChildSitemap(sitemapIndex, "pages"), { cache: "no-store" }).then((response) => response.text()),
-    fetch(findChildSitemap(sitemapIndex, "products"), { cache: "no-store" }).then((response) => response.text()),
-  ]);
+  let pageSitemap: string | null = null;
+  let productSitemap: string | null = null;
+  try {
+    const sitemapIndex = await fetch(SITEMAP_INDEX_URL, { cache: "no-store" }).then((response) => {
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return response.text();
+    });
+    [pageSitemap, productSitemap] = await Promise.all([
+      fetch(findChildSitemap(sitemapIndex, "pages"), { cache: "no-store" }).then((response) => response.ok ? response.text() : null),
+      fetch(findChildSitemap(sitemapIndex, "products"), { cache: "no-store" }).then((response) => response.ok ? response.text() : null),
+    ]);
+  } catch {
+    // Sitemap totals are report-only. Shopify Admin remains the evidence source.
+  }
 
-  const usedProductIds = new Set((projectsResult.data ?? []).map((row) => row.productId));
   const liveShopifyById = new Map(shopifyResult.products.map((product) => [product.id, product]));
   const products: CellumoveImportProduct[] = (productsResult.data ?? []).flatMap((product) => {
-    if (!usedProductIds.has(product.id)) return [];
     const metadata = readShopifyProductMetadata(product.context);
-    if (!metadata || metadata.status !== "active") return [];
+    if (!metadata) return [];
     const live = liveShopifyById.get(metadata.productId);
     if (!live) return [];
     return [{
@@ -73,15 +78,21 @@ async function main() {
       },
     }];
   });
-  const plan = buildCellumoveFactsAndOffers(products);
+  const plan = buildCellumoveFactsAndOffers(products, shopifyResult.connection.currencyCode);
+  const linkedProductIds = new Set(products.map((product) => product.id));
   const report = {
     mode: commit ? "commit" : "dry-run",
     shop: shopifyResult.connection.shopName,
     grantedScopes: shopifyResult.connection.grantedScopes,
     adminProductsInspected: shopifyResult.products.length,
-    publicProductUrlsCatalogued: countSitemapUrls(productSitemap),
-    publicPageUrlsCatalogued: countSitemapUrls(pageSitemap),
-    scorerProductsCovered: products.map((product) => ({ id: product.id, name: product.name, handle: product.metadata.handle })),
+    databaseProductsInspected: (productsResult.data ?? []).length,
+    linkedProductScopesCovered: products.length,
+    productScopesWithoutShopifyEvidence: (productsResult.data ?? [])
+      .filter((product) => !linkedProductIds.has(product.id))
+      .map((product) => ({ id: product.id, name: product.name })),
+    publicProductUrlsCatalogued: productSitemap ? countSitemapUrls(productSitemap) : null,
+    publicPageUrlsCatalogued: pageSitemap ? countSitemapUrls(pageSitemap) : null,
+    scorerProductsCovered: products.map((product) => ({ id: product.id, name: product.name, handle: product.metadata.handle, status: product.metadata.status })),
     facts: {
       total: plan.facts.length,
       approved: plan.facts.filter((row) => row.status === "approved").length,
@@ -98,14 +109,24 @@ async function main() {
 
   const now = new Date().toISOString();
   const approvedAudit = { approvedByUserId: approverResult.data.id, approvedAt: now };
-  const [existingFactsResult, existingOffersResult] = await Promise.all([
-    supabase.from("BrandFact").select("id,status,approvedByUserId,approvedAt,createdAt").in("id", plan.facts.map((row) => row.id)),
-    supabase.from("ProductOffer").select("id,status,approvedByUserId,approvedAt,createdAt").in("id", plan.offers.map((row) => row.id)),
-  ]);
-  if (existingFactsResult.error) throw new Error(existingFactsResult.error.message);
-  if (existingOffersResult.error) throw new Error(existingOffersResult.error.message);
-  const existingFacts = new Map((existingFactsResult.data ?? []).map((row) => [row.id, row]));
-  const existingOffers = new Map((existingOffersResult.data ?? []).map((row) => [row.id, row]));
+  const chunks = <T,>(items: T[], size = 200): T[][] => Array.from(
+    { length: Math.ceil(items.length / size) },
+    (_, index) => items.slice(index * size, (index + 1) * size),
+  );
+  const existingFactRows = [] as Array<{ id: string; status: string; approvedByUserId: string | null; approvedAt: string | null; createdAt: string }>;
+  for (const ids of chunks(plan.facts.map((row) => row.id))) {
+    const result = await supabase.from("BrandFact").select("id,status,approvedByUserId,approvedAt,createdAt").in("id", ids);
+    if (result.error) throw new Error(result.error.message);
+    existingFactRows.push(...(result.data ?? []));
+  }
+  const existingOfferRows = [] as Array<{ id: string; status: string; approvedByUserId: string | null; approvedAt: string | null; createdAt: string }>;
+  for (const ids of chunks(plan.offers.map((row) => row.id))) {
+    const result = await supabase.from("ProductOffer").select("id,status,approvedByUserId,approvedAt,createdAt").in("id", ids);
+    if (result.error) throw new Error(result.error.message);
+    existingOfferRows.push(...(result.data ?? []));
+  }
+  const existingFacts = new Map(existingFactRows.map((row) => [row.id, row]));
+  const existingOffers = new Map(existingOfferRows.map((row) => [row.id, row]));
   const factRows = plan.facts.map((row) => ({
     ...row,
     ...(existingFacts.has(row.id)
@@ -133,12 +154,12 @@ async function main() {
 
   const factRowsToWrite = refreshExisting ? factRows : factRows.filter((row) => !existingFacts.has(row.id));
   const offerRowsToWrite = refreshExisting ? offerRows : offerRows.filter((row) => !existingOffers.has(row.id));
-  if (factRowsToWrite.length) {
-    const factWrite = await supabase.from("BrandFact").upsert(factRowsToWrite, { onConflict: "id" });
+  for (const rows of chunks(factRowsToWrite)) {
+    const factWrite = await supabase.from("BrandFact").upsert(rows, { onConflict: "id" });
     if (factWrite.error) throw new Error(`BrandFact: ${factWrite.error.message}`);
   }
-  if (offerRowsToWrite.length) {
-    const offerWrite = await supabase.from("ProductOffer").upsert(offerRowsToWrite, { onConflict: "id" });
+  for (const rows of chunks(offerRowsToWrite)) {
+    const offerWrite = await supabase.from("ProductOffer").upsert(rows, { onConflict: "id" });
     if (offerWrite.error) throw new Error(`ProductOffer: ${offerWrite.error.message}`);
   }
   console.log(`Committed ${factRowsToWrite.length} facts and ${offerRowsToWrite.length} offers. Existing entries were ${refreshExisting ? "refreshed" : "preserved"}; approved new rows are attributed to ${approverUsername}.`);

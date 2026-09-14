@@ -4,6 +4,8 @@ import { VERBATIM_CATEGORIES, SOURCE_TYPES } from "@/lib/cellumove/verbatim-taxo
 import type { AngleRow, SubAvatarRow, MarketProfileRow, VerbatimRow } from "@/lib/database.types";
 
 export const dynamic = "force-dynamic";
+// Apify mining runs 1-3 minutes (actor run + poll); give the server action room on Vercel.
+export const maxDuration = 300;
 
 const PAGE_SIZE = 100;
 
@@ -15,6 +17,7 @@ export default async function VerbatimsPage({
   const sp = await searchParams;
   const angle = typeof sp.angle === "string" ? sp.angle : "";
   const cat = typeof sp.cat === "string" ? sp.cat : "";
+  const src = typeof sp.src === "string" ? sp.src : "";
   const page = Math.max(parseInt(typeof sp.page === "string" ? sp.page : "1", 10) || 1, 1);
   const from = (page - 1) * PAGE_SIZE;
 
@@ -29,12 +32,14 @@ export default async function VerbatimsPage({
     .range(from, from + PAGE_SIZE - 1);
   if (angle) vbQuery = vbQuery.eq("angleSlug", angle);
   if (cat) vbQuery = vbQuery.eq("category", cat);
+  if (src) vbQuery = vbQuery.eq("sourceType", src);
 
-  // Category-chip counts are scoped by the angle filter only (so the chips stay
-  // useful while one of them is active).
+  // Category-chip counts are scoped by the angle + source filters only (so the
+  // chips stay useful while one of them is active).
   const catCount = (slug?: string) => {
     let q = supabase.from("Verbatim").select("id", { head: true, count: "exact" }).like("researchId", "verified:%");
     if (angle) q = q.eq("angleSlug", angle);
+    if (src) q = q.eq("sourceType", src);
     if (slug) q = q.eq("category", slug);
     return q;
   };
@@ -90,6 +95,7 @@ export default async function VerbatimsPage({
         verbatims={verbatims}
         filterAngle={angle}
         filterCat={cat}
+        filterSrc={src}
         page={page}
         pageCount={Math.max(1, Math.ceil(total / PAGE_SIZE))}
         total={total}

@@ -42,8 +42,9 @@ test("builds approved catalog facts and keeps unsupported outcome claims in draf
   const result = buildCellumoveFactsAndOffers([product]);
   assert.equal(result.facts.find((row) => row.factType === "available_colors")?.status, "approved");
   assert.equal(result.facts.find((row) => row.factType === "first_wear_outcome_claim_review")?.status, "draft");
-  assert.equal(result.offers.find((row) => row.offerType === "current_uk_catalog_price")?.marketCode, "UK");
-  assert.match(result.offers.find((row) => row.offerType === "current_uk_catalog_price")?.statement ?? "", /£49\.90, compared with £69\.90/);
+  assert.equal(result.offers.find((row) => row.offerType === "current_catalog_price")?.marketCode, "UK");
+  assert.match(result.offers.find((row) => row.offerType === "current_catalog_price")?.statement ?? "", /£49\.90, compared with £69\.90/);
+  assert.equal(result.facts.find((row) => row.factType === "listed_variant_count")?.status, "approved");
 });
 
 test("records the conflicting guarantee language as review-only offers", () => {
@@ -59,4 +60,25 @@ test("uses stable IDs so repeated imports are idempotent", () => {
   const second = buildCellumoveFactsAndOffers([product]);
   assert.deepEqual(first.facts.map((row) => row.id), second.facts.map((row) => row.id));
   assert.deepEqual(first.offers.map((row) => row.id), second.offers.map((row) => row.id));
+});
+
+test("covers draft and unpublished Shopify product scopes without fabricating a public URL", () => {
+  const unpublished = {
+    ...product,
+    id: "product-2",
+    name: "Unpublished product",
+    metadata: {
+      ...product.metadata,
+      productId: "gid://shopify/Product/2",
+      handle: "unpublished-product",
+      status: "draft",
+      onlineStoreUrl: null,
+      description: "",
+    },
+  };
+  const result = buildCellumoveFactsAndOffers([unpublished]);
+  assert.ok(result.facts.some((row) => row.status === "approved"));
+  assert.ok(result.offers.some((row) => row.status === "approved"));
+  assert.ok(result.facts.every((row) => row.productId === unpublished.id));
+  assert.match(result.facts[0]?.sourceUrl ?? "", /admin\.shopify\.com\/store\/example\/products\/2/);
 });
