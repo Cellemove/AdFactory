@@ -222,7 +222,7 @@ export function normalizeTiktokComments(items: unknown[], videoId: string, video
 // Social-comment noise the YouTube-era gate never saw. Runs BEFORE
 // isUsefulCustomerVerbatim so obviously-worthless comments die instantly.
 
-const LAUGHING = /^(?:[\s.!,]*(?:a?h(?:a|e)(?:h(?:a|e)?)*|l+o+l+|lmaoo*|lmfaoo*|rofl|omg|dead|💀|😂|🤣|😭))+[\s.!,]*$/i;
+const LAUGHING = /^(?:[\s.!,]*(?:a?h(?:a|e)(?:h(?:a|e))*h?|l+o+l+|lmaoo*|lmfaoo*|rofl|omg|dead|💀|😂|🤣|😭))+[\s.!,]*$/i;
 const MENTION_ONLY = /^[\s@\w.,!?]*@\w[\w.]*[\s@\w.,!?]*$/;
 const ENGAGEMENT_BAIT = /^(?:first|second|early|pin (me|this)|who'?s (here|watching)|anyone (else )?(here|watching)|notification (squad|gang))(?: in \d{4})?[\s!.]*$/i;
 const CREATOR_PRAISE = /^(?:i )?(?:love|luv|adore)\s+(?:you|u|your (videos?|content|page|channel))\b[\s\S]{0,40}$/i;
