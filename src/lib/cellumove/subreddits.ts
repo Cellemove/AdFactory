@@ -33,12 +33,12 @@ export const SUBREDDIT_CLUSTERS: SubredditCluster[] = [
   {
     key: "lipedema",
     keywords: ["lipedema", "lipoedema", "lymphedema", "lymphoedema", "lymph", "fluid retention", "fibro", "connective tissue", "chronic illness"],
-    subs: ["lipedema", "lipoedema", "lymphedema", "Compression", "ChronicIllness", "Fibromyalgia", "ehlersdanlos", "POTS"],
+    subs: ["lipedema", "lipoedema", "lymphedema", "ChronicIllness", "Fibromyalgia", "ehlersdanlos", "POTS"],
   },
   {
     key: "legs_venous",
     keywords: ["vein", "venous", "varicose", "spider vein", "phleb", "swollen", "swelling", "heavy leg", "tired leg", "achy leg", "circulation", "restless", "edema", "oedema"],
-    subs: ["varicoseveins", "veins", "Compression", "RestlessLegs", "lymphedema", "ChronicPain"],
+    subs: ["varicoseveins", "veins", "RestlessLegs", "lymphedema", "ChronicPain"],
   },
   {
     key: "joint",

@@ -31,6 +31,7 @@ export interface ShopifyConnectionResult {
   shopName: string;
   storeDomain: string;
   apiVersion: string;
+  currencyCode: string;
   grantedScopes: string[];
 }
 
@@ -291,11 +292,11 @@ async function shopifyGraphql<T>(query: string, variables: Record<string, unknow
 export async function checkShopifyConnection(): Promise<ShopifyConnectionResult> {
   const config = getShopifyConfig();
   const data = await shopifyGraphql<{
-    shop: { name: string; myshopifyDomain: string };
+    shop: { name: string; myshopifyDomain: string; currencyCode: string };
     currentAppInstallation: { accessScopes: Array<{ handle: string }> };
   }>(`#graphql
     query AdFactoryShopifyConnection {
-      shop { name myshopifyDomain }
+      shop { name myshopifyDomain currencyCode }
       currentAppInstallation { accessScopes { handle } }
     }
   `);
@@ -308,6 +309,7 @@ export async function checkShopifyConnection(): Promise<ShopifyConnectionResult>
     shopName: data.shop.name,
     storeDomain: data.shop.myshopifyDomain,
     apiVersion: config.apiVersion,
+    currencyCode: data.shop.currencyCode,
     grantedScopes,
   };
 }

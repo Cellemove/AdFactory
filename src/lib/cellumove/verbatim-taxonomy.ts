@@ -44,8 +44,10 @@ export const SOURCE_TYPES: SourceType[] = [
   { slug: "reddit_comment", label: "Reddit comment", rank: 0.8 },
   { slug: "amazon_review", label: "Amazon review", rank: 0.75 },
   { slug: "trustpilot", label: "Trustpilot review", rank: 0.7 },
+  { slug: "meta_comment", label: "Meta ad comment", rank: 0.7 },
   { slug: "youtube_comment", label: "YouTube comment", rank: 0.6 },
   { slug: "tiktok_comment", label: "TikTok comment", rank: 0.4 },
+  { slug: "tiktok_video", label: "TikTok video caption", rank: 0.35 },
   { slug: "other", label: "Other", rank: 0.3 },
 ];
 

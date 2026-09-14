@@ -9,7 +9,7 @@ interface Cat { slug: string; label: string; description: string }
 
 export function VerbatimsClient({
   angles, subs, markets, categories, sourceTypes, verbatims,
-  filterAngle, filterCat, page, pageCount, total, angleTotal, countByCat,
+  filterAngle, filterCat, filterSrc, page, pageCount, total, angleTotal, countByCat,
 }: {
   angles: Array<{ id: string; name: string; slug: string }>;
   subs: Array<{ id: string; name: string; angleName: string }>;
@@ -19,6 +19,7 @@ export function VerbatimsClient({
   verbatims: VerbatimRow[];
   filterAngle: string;
   filterCat: string;
+  filterSrc: string;
   page: number;
   pageCount: number;
   total: number;
@@ -37,16 +38,23 @@ export function VerbatimsClient({
   const [focus, setFocus] = useState("");
   const [market, setMarket] = useState("");
   const [count, setCount] = useState("24");
+  const [platforms, setPlatforms] = useState<string[]>(["youtube"]);
+  const [targetUrlsText, setTargetUrlsText] = useState("");
+
+  const togglePlatform = (p: string) =>
+    setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
 
   // Browser filters live in the URL — the database applies them, so they cover
   // the whole corpus (not just loaded rows) and survive refresh.
-  const navigate = (next: { angle?: string; cat?: string; page?: number }) => {
+  const navigate = (next: { angle?: string; cat?: string; src?: string; page?: number }) => {
     const p = new URLSearchParams();
     const nAngle = next.angle ?? filterAngle;
     const nCat = next.cat ?? filterCat;
+    const nSrc = next.src ?? filterSrc;
     const nPage = next.page ?? 1; // filter changes reset to page 1
     if (nAngle) p.set("angle", nAngle);
     if (nCat) p.set("cat", nCat);
+    if (nSrc) p.set("src", nSrc);
     if (nPage > 1) p.set("page", String(nPage));
     startNav(() => router.push(`/verbatims${p.size ? `?${p}` : ""}`));
   };
@@ -58,11 +66,18 @@ export function VerbatimsClient({
     setNotice(null);
     startTransition(async () => {
       try {
+        const targetUrls = targetUrlsText
+          .split(/\s+/)
+          .map((s) => s.trim())
+          .filter((s) => /^https?:\/\//i.test(s))
+          .slice(0, 20);
         const res = await mineVerbatims({
           angleSlug: angleSlug || null,
           subAvatarId: subAvatarId || null,
           focus: focus.trim() || null,
           market: market || null,
+          platforms: platforms.length ? (platforms as ("youtube" | "reddit" | "meta" | "tiktok")[]) : undefined,
+          targetUrls: targetUrls.length ? targetUrls : undefined,
           targetCount: count ? Number(count) : undefined,
         });
         setNotice(
@@ -73,7 +88,9 @@ export function VerbatimsClient({
             (res.rejectedByQuality
               ? ` · rejected ${res.rejectedByQuality} weak or off-topic comment${res.rejectedByQuality === 1 ? "" : "s"}`
               : "") +
-            ".",
+            (res.estUsd ? ` · ~$${res.estUsd.toFixed(2)} Apify` : "") +
+            "." +
+            (res.warnings?.length ? ` ${res.warnings.join(" ")}` : ""),
         );
         router.refresh();
       } catch (e) {
@@ -129,9 +146,37 @@ export function VerbatimsClient({
             <input className="input" inputMode="numeric" value={count} onChange={(e) => setCount(e.target.value)} />
           </div>
         </div>
+        <div>
+          <label className="label">Sources</label>
+          <div className="flex flex-wrap gap-4 text-sm">
+            {([
+              ["youtube", "YouTube — free"],
+              ["reddit", "Reddit — Apify"],
+              ["meta", "Meta ad comments — Apify"],
+              ["tiktok", "TikTok — Apify"],
+            ] as const).map(([slug, label]) => (
+              <label key={slug} className="flex items-center gap-1.5">
+                <input type="checkbox" checked={platforms.includes(slug)} onChange={() => togglePlatform(slug)} />
+                {label}
+              </label>
+            ))}
+          </div>
+        </div>
+        {(platforms.includes("meta") || platforms.includes("tiktok")) && (
+          <div>
+            <label className="label">Post / video URLs (optional — comments are scraped from exactly these)</label>
+            <textarea
+              className="input min-h-16"
+              value={targetUrlsText}
+              onChange={(e) => setTargetUrlsText(e.target.value)}
+              placeholder={"One URL per line. Meta: real post permalinks (facebook.com/.../posts/...) — Ads Library links have no comments.\nWithout URLs, Meta uses your own winning-ad posts and TikTok searches the niche."}
+            />
+          </div>
+        )}
         <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
-          Verification source: {sourceTypes.find((s) => s.slug === "youtube_comment")?.label ?? "YouTube comment"} via the YouTube Data API.
-          Quotes are copied directly from the API and linked to the exact comment. AI-generated and paraphrased quotes are rejected.
+          Quotes are copied directly from each platform&apos;s comments and linked to the source. Every comment passes a
+          noise gate (no &quot;hahaha&quot;, emoji, spam), a first-person quality gate, dedupe, and an AI relevance check —
+          only genuine customer language is kept. Apify sources bill per scraped comment and stop at the run&apos;s budget cap.
         </div>
         <div className="flex items-center gap-3">
           <button className="btn btn-primary" disabled={!canMine} onClick={mine}>
@@ -152,6 +197,14 @@ export function VerbatimsClient({
             {pageCount > 1 ? ` · page ${page}/${pageCount}` : ""}
           </span>
           <div className="ml-auto flex gap-2">
+            <select
+              className="input h-8 py-0 text-xs"
+              value={filterSrc}
+              onChange={(e) => navigate({ src: e.target.value, page: 1 })}
+            >
+              <option value="">All sources</option>
+              {sourceTypes.map((s) => <option key={s.slug} value={s.slug}>{s.label}</option>)}
+            </select>
             <select
               className="input h-8 py-0 text-xs"
               value={filterAngle}

@@ -36,6 +36,8 @@ export type ImportedEvidenceSourceValues = {
   primarySourceUrl: string;
   sourceLinks: EvidenceSourceLink[];
   sourceTypes: EvidenceSourceType[];
+  // From the sheet's STATUS column; null when the cell is empty or unrecognized.
+  reviewStatus: string | null;
 };
 
 export type ParsedSheetEvidence = {
@@ -185,6 +187,19 @@ export function extractEvidenceUrls(cells: string[], headers: string[]): Evidenc
   return links;
 }
 
+/**
+ * Sheet STATUS labels → evidence review status. Unknown/empty labels return
+ * null so the sheet never stomps a status it doesn't understand.
+ */
+export function reviewStatusFromSheetStatus(value: string | null | undefined): string | null {
+  const normalized = (value ?? "").trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "approved") return "approved";
+  if (/reject/.test(normalized)) return "rejected";
+  if (/revision|approval|review/.test(normalized)) return "needs_review";
+  return null;
+}
+
 export function parseSheetEvidenceRow(input: {
   spreadsheetId: string;
   sheetName: string;
@@ -199,12 +214,14 @@ export function parseSheetEvidenceRow(input: {
   if (!evidenceLinks.length) return null;
   const title = input.cells[1]?.trim() || externalId;
   const sourceTypes = [...new Set(links.map((link) => link.type))];
+  const statusIndex = input.headers.findIndex((header) => header.trim().toLowerCase() === "status");
   const sourceValues: ImportedEvidenceSourceValues = {
     externalId,
     title,
     primarySourceUrl: evidenceLinks[0]!.url,
     sourceLinks: links,
     sourceTypes,
+    reviewStatus: statusIndex >= 0 ? reviewStatusFromSheetStatus(input.cells[statusIndex]) : null,
   };
   return {
     sourceKey: googleSheetEvidenceKey(input.spreadsheetId, input.sheetName, input.rowNumber),
@@ -292,6 +309,15 @@ export function buildImportedUpdate(
       if (existing && previousSource[field] !== undefined && !jsonEqual(previousSource[field], nextSource[field])) conflictFields.push(field);
     } else normalized[field] = sourceValues[field];
   });
+  // Sheet STATUS drives review status, but an empty/unknown cell never clears
+  // one, and a hand-set status stays an override (conflict-flagged on change).
+  if (sourceValues.reviewStatus != null) {
+    if (overrides.includes("reviewStatus")) {
+      if (existing && previousSource.reviewStatus !== undefined && !jsonEqual(previousSource.reviewStatus, nextSource.reviewStatus)) {
+        conflictFields.push("reviewStatus");
+      }
+    } else normalized.reviewStatus = sourceValues.reviewStatus;
+  }
   normalized.sourceLinks = sourceValues.sourceLinks as unknown as Json;
   normalized.sourceTypes = sourceValues.sourceTypes as unknown as Json;
   return { normalized, overrideFields: overrides, conflictFields };
@@ -317,12 +343,6 @@ export function sourceValueForReset(evidence: ScriptEvidenceRow, field: Editable
   return asRecord(evidence.sourceValues)[field];
 }
 
-export function validateVerifiedWinner(input: Pick<ScriptEvidenceRow, "evidenceLevel" | "performanceEvidence">): string | null {
-  if (input.evidenceLevel === "verified_winner" && !input.performanceEvidence?.trim()) {
-    return "Verified winners require explicit performance evidence.";
-  }
-  return null;
-}
 
 export function columnLabel(index: number): string {
   let label = "";

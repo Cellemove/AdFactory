@@ -140,6 +140,28 @@ test("fact verification distinguishes missing configuration, support, and numeri
   assert.equal(conflict.findings[0]?.severity, "critical");
 });
 
+test("fact verification recognizes safe catalog paraphrases without approving unrelated claims", () => {
+  const paraphrases: AnalyzedScript = { lines: [{
+    ...analysis.lines[1]!,
+    text: "They come in many different colors and go up to size 7XL. Its 3D knit provides gentle, targeted support.",
+    factualAssertions: [
+      { quote: "They come in many different colors and go up to size 7XL", normalizedClaim: "They come in many different colors and go up to size 7XL", claimType: "product" },
+      { quote: "Its 3D knit provides gentle, targeted support", normalizedClaim: "Its 3D knit provides gentle targeted support", claimType: "mechanism" },
+      { quote: "It cures lipedema", normalizedClaim: "It cures lipedema", claimType: "outcome" },
+    ],
+  }] };
+  const result = scoreFactVerification({
+    analysis: paraphrases,
+    evidence: [
+      { id: "colors", type: "brand_fact", text: "This product is available in 12 listed colors and sizes ranging from S through 7XL." },
+      { id: "support", type: "brand_fact", text: "Cellumove describes its 3D technology as combining textured fabric, targeted compression, and sculpting support." },
+    ],
+  });
+  assert.equal(result.score, 66.67);
+  assert.equal(result.findings.filter((finding) => finding.severity === "info").length, 2);
+  assert.equal(result.findings.at(-1)?.severity, "warning");
+});
+
 test("observer flags remain non-scoring", () => {
   const flagged: AnalyzedScript = { lines: [{ ...analysis.lines[1]!, text: "Clinically proven cure [citation]." }] };
   const result = scoreObserverFlags({ document, analysis: flagged });

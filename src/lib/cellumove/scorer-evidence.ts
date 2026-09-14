@@ -27,14 +27,6 @@ export const CreateScorerEvidenceSchema = z.object({
   performanceEvidence: optionalText,
   notes: optionalText,
   scriptText: z.string().trim().min(20, "Paste the complete script, not only its title.").max(200_000),
-}).superRefine((value, context) => {
-  if (value.evidenceLevel === "verified_winner" && !value.performanceEvidence) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["performanceEvidence"],
-      message: "Verified winners require actual performance evidence such as ROAS, spend, or conversion data.",
-    });
-  }
 });
 
 export type CreateScorerEvidenceInput = {

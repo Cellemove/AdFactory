@@ -147,7 +147,7 @@ export async function executeGoogleSheetEvidenceImport(runId: string): Promise<v
         deconstructionText: null,
         evidenceLevel: "observed",
         performanceEvidence: null,
-        reviewStatus: "unreviewed",
+        reviewStatus: imported.sourceValues.reviewStatus ?? "unreviewed",
         intent: "structural_candidate",
         contentStatus: initialContentStatus,
         sourceValues: imported.sourceValues as unknown as Json,
