@@ -59,6 +59,14 @@ export const ScriptDocumentSchema = z.object({
   framework: z.object({ id: z.string(), name: z.string() }).nullable(),
   format: z.string(),
   targetDurationSec: z.number().min(5).max(600),
+  // The engine's IDEA BRIEF knobs (Script Engine v1.8). Optional so pre-engine
+  // documents keep parsing; generation and hook tools read them when present.
+  brief: z.object({
+    heatLevel: z.number().int().min(1).max(4),
+    hookDirection: z.string().nullable(),
+    funnelStage: z.enum(["TOFU", "MOFU", "BOFU"]),
+    marketCode: z.string().nullable().optional(),
+  }).optional(),
   fiveD: ScriptFiveDSchema.optional(),
   sourceRefs: z.array(z.object({ type: z.string(), id: z.string().nullable(), title: z.string(), url: z.string().nullable() })),
   teardownBrief: TeardownBriefSchema.nullable().optional(),
@@ -69,6 +77,10 @@ export const ScriptDocumentSchema = z.object({
     text: z.string(),
     onScreenText: z.string().optional(),
     visualDirection: z.string().optional(),
+    // Judge output (engine Hook /20 rubric scaled to /100); optional so
+    // unranked pools and old documents keep parsing.
+    score: z.number().min(0).max(100).optional(),
+    scoreReason: z.string().optional(),
   })),
   selectedHookId: z.string().nullable(),
   modules: z.array(ScriptModuleSchema).min(1),
@@ -92,6 +104,22 @@ function teardownInsightForKind(
 
 export function parseScriptDocument(value: unknown): ScriptDocument {
   return ScriptDocumentSchema.parse(value);
+}
+
+type HookEntry = ScriptDocument["hookAlternatives"][number];
+
+/** Scored hooks first (desc); unscored keep their original relative order after. */
+export function sortHooksByScore<T extends { score?: number }>(hooks: readonly T[]): T[] {
+  return [...hooks].sort((a, b) => (b.score ?? -1) - (a.score ?? -1));
+}
+
+/** The strongest hook for previews: top-ranked, else the selected, else the first. */
+export function bestHook(document: ScriptDocument): HookEntry | null {
+  const hooks = document.hookAlternatives;
+  if (!hooks.length) return null;
+  const scored = hooks.filter((hook) => typeof hook.score === "number");
+  if (scored.length) return sortHooksByScore(scored)[0]!;
+  return hooks.find((hook) => hook.id === document.selectedHookId) ?? hooks[0]!;
 }
 
 // Exported so the video-framework extractor can verify that a beat label it is
@@ -259,6 +287,7 @@ export function createInitialScriptDocument(input: {
   targetDurationSec: number;
   idea: string;
   teardown: { id: string; title: string; url: string | null; brief: TeardownBrief } | null;
+  brief?: { heatLevel: number; hookDirection: string | null; funnelStage: "TOFU" | "MOFU" | "BOFU"; marketCode?: string | null };
 }): ScriptDocument {
   const fallbackBeats: ReferenceFormatBeat[] = [
     { label: "Hook", time: "0-3s", note: "Stop the scroll and open the core idea." },
@@ -312,6 +341,7 @@ export function createInitialScriptDocument(input: {
     framework: input.framework ? { id: input.framework.id, name: input.framework.name } : null,
     format: input.format,
     targetDurationSec: input.targetDurationSec,
+    brief: input.brief,
     fiveD: undefined,
     sourceRefs: input.teardown ? [{ type: "teardown", id: input.teardown.id, title: input.teardown.title, url: input.teardown.url }] : [],
     teardownBrief: input.teardown?.brief ?? null,

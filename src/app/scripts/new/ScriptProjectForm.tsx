@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { HOOK_MECHANICS } from "@/lib/cellumove/formats";
 import { useRouter } from "next/navigation";
 import { type ChangeEvent, type ReactNode, useCallback, useMemo, useState } from "react";
 import type { ScriptGenerationProgressEvent } from "@/lib/cellumove/script-generation-progress";
@@ -23,6 +24,7 @@ type Props = {
   editors: Option[];
   teardowns: Option[];
   formats: string[];
+  markets: Array<{ code: string; name: string }>;
   currentUserId: string;
   teardownConfigured: boolean;
   teardownWarning: string | null;
@@ -40,8 +42,14 @@ export function ScriptProjectForm(props: Props) {
   const [frameworkOptions, setFrameworkOptions] = useState(props.frameworks);
   const [strategistPending, setStrategistPending] = useState(false);
   const [strategistResult, setStrategistResult] = useState<StrategistIdeaResult | null>(null);
-  const [batchMode, setBatchMode] = useState(false);
+  const [compareMode, setCompareMode] = useState<"none" | "frameworks" | "hooks">("none");
+  const batchMode = compareMode !== "none";
   const [batchFrameworkIds, setBatchFrameworkIds] = useState<string[]>(() => props.frameworks.slice(0, 2).map((item) => item.id));
+  // Hook-mechanics axis: each selected mechanic becomes its own draft with a
+  // directed hookDirection; optional heat levels multiply (cap 10 variants).
+  const [batchMechanics, setBatchMechanics] = useState<string[]>(() => HOOK_MECHANICS.slice(0, 3).map((item) => item.slug));
+  const [batchHeats, setBatchHeats] = useState<number[]>([]);
+  const hookVariantCount = Math.max(1, batchMechanics.length) * Math.max(1, batchHeats.length);
   // No angle in the form: the avatar carries it. A prefilled angle only picks
   // which avatar to start on.
   const initialAngleId = props.initialValues?.angleId ?? "";
@@ -52,6 +60,8 @@ export function ScriptProjectForm(props: Props) {
     strategistUserId: props.strategists.some((item) => item.id === props.currentUserId) ? props.currentUserId : props.strategists[0]?.id ?? "",
     editorUserId: "", format: props.formats[0] ?? "UGC", targetDurationSec: "30", teardownRecordId: "", pipelineRunId: "",
     spySweepId: props.initialValues?.sweepId ?? "", spyAdIndex: props.initialValues?.adIndex ?? -1,
+    // Engine IDEA BRIEF knobs
+    heatLevel: 3, hookDirection: "", funnelStage: "MOFU" as "TOFU" | "MOFU" | "BOFU", marketCode: "",
   });
   const selectedAvatar = useMemo(() => avatarOptions.find((item) => item.id === form.subAvatarId) ?? null, [avatarOptions, form.subAvatarId]);
   // The angle is whatever the chosen avatar belongs to. It is never picked here.
@@ -99,11 +109,19 @@ export function ScriptProjectForm(props: Props) {
           pipelineRunId: form.pipelineRunId || null,
           spySweepId: form.spySweepId || null,
           spyAdIndex: form.spyAdIndex >= 0 ? form.spyAdIndex : null,
+          hookDirection: form.hookDirection.trim() || null,
+          marketCode: form.marketCode || null,
       };
       const response = await fetch(batchMode ? "/api/scripts/generate-batch" : "/api/scripts/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(batchMode ? { input: requestInput, frameworkIds: batchFrameworkIds } : requestInput),
+        body: JSON.stringify(
+          compareMode === "frameworks"
+            ? { input: requestInput, frameworkIds: batchFrameworkIds }
+            : compareMode === "hooks"
+              ? { input: requestInput, hookMechanics: batchMechanics, ...(batchHeats.length ? { heatLevels: batchHeats } : {}) }
+              : requestInput,
+        ),
       });
       if (response.redirected && response.url.includes("/login")) {
         throw new Error("Your session expired. Sign in again, then retry generation.");
@@ -155,7 +173,9 @@ export function ScriptProjectForm(props: Props) {
     !form.productId || !selectedProduct?.code ? "a coded product" : null,
     !form.subAvatarId ? "an avatar" : null,
     form.idea.trim().length < 5 ? "the core idea" : null,
-    batchMode && batchFrameworkIds.length < 2 ? "two or more frameworks" : null,
+    compareMode === "frameworks" && batchFrameworkIds.length < 2 ? "two or more frameworks" : null,
+    compareMode === "hooks" && batchMechanics.length < 1 ? "at least one hook mechanic" : null,
+    compareMode === "hooks" && hookVariantCount > 10 ? "at most 10 hook×heat variants" : null,
     !(Number.isInteger(targetDuration) && targetDuration >= 5 && targetDuration <= 600) ? "a 5–600s duration" : null,
     form.title.trim().length < 2 ? "project title" : null,
     !form.creativeName ? "creative name" : null,
@@ -250,7 +270,13 @@ export function ScriptProjectForm(props: Props) {
       </FormSection>
 
       <FormSection step={2} title="The idea" hint="What the ad is saying, and why this avatar should care.">
-        <div><div className="flex items-end justify-between gap-2"><label className="label">Core idea / opening brief</label><button type="button" className="btn btn-ghost text-xs" disabled={strategistPending || form.idea.trim().length < 5 || !form.productId} onClick={runStrategist}>{strategistPending ? "Strategist thinking…" : "Run through Creative Strategist"}</button></div><textarea className="input min-h-28" value={form.idea} onChange={(event) => setForm({ ...form, idea: event.target.value })} placeholder="What is the ad saying, and why should this avatar care?" /></div>
+        <div><div className="flex items-end justify-between gap-2"><label className="label">Core idea / opening brief</label><button type="button" className="btn btn-ghost text-xs" disabled={strategistPending || form.idea.trim().length < 5 || !form.productId} onClick={runStrategist}>{strategistPending ? "Strategist thinking…" : "Run through Creative Strategist"}</button></div><textarea className="input min-h-28" value={form.idea} onChange={(event) => setForm({ ...form, idea: event.target.value })} placeholder="IDEA: one sentence — what the script proves or accuses." /></div>
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_9rem_9rem_9rem]">
+          <div><label className="label">Hook (optional — built inside, never replaced)</label><input className="input" value={form.hookDirection} onChange={(event) => setForm({ ...form, hookDirection: event.target.value })} placeholder="Visual in a few words + the line, or leave blank to propose" /></div>
+          <div><label className="label">Heat</label><select className="input" value={form.heatLevel} onChange={(event) => setForm({ ...form, heatLevel: Number(event.target.value) })}><option value={1}>1 · polite</option><option value={2}>2 · direct</option><option value={3}>3 · full send</option><option value={4}>4 · absurd</option></select></div>
+          <div><label className="label">Market</label><select className="input" value={form.marketCode} onChange={(event) => setForm({ ...form, marketCode: event.target.value })}><option value="">— all markets —</option>{props.markets.map((market) => <option key={market.code} value={market.code}>{market.name}</option>)}</select></div>
+          <div><label className="label">Funnel</label><select className="input" value={form.funnelStage} onChange={(event) => setForm({ ...form, funnelStage: event.target.value as "TOFU" | "MOFU" | "BOFU" })}><option>TOFU</option><option>MOFU</option><option>BOFU</option></select></div>
+        </div>
         {strategistResult && (
           <div className="rounded-xl border border-violet-200 bg-violet-50 p-4">
             <h3 className="font-semibold text-violet-950">Creative Strategist directions</h3>
@@ -286,10 +312,22 @@ export function ScriptProjectForm(props: Props) {
               )}
             </select>
             <InlineFrameworkExtractor onCreated={handleFrameworkCreated} />
-            <label className="mt-2 flex items-center gap-2 text-xs text-ink-700"><input type="checkbox" checked={batchMode} onChange={(event) => setBatchMode(event.target.checked)} />Compare several frameworks instead (one draft each)</label>
+            <div className="mt-2 flex flex-wrap gap-3 text-xs text-ink-700">
+              <label className="flex items-center gap-1.5"><input type="radio" name="compareMode" checked={compareMode === "none"} onChange={() => setCompareMode("none")} />Single draft</label>
+              <label className="flex items-center gap-1.5"><input type="radio" name="compareMode" checked={compareMode === "frameworks"} onChange={() => setCompareMode("frameworks")} />Compare frameworks</label>
+              <label className="flex items-center gap-1.5"><input type="radio" name="compareMode" checked={compareMode === "hooks"} onChange={() => setCompareMode("hooks")} />Many hooks, one message</label>
+            </div>
           </div>
           <div><label className="label">Production format</label><select className="input" value={form.format} onChange={(event) => setForm({ ...form, format: event.target.value })}>{props.formats.map((item) => <option key={item}>{item}</option>)}</select></div>
-          {batchMode && (
+          {compareMode === "hooks" && (
+            <div className="rounded-lg border border-ink-200 bg-ink-50 p-3">
+              <p className="text-xs text-ink-500">Each mechanic gets its own draft with a directed hook brief. Optional heat levels multiply the set (cap 10 variants).</p>
+              <div className="mt-2 flex flex-wrap gap-2">{HOOK_MECHANICS.map((mechanic) => { const selected = batchMechanics.includes(mechanic.slug); return <label key={mechanic.slug} className={`tag cursor-pointer ${selected ? "border-violet-600 bg-violet-50" : ""}`} title={`${mechanic.description} Example: ${mechanic.example}`}><input className="mr-1" type="checkbox" checked={selected} disabled={!selected && batchMechanics.length >= 6} onChange={(event) => setBatchMechanics((current) => event.target.checked ? [...current, mechanic.slug] : current.filter((slug) => slug !== mechanic.slug))} />{mechanic.name}</label>; })}</div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-700"><span>Also vary heat:</span>{[1, 2, 3, 4].map((heat) => { const selected = batchHeats.includes(heat); return <label key={heat} className={`tag cursor-pointer ${selected ? "border-violet-600 bg-violet-50" : ""}`}><input className="mr-1" type="checkbox" checked={selected} onChange={(event) => setBatchHeats((current) => event.target.checked ? [...current, heat].sort() : current.filter((value) => value !== heat))} />H{heat}</label>; })}</div>
+              <p className={`mt-2 text-xs ${hookVariantCount > 10 ? "text-red-700" : "text-ink-500"}`}>{batchMechanics.length ? `${hookVariantCount} variant${hookVariantCount === 1 ? "" : "s"}${hookVariantCount > 10 ? " — over the cap of 10" : ""}` : "Choose at least one mechanic."}</p>
+            </div>
+          )}
+          {compareMode === "frameworks" && (
             <div className="sm:col-span-2 rounded-lg border border-ink-200 p-3">
               <p className="text-xs text-ink-500">Pick 2–5 frameworks. Each gets its own editable draft, compared side by side.</p>
               <div className="mt-2 flex flex-wrap gap-2">{frameworkOptions.map((framework) => { const selected = batchFrameworkIds.includes(framework.id); return <label key={framework.id} className={`tag cursor-pointer ${selected ? "border-violet-600 bg-violet-50" : ""}`}><input className="mr-1" type="checkbox" checked={selected} disabled={!selected && batchFrameworkIds.length >= 5} onChange={(event) => setBatchFrameworkIds((current) => event.target.checked ? [...current, framework.id] : current.filter((id) => id !== framework.id))} />{framework.name}</label>; })}</div>
@@ -313,7 +351,7 @@ export function ScriptProjectForm(props: Props) {
 
       {error && <p className="text-sm text-red-700">{error}</p>}
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="btn btn-primary" disabled={pending || !ready} onClick={submit}>{pending ? (batchMode ? "Generating framework batch…" : "Generating complete draft…") : (batchMode ? `Generate ${batchFrameworkIds.length} drafts` : "Generate structured script")}</button>
+        <button type="button" className="btn btn-primary" disabled={pending || !ready} onClick={submit}>{pending ? (batchMode ? "Generating variant batch…" : "Generating complete draft…") : compareMode === "frameworks" ? `Generate ${batchFrameworkIds.length} drafts` : compareMode === "hooks" ? `Generate ${hookVariantCount} drafts` : "Generate structured script"}</button>
         <Link href="/scripts" className="btn">Cancel</Link>
         {!ready && !pending && <p className="text-xs text-ink-500">Still needed: {missing.join(", ")}.</p>}
       </div>

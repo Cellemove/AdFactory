@@ -1,11 +1,12 @@
 import { z } from "zod";
+import { HOOK_MECHANICS } from "@/lib/cellumove/formats";
 import {
   parseScriptDocument,
   ScriptFiveDSchema,
   type ScriptDocument,
 } from "@/lib/cellumove/script-studio";
 
-export const SCRIPT_DRAFT_PROMPT_VERSION = "script-draft-v5-directed-hooks";
+export const SCRIPT_DRAFT_PROMPT_VERSION = "script-draft-v6-engine";
 export const SCRIPT_SPEAKING_WORDS_PER_SECOND = 2.8;
 
 export const GeneratedModuleSchema = z.object({
@@ -26,7 +27,9 @@ export const GeneratedHookSchema = z.object({
 
 export type GeneratedHook = z.infer<typeof GeneratedHookSchema>;
 
-const GeneratedHooksArraySchema = z.array(GeneratedHookSchema).min(3).max(8);
+// Floor stays 3 (a raised floor causes retry-loop waste); the engine SOP and
+// the built-in instruction both ask for 12 distinct-mechanic hooks.
+const GeneratedHooksArraySchema = z.array(GeneratedHookSchema).min(3).max(16);
 
 export const GeneratedScriptDraftSchema = z.object({
   fiveD: ScriptFiveDSchema,
@@ -94,6 +97,9 @@ export function buildScriptGenerationContext(input: ScriptGenerationPromptInput)
       framework: input.scaffold.framework,
       format: input.scaffold.format,
       targetDurationSec: input.scaffold.targetDurationSec,
+      // Engine v1.8 IDEA BRIEF: heat quantifies aggression, hookDirection is
+      // built inside (never replaced), funnel picks the enemy + offer defaults.
+      brief: input.scaffold.brief ?? null,
     }),
     "</creative_brief>",
     "<module_contract>",
@@ -102,6 +108,9 @@ export function buildScriptGenerationContext(input: ScriptGenerationPromptInput)
     "<allowed_broll_clip_ids>",
     JSON.stringify(input.allowedBrollClipIds),
     "</allowed_broll_clip_ids>",
+    "<hook_mechanics_menu>",
+    JSON.stringify(HOOK_MECHANICS.map((mechanic) => ({ name: mechanic.name, description: mechanic.description, example: mechanic.example }))),
+    "</hook_mechanics_menu>",
     "<resource_bundle>",
     JSON.stringify(input.resources),
     "</resource_bundle>",
@@ -300,11 +309,12 @@ export const SCRIPT_DRAFT_SYSTEM_INSTRUCTION = [
   "Visual direction must be executable: subject, action, framing, product moment, overlays, and transitions where relevant.",
   "Always return an empty brollClipIds array. AdFactory's deterministic matcher attaches relevant indexed clips after validating the finished module; visualDirection must still describe the exact shot needed.",
   "Preserve the angle's required mechanism and never use its banned mechanism.",
+  "Obey resource_bundle.marketProfile (tone, vocabulary favor/avoid, hooks that work/flop, claims rules) and resource_bundle.avatarVoice: write in the avatar's own voice and NEVER use avatarVoice.forbiddenWords or marketProfile forbidden claims.",
   "HOOKS ARE THE HIGHEST-LEVERAGE SECONDS OF THE AD. Each hookAlternative is a fully directed 0-5 second micro-scene, not a one-liner:",
   "- spokenText: 1-3 spoken sentences, hyper-specific and concrete. Anchor it in a dated, countable moment from the avatar's life — the week number, the time of day, the number of pounds, the exact object in her hand. 'Week fourteen, nine at night, she's in the bathroom pinching the inside of her knee' beats 'she is unhappy with her legs'.",
   "- visualDirection: exact blocking for the opening shot — shot type (split screen, macro, cross-section, mirror, shelf), what occupies each part of the frame, the one prop that must be visible, and the physical action that happens in those five seconds. Shootable as written.",
   "- onScreenText: an overlay of eight words or fewer built on a hard contrast or count, e.g. 'SAME WEIGHT. SAME SHOT. DIFFERENT LEGS.' or 'SHOT 4. SHOT 40.'",
-  "- Each hook must use a DIFFERENT visual mechanism and a DIFFERENT entry into the same angle — never three wordings of one idea. The hook's promise must be paid off by the script body.",
+  "- Write 12 hooks. Each must use a DIFFERENT mechanic from <hook_mechanics_menu> and a DIFFERENT entry into the same angle — never wordings of one idea. The hook's promise must be paid off by the script body.",
   "Return only JSON matching this exact shape:",
   '{"fiveD":{"avatar":"specific audience","angle":"specific persuasion angle","videoFormat":"production format","identityLevel":"identity transformation or self-concept","dynamismLevel":"visual pacing and energy"},"hookAlternatives":[{"spokenText":"hook VO","onScreenText":"overlay, 8 words max","visualDirection":"exact 0-5s blocking"}],"modules":[{"id":"module ID","spokenText":"complete spoken copy","onScreenText":"complete overlay","visualDirection":"complete shoot direction","brollClipIds":["known clip ID"]}]}',
 ].join("\n");

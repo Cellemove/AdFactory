@@ -269,6 +269,23 @@ export const REFERENCE_FORMATS: ReferenceFormatSeed[] = [
 [64–70s] Guarantee Offer — VO: "Wear them through the next thirty pounds. If her thighs don't come down with the rest of her, she doesn't pay a dollar."
 [70–74s] Reason-Why Offer — VO: "Buy one, second one free — she's dropping a size before day ninety and she's going to need it. She did the hardest part already. Don't finish with legs she has to cover."
 [74–76s] CTA — On-screen: "Shop Now"`,
+      // Engine v1.8 HEAT 3 exemplar (varicose-vein ablation regrowth) — the
+      // boss-approved register this format is calibrated against.
+      `HOOK — VO: "They want another three grand to close the vein they already closed." / VISUAL: appointment card held up, flicked off the table edge. / CAPTION: VO words only.
+[0:04–0:09] WHAT I DID RIGHT — VO: "I do everything the clinic asks, and on the way out a nurse tells me one thing I brush off."
+[0:09–0:14] A YEAR ON — VO: "A year on I'm looking at a new one and thinking treatment just doesn't last. Three grand. Twice."
+[0:14–0:18] THE TURN — VO: "Wrong villain. Growing a new vein isn't a bad-surgeon problem, it's a circulation problem."
+[0:18–0:22] WHERE IT STOPS — VO: "And that shitty beige tube stops at your knee, when the knee was never the problem." / VISUAL: stocking swept off the table.
+[0:22–0:28] THE DAM — VO: "Weld one gate shut on a dam and the wall next to it takes everything. That's all round two really is."
+[0:28–0:31] NOT YOUR FAULT — VO: "None of that's on you, CelluMove takes the pressure instead."
+[0:31–0:44] MECHANISM — VO: "There's nothing to do but get dressed. Peel a pair inside out and press your thumb along the panel, 147 tiny diamonds, thigh to ankle. Every step they squeeze and let go, thirty percent more circulation, and that's why the wall beside the gate stops taking it and the ache drains off."
+[0:44–0:49] POSITIONING — VO: "Not a scalpel, not a stocking, a legging that's pocket change against three grand. Are you kidding me."
+[0:49–0:54] WHAT CHANGES — VO: "That vein starts settling by week two, the ache's gone by dinner, your calves stop swelling at the desk."
+[0:54–0:59] PAYOFF — VO: "Sunday at six my sister asks how I'm still on my feet, and I carry the bags in myself."
+[0:59–1:04] A HUNDRED THOUSAND OF US — VO: "A hundred thousand of us and counting, night-shift nurses, teachers, waitresses, women staring at a second surgery." / OVERLAY: MORE THAN 100,000 WOMEN
+[1:04–1:08] WHAT IT WON'T DO — VO: "It won't make that vein disappear, veins don't work like that, which is why ninety days exists."
+[1:08–1:15] THE GUARANTEE — VO: "She told me I'd be back. She was right, and if that vein's no different ninety days into CelluMove, you pay nothing."
+[1:15–1:18] CTA — VO: "CelluMove, down below."`,
     ],
     order: 12,
   },

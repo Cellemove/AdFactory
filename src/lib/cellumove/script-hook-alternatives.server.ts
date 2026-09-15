@@ -20,6 +20,7 @@ export async function generateMoreHookAlternatives(input: {
     try {
       const response = await runAgent({
         role: "copywriter",
+        marketCode: input.document.brief?.marketCode ?? null,
         additionalRoles: ["strategist"],
         instruction: SCRIPT_HOOK_ALTERNATIVES_SYSTEM_INSTRUCTION,
         context: buildScriptHookAlternativesContext({ ...input, correction }),

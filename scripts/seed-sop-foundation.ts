@@ -10,6 +10,7 @@ import { randomUUID } from "node:crypto";
 import { REFERENCE_FORMATS } from "../src/lib/cellumove/reference-formats";
 import { MARKET_PROFILES } from "../src/lib/cellumove/market-profiles";
 import { DEEP_DIVE_TEMPLATE, DEEP_DIVE_TEMPLATE_TITLE } from "../src/lib/cellumove/deep-dive-template";
+import { SCRIPT_ENGINE_SOP_BODY, SCRIPT_ENGINE_SOP_VERSION, SCRIPT_ENGINE_PHRASEBANK } from "../src/lib/cellumove/script-engine-sop";
 
 const url = process.env.NEXT_PUBLIC_SUPABASE_URL?.trim() || process.env.SUPABASE_URL?.trim();
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY?.trim();
@@ -75,9 +76,24 @@ async function seedMarketProfiles() {
 // quality bar (not user prose), and research.ts loads it by type. Keyed on slug so
 // re-running refreshes the body in place; createdAt is set on insert only so updates
 // don't reset it.
+// Keyed on slug so re-running refreshes the body in place; createdAt is set on
+// insert only so updates don't reset it.
+async function ensureSop(slug: string, fields: Record<string, unknown>) {
+  const existing = await supabase.from("Sop").select("id").eq("slug", slug).maybeSingle();
+  if (existing.error) throw new Error(`Sop lookup: ${existing.error.message}`);
+  if (existing.data) {
+    const upd = await supabase.from("Sop").update({ ...fields, updatedAt: now() }).eq("id", (existing.data as { id: string }).id);
+    if (upd.error) throw new Error(`Sop update: ${upd.error.message}`);
+  } else {
+    const ins = await supabase.from("Sop").insert({ id: randomUUID(), slug, createdAt: now(), updatedAt: now(), ...fields });
+    if (ins.error) throw new Error(`Sop insert: ${ins.error.message}`);
+  }
+}
+
+// The deep-dive template SOP is a system-authored quality bar (not user prose);
+// research.ts loads it by type.
 async function seedDeepDiveTemplate() {
-  const slug = "deep-dive-template";
-  const fields = {
+  await ensureSop("deep-dive-template", {
     type: "deep_dive_template",
     title: DEEP_DIVE_TEMPLATE_TITLE,
     body: DEEP_DIVE_TEMPLATE,
@@ -86,24 +102,46 @@ async function seedDeepDiveTemplate() {
     marketScope: null,
     pinned: true,
     order: 0,
-    updatedAt: now(),
-  };
-  const existing = await supabase.from("Sop").select("id").eq("slug", slug).maybeSingle();
-  if (existing.error) throw new Error(`Sop lookup: ${existing.error.message}`);
-  if (existing.data) {
-    const upd = await supabase.from("Sop").update(fields).eq("id", (existing.data as { id: string }).id);
-    if (upd.error) throw new Error(`Sop update: ${upd.error.message}`);
-  } else {
-    const ins = await supabase.from("Sop").insert({ id: randomUUID(), slug, createdAt: now(), ...fields });
-    if (ins.error) throw new Error(`Sop insert: ${ins.error.message}`);
-  }
+  });
   console.log("✓ deep-dive template SOP");
+}
+
+// The boss's Script Engine v1.8 — replaces the built-in generation system
+// prompt via the role_prompt override (migration 013 row, same slug). The
+// phrase bank rides along as a copywriter-scoped calibration payload so
+// More-hooks and module-assist inherit it too.
+async function seedScriptEngine() {
+  await ensureSop("creative-strategist-script-maker", {
+    type: "role_prompt",
+    title: `CelluMove Script Engine (${SCRIPT_ENGINE_SOP_VERSION})`,
+    body: SCRIPT_ENGINE_SOP_BODY,
+    payload: null,
+    roleScope: "strategist",
+    marketScope: null,
+    pinned: true,
+    order: -100,
+  });
+  await ensureSop("script-engine-phrasebank", {
+    type: "other",
+    title: "Engine phrase bank & tempo tables (calibration, never copy)",
+    body: [
+      "Winning-register calibration from the 35-ad reverse-engineered library. Use these to judge and shape lines — accusation hooks, reframes, absolutions, enemy kills, mechanism lines, loops, skepticism, concessions, payoffs, guarantees, CTAs — plus the tempo tables (words/second, word budgets, beat durations, runtime split).",
+      "These are NEVER copy sources: the recognition test applies. If a written line could be traced to one of these, rewrite it in the avatar's words.",
+    ].join("\n"),
+    payload: JSON.stringify(SCRIPT_ENGINE_PHRASEBANK),
+    roleScope: "copywriter",
+    marketScope: null,
+    pinned: false,
+    order: 10,
+  });
+  console.log(`✓ script engine SOP (${SCRIPT_ENGINE_SOP_VERSION}) + phrase bank`);
 }
 
 async function main() {
   await seedReferenceFormats();
   await seedMarketProfiles();
   await seedDeepDiveTemplate();
+  await seedScriptEngine();
   console.log("done.");
 }
 

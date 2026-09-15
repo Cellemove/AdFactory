@@ -4,7 +4,9 @@ import {
   extractJsonObject,
   runAgent,
 } from "@/lib/cellumove/agents";
+import { renderMarketProfileBlock } from "@/lib/cellumove/market-profiles";
 import {
+  avatarForbiddenWords,
   parseAvatarProfile,
   renderCopywriterProfile,
   renderDesignerProfile,
@@ -31,6 +33,7 @@ import { PIPELINE_STAGES } from "@/lib/cellumove/pipeline-stages";
 import type {
   AngleRow,
   AvatarResearchRow,
+  MarketProfileRow,
   CopyPrincipleRow,
   KnowledgeNoteRow,
   ProductRow,
@@ -325,6 +328,7 @@ export async function generateResourceGroundedScript(input: {
     brollContext,
     winningAds,
     pipelineRows,
+    marketProfile,
   ] = await Promise.all([
     input.avatar
       ? optionalOne<AvatarResearchRow>(
@@ -385,6 +389,12 @@ export async function generateResourceGroundedScript(input: {
           supabase.from("Research").select("*").eq("type", "pipeline").order("createdAt", { ascending: false }).limit(12),
         )
       : Promise.resolve([]),
+    scaffold.brief?.marketCode
+      ? optionalOne<MarketProfileRow>(
+          "market profile",
+          supabase.from("MarketProfile").select("*").ilike("code", scaffold.brief.marketCode).maybeSingle(),
+        )
+      : Promise.resolve(null),
   ]);
 
   await reportScriptGenerationProgress(input.onProgress, {
@@ -494,6 +504,13 @@ export async function generateResourceGroundedScript(input: {
       description: input.avatar.shortDesc,
       researchAvailable: Boolean(avatarResearch),
     } : null,
+    // Fixed blocks, deliberately NOT competing in per-module RAG: the avatar's
+    // voice and the market's tone/claims rules apply to every line of copy.
+    avatarVoice: profile ? {
+      copywriterProfile,
+      forbiddenWords: avatarForbiddenWords(profile),
+    } : null,
+    marketProfile: renderMarketProfileBlock(marketProfile),
     framework: input.framework ? {
       name: input.framework.name,
       description: input.framework.description,
@@ -593,6 +610,7 @@ export async function generateResourceGroundedScript(input: {
       });
       const isTargetedCorrection = Boolean(correctionPlan && previousDraft);
       const text = await runAgent({
+        marketCode: scaffold.brief?.marketCode ?? null,
         role: "copywriter",
         additionalRoles: ["strategist", "designer"],
         instruction: isTargetedCorrection ? SCRIPT_DRAFT_CORRECTION_INSTRUCTION : SCRIPT_DRAFT_SYSTEM_INSTRUCTION,

@@ -18,6 +18,8 @@ import {
 } from "@/lib/cellumove/script-workflow";
 import { generateResourceGroundedScript } from "@/lib/cellumove/script-generation.server";
 import { appendHookAlternatives, MAX_SCRIPT_HOOK_ALTERNATIVES } from "@/lib/cellumove/script-hook-alternatives";
+import { rankHookCandidates } from "@/lib/cellumove/script-hook-rank.server";
+import { getScriptScoreRun } from "@/lib/cellumove/script-scorer.server";
 import { generateMoreHookAlternatives } from "@/lib/cellumove/script-hook-alternatives.server";
 import { rewriteScriptModuleWithAI } from "@/lib/cellumove/script-module-assist.server";
 import { createScriptProjectCore, type CreateScriptProjectInput } from "@/lib/cellumove/create-script-project.server";
@@ -285,6 +287,139 @@ export async function suggestScriptHookAlternatives(input: {
   };
 }
 
+// Closes the scorer loop: takes a score run's warning/critical findings and
+// rewrites ONLY the flagged modules (reusing the per-module assist engine, so
+// engine SOPs + market tone apply). Returns rewritten modules for the client
+// to merge locally — nothing persists until Save, like every assist flow.
+const RECTIFY_MAX_MODULES = 6;
+export async function rectifyScriptFromScore(input: {
+  projectId: string;
+  expectedRevision: number;
+  runId: string;
+  document: z.infer<typeof ScriptDocumentSchema>;
+}): Promise<{
+  modules: z.infer<typeof ScriptModuleSchema>[];
+  addressedFindings: number;
+  skipped: string[];
+}> {
+  await requireStrategist();
+  const parsed = z.object({
+    projectId: z.string().min(1),
+    expectedRevision: z.number().int().nonnegative(),
+    runId: z.string().min(1),
+    document: ScriptDocumentSchema,
+  }).parse(input);
+  const project = unwrapOpt(
+    await supabase.from("ScriptProject").select("*").eq("id", parsed.projectId).maybeSingle(),
+  ) as ScriptProjectRow | null;
+  if (!project) throw new Error("Script project not found.");
+  if (project.revision !== parsed.expectedRevision) {
+    throw new Error("This script changed in another session. Reload before applying scorer fixes.");
+  }
+  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
+    throw new Error("This script cannot be edited in its current state.");
+  }
+  if (parsed.document.product.id !== project.productId || parsed.document.angle.id !== project.angleId) {
+    throw new Error("The open document does not match this script project. Reload and try again.");
+  }
+
+  const score = await getScriptScoreRun(parsed.runId);
+  if (!score) throw new Error("That score run no longer exists.");
+  if (score.run.projectId !== parsed.projectId) throw new Error("That score run belongs to a different script.");
+
+  // Actionable = warning/critical findings anchored to a module. Info-level
+  // observations and unanchored summaries can't drive a targeted rewrite.
+  const actionable = score.findings.filter((finding) => finding.scriptModuleId && finding.severity !== "info");
+  if (!actionable.length) {
+    throw new Error("This score run has no module-anchored warnings to fix — nothing to rectify.");
+  }
+
+  const byModule = new Map<string, typeof actionable>();
+  for (const finding of actionable) {
+    const list = byModule.get(finding.scriptModuleId!) ?? [];
+    list.push(finding);
+    byModule.set(finding.scriptModuleId!, list);
+  }
+
+  const skipped: string[] = [];
+  const targets: Array<{ module: z.infer<typeof ScriptModuleSchema>; findings: typeof actionable }> = [];
+  for (const [moduleId, findings] of byModule) {
+    const module = parsed.document.modules.find((item) => item.id === moduleId);
+    if (!module) { skipped.push(`${moduleId} (no longer exists)`); continue; }
+    if (module.locked) { skipped.push(`${module.label} (locked)`); continue; }
+    targets.push({ module, findings });
+  }
+  if (!targets.length) throw new Error("Every flagged module is locked or gone — unlock modules to apply scorer fixes.");
+  // Worst modules first (critical count, then finding count); bounded cost.
+  targets.sort((a, b) =>
+    b.findings.filter((f) => f.severity === "critical").length - a.findings.filter((f) => f.severity === "critical").length
+    || b.findings.length - a.findings.length);
+  const capped = targets.slice(0, RECTIFY_MAX_MODULES);
+  if (targets.length > capped.length) {
+    skipped.push(`${targets.length - capped.length} more module(s) deferred — rerun after saving these fixes`);
+  }
+
+  // Sequential: each rewrite is small, and the assist engine already retries.
+  const modules: z.infer<typeof ScriptModuleSchema>[] = [];
+  let addressedFindings = 0;
+  for (const target of capped) {
+    const notes = [
+      "The evidence scorer flagged these issues in THIS beat. Fix exactly these; keep everything that already works, keep the beat's job and timing, and obey all standing rules.",
+      ...target.findings.map((finding) => {
+        const parts = [`[${finding.severity}] ${finding.message}`];
+        if (finding.scriptQuote) parts.push(`Offending line: "${finding.scriptQuote}"`);
+        if (finding.recommendation) parts.push(`Recommendation: ${finding.recommendation}`);
+        if (finding.evidenceQuote) parts.push(`Ground it in this evidence: "${finding.evidenceQuote}"`);
+        return `- ${parts.join(" · ")}`;
+      }),
+    ].join("\n").slice(0, 2000);
+    modules.push(await rewriteScriptModuleWithAI({ document: parsed.document, module: target.module, notes }));
+    addressedFindings += target.findings.length;
+  }
+  return { modules, addressedFindings, skipped };
+}
+
+// Ranks the document's whole hook pool with the engine's critic rubric (one
+// cheap Flash call). Returns index-keyed scores against the document's
+// hookAlternatives; the client merges locally and Save persists — this action
+// writes nothing, mirroring suggestScriptHookAlternatives.
+export async function rankScriptHooks(input: {
+  projectId: string;
+  expectedRevision: number;
+  document: z.infer<typeof ScriptDocumentSchema>;
+}): Promise<{ scores: { index: number; score: number; reason: string }[] }> {
+  await requireStrategist();
+  const parsed = z.object({
+    projectId: z.string().min(1),
+    expectedRevision: z.number().int().nonnegative(),
+    document: ScriptDocumentSchema,
+  }).parse(input);
+  const project = unwrapOpt(
+    await supabase.from("ScriptProject").select("*").eq("id", parsed.projectId).maybeSingle(),
+  ) as ScriptProjectRow | null;
+  if (!project) throw new Error("Script project not found.");
+  if (project.revision !== parsed.expectedRevision) {
+    throw new Error("This script changed in another session. Reload before ranking hooks.");
+  }
+  if (!canEditScript(normalizeScriptWorkflowStatus(project.status))) {
+    throw new Error("This script cannot be edited in its current state.");
+  }
+  if (parsed.document.product.id !== project.productId || parsed.document.angle.id !== project.angleId) {
+    throw new Error("The open document does not match this script project. Reload and try again.");
+  }
+  if (!parsed.document.hookAlternatives.length) throw new Error("There are no hooks to rank yet.");
+
+  const scores = await rankHookCandidates({
+    document: parsed.document,
+    candidates: parsed.document.hookAlternatives.map((hook) => ({
+      spokenText: hook.text,
+      onScreenText: hook.onScreenText,
+      visualDirection: hook.visualDirection,
+    })),
+  });
+  return { scores };
+}
+
 export async function snapshotScriptProject(input: { projectId: string; changeSummary: string }): Promise<{ version: number }> {
   const actor = await requireStrategist();
   const projectId = z.string().min(1).parse(input.projectId);
@@ -305,6 +440,51 @@ export async function snapshotScriptProject(input: { projectId: string; changeSu
   if (error) throw new Error(error.message);
   revalidatePath(`/scripts/${projectId}`);
   return { version };
+}
+
+// Batch cherry-picking: "Keep" a variant straight from the batch page. The
+// batch page holds no live editor session, so the server loads the project's
+// own current document + revision and delegates to sendScriptProjectToEditor.
+export async function sendScriptToEditorById(projectId: string): Promise<{ status: "ready" }> {
+  await requireStrategist();
+  const id = z.string().min(1).parse(projectId);
+  const project = unwrapOpt(
+    await supabase.from("ScriptProject").select("*").eq("id", id).maybeSingle(),
+  ) as ScriptProjectRow | null;
+  if (!project) throw new Error("Script project not found.");
+  await sendScriptProjectToEditor({
+    projectId: id,
+    expectedRevision: project.revision,
+    document: parseScriptDocument(project.document),
+  });
+  return { status: "ready" };
+}
+
+// Batch cherry-picking: "Discard" archives, never deletes — recoverable, and
+// usage receipts/events stay intact. Draft-only: anything already with an
+// editor goes through the normal review flow instead.
+export async function archiveScriptProject(projectId: string): Promise<void> {
+  const actor = await requireStrategist();
+  const id = z.string().min(1).parse(projectId);
+  const project = unwrapOpt(
+    await supabase.from("ScriptProject").select("*").eq("id", id).maybeSingle(),
+  ) as ScriptProjectRow | null;
+  if (!project) throw new Error("Script project not found.");
+  if (normalizeScriptWorkflowStatus(project.status) !== "draft") {
+    throw new Error("Only drafts can be discarded. Scripts already with an editor go through review.");
+  }
+  const now = new Date().toISOString();
+  const update = await supabase.from("ScriptProject").update({ status: "archived", updatedAt: now }).eq("id", id);
+  if (update.error) throw new Error(update.error.message);
+  await supabase.from("ScriptEvent").insert({
+    id: newId(),
+    projectId: id,
+    eventType: "archived",
+    payload: { by: actor.id } as Json,
+    createdAt: now,
+  });
+  revalidatePath("/scripts");
+  revalidatePath(`/scripts/${id}`);
 }
 
 export async function sendScriptProjectToEditor(input: {

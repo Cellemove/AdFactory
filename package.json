@@ -50,7 +50,10 @@
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
     "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts",
     "analyze:intel": "tsx --conditions=react-server --env-file=.env scripts/analyze-intel-drive.ts",
-    "scorer:extract-milanote": "tsx scripts/extract-milanote-pdf.ts"
+    "scorer:extract-milanote": "tsx scripts/extract-milanote-pdf.ts",
+    "test:hook-rank": "tsx --test src/lib/cellumove/script-hook-rank.test.ts",
+    "test:script-batch": "tsx --test src/lib/cellumove/script-batch.test.ts",
+    "test:market-profiles": "tsx --test src/lib/cellumove/market-profiles.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

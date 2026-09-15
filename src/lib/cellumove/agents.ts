@@ -38,6 +38,20 @@ export interface RunAgentOptions {
   // When present, an editable SOP with this slug replaces the built-in task
   // instruction. The in-code instruction remains the safe fallback.
   promptSopSlug?: string;
+  // Model override for cheap judge/classify turns (e.g. FAST_MODEL); defaults
+  // to the session's DEFAULT_MODEL.
+  model?: string;
+}
+
+// Keep global SOPs (marketScope null) + ones matching the active market.
+// Case-insensitive on purpose: briefs carry "PT" while SOP scopes are "pt" —
+// a silent case mismatch here means market tone never loads.
+export function filterSopsForMarket<T extends { marketScope: string | null }>(
+  rows: T[],
+  marketCode?: string | null,
+): T[] {
+  const active = marketCode?.trim().toLowerCase() || null;
+  return rows.filter((s) => !s.marketScope || (active !== null && s.marketScope.trim().toLowerCase() === active));
 }
 
 // Best-effort SOP load. Tolerates a not-yet-migrated DB (returns nothing) so the
@@ -52,9 +66,7 @@ async function loadRoleSops(roles: AgentRole[], marketCode?: string | null): Pro
       .order("pinned", { ascending: false })
       .order("order", { ascending: true });
     if (res.error) return [];
-    const rows = (res.data ?? []) as SopRow[];
-    // Keep global SOPs (marketScope null) + ones matching the active market.
-    return rows.filter((s) => !s.marketScope || (marketCode && s.marketScope === marketCode));
+    return filterSopsForMarket((res.data ?? []) as SopRow[], marketCode);
   } catch {
     return [];
   }
@@ -110,8 +122,9 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
   const system = `${promptOverride?.body.trim() || opts.instruction}${renderSops(standingSops)}`;
 
   const llm = getLLM();
+  const model = opts.model ?? DEFAULT_MODEL;
   const resp = await llm.models.generateContent({
-    model: DEFAULT_MODEL,
+    model,
     contents: opts.context,
     config: {
       systemInstruction: system,
@@ -128,7 +141,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
   });
   await recordUsage({
     feature: opts.feature,
-    model: DEFAULT_MODEL,
+    model,
     usage: resp.usageMetadata,
     grounded: opts.grounded,
     metadata: { role: opts.role, sopRoles: roles, market: opts.marketCode ?? undefined, sopCount: sops.length, promptSopSlug: promptOverride?.slug, ...opts.metadata },

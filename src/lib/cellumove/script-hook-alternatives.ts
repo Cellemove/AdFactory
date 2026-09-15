@@ -16,8 +16,12 @@ export const MAX_SCRIPT_HOOK_ALTERNATIVES = 24;
 
 export type HookAlternative = ScriptDocument["hookAlternatives"][number];
 // Looser than GeneratedHook: the client round-trips candidates through the
-// action's wire shape, where the scene fields are optional.
-export type HookCandidate = Pick<GeneratedHook, "spokenText"> & Partial<Omit<GeneratedHook, "spokenText">>;
+// action's wire shape, where the scene fields are optional. Judge scores ride
+// along when the pool was ranked before appending.
+export type HookCandidate = Pick<GeneratedHook, "spokenText"> & Partial<Omit<GeneratedHook, "spokenText">> & {
+  score?: number;
+  scoreReason?: string;
+};
 
 // Same hook rule as GeneratedScriptDraftSchema, wrapped in an object so a
 // prose-prefixed reply still survives extractJsonObject's brace scan.
@@ -161,6 +165,8 @@ export function appendHookAlternatives(
       text,
       onScreenText: candidate.onScreenText?.trim() || undefined,
       visualDirection: candidate.visualDirection?.trim() || undefined,
+      score: candidate.score,
+      scoreReason: candidate.scoreReason,
     });
   }
 

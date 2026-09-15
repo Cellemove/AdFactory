@@ -21,6 +21,7 @@ export async function rewriteScriptModuleWithAI(input: {
     try {
       const response = await runAgent({
         role: "copywriter",
+        marketCode: input.document.brief?.marketCode ?? null,
         additionalRoles: ["strategist", "designer"],
         instruction: SCRIPT_MODULE_ASSIST_SYSTEM_INSTRUCTION,
         context: buildScriptModuleAssistContext({ ...input, correction }),

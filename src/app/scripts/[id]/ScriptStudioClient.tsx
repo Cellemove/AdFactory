@@ -2,9 +2,10 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useTransition, type TextareaHTMLAttributes } from "react";
 import { useRouter } from "next/navigation";
-import { assistScriptModule, generateScriptProjectDraft, saveScriptDocument, sendScriptProjectToEditor, snapshotScriptProject, suggestScriptHookAlternatives } from "@/app/actions/scripts";
+import { assistScriptModule, generateScriptProjectDraft, rankScriptHooks, rectifyScriptFromScore, saveScriptDocument, sendScriptProjectToEditor, snapshotScriptProject, suggestScriptHookAlternatives } from "@/app/actions/scripts";
+import { applyHookScores } from "@/lib/cellumove/script-hook-rank";
 import { appendHookAlternatives, MAX_SCRIPT_HOOK_ALTERNATIVES } from "@/lib/cellumove/script-hook-alternatives";
-import { inspectScriptQuality, renderScriptDownload, scriptDownloadFilename, type ScriptDocument, type ScriptModule } from "@/lib/cellumove/script-studio";
+import { inspectScriptQuality, renderScriptDownload, scriptDownloadFilename, sortHooksByScore, type ScriptDocument, type ScriptModule } from "@/lib/cellumove/script-studio";
 import { canEditScript, canSendScript, SCRIPT_STATUS_META, type ScriptWorkflowStatus } from "@/lib/cellumove/script-workflow";
 import { ScriptScoreWidget, type ScriptScoreWidgetResult } from "./ScriptScoreWidget";
 
@@ -234,6 +235,46 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
       setHooksPending(false);
     }
   };
+  // Scorer → fix loop: rewrite the modules the score run flagged, merge them
+  // into the open draft as unsaved changes for review, never auto-save.
+  const rectifyFromScore = async (runId: string) => {
+    const result = await rectifyScriptFromScore({ projectId, expectedRevision: revision, runId, document: documentRef.current });
+    if (result.modules.length) {
+      const byId = new Map(result.modules.map((module) => [module.id, module]));
+      setDocument((current) => ({
+        ...current,
+        modules: current.modules.map((module) => byId.get(module.id) ?? module),
+      }));
+    }
+    setMessage(
+      `Rewrote ${result.modules.length} flagged beat${result.modules.length === 1 ? "" : "s"} addressing ${result.addressedFindings} finding${result.addressedFindings === 1 ? "" : "s"}.`
+      + (result.skipped.length ? ` Skipped: ${result.skipped.join("; ")}.` : "")
+      + " Review the changes, Save, then create a version and re-score.",
+    );
+  };
+  // One Flash judge call scores the whole pool against the engine's hook
+  // rubric. Scores merge locally by index; Save persists them (like More hooks).
+  const [rankPending, setRankPending] = useState(false);
+  const rankHooks = async () => {
+    if (rankPending || !document.hookAlternatives.length) return;
+    setRankPending(true);
+    setMessage(null);
+    try {
+      const snapshot = documentRef.current.hookAlternatives;
+      const result = await rankScriptHooks({ projectId, expectedRevision: revision, document });
+      // Merge only if the pool didn't shift under the in-flight request \u2014
+      // scores are index-keyed against the document we sent.
+      setDocument((current) => {
+        if (current.hookAlternatives.length !== snapshot.length) return current;
+        return { ...current, hookAlternatives: applyHookScores(current.hookAlternatives, result.scores) };
+      });
+      setMessage(`Ranked ${result.scores.length} hook${result.scores.length === 1 ? "" : "s"} against the engine rubric. Click Save changes to keep the scores.`);
+    } catch (error) {
+      setMessage(`Rank hooks could not run: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setRankPending(false);
+    }
+  };
   const downloadScript = () => {
     const blob = new Blob(["\uFEFF", renderScriptDownload(document)], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -287,10 +328,14 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
       <section className="card space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><h2 className="font-semibold">AI hook options</h2><p className="text-xs text-ink-500">Apply an option to the hook module, then edit it normally.</p></div>
-          <button type="button" className="btn" disabled={!editable || pending || assistPending || hooksPending || hooksAtCap} onClick={requestMoreHooks}>{hooksPending ? "Writing hooks…" : hooksAtCap ? "Hook limit reached" : "More hooks"}</button>
+          <div className="flex gap-2">
+            <button type="button" className="btn" disabled={!editable || pending || assistPending || rankPending || document.hookAlternatives.length === 0} onClick={rankHooks}>{rankPending ? "Judging…" : "Rank hooks"}</button>
+            <button type="button" className="btn" disabled={!editable || pending || assistPending || hooksPending || hooksAtCap} onClick={requestMoreHooks}>{hooksPending ? "Writing hooks…" : hooksAtCap ? "Hook limit reached" : "More hooks"}</button>
+          </div>
         </div>
         {document.hookAlternatives.length > 0
-          ? <div className="grid gap-2 lg:grid-cols-3">{document.hookAlternatives.map((hook) => <button key={hook.id} type="button" disabled={!editable} className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${document.selectedHookId === hook.id ? "border-brand-purple bg-brand-purple/5" : "border-ink-200 hover:border-ink-400"}`} onClick={() => applyHook(hook)}>
+          ? <div className="grid gap-2 lg:grid-cols-3">{sortHooksByScore(document.hookAlternatives).map((hook) => <button key={hook.id} type="button" disabled={!editable} className={`rounded-xl border p-3 text-left text-sm transition disabled:cursor-not-allowed disabled:opacity-60 ${document.selectedHookId === hook.id ? "border-brand-purple bg-brand-purple/5" : "border-ink-200 hover:border-ink-400"}`} onClick={() => applyHook(hook)}>
+              {typeof hook.score === "number" && <span className={`float-right ml-2 rounded-full px-2 py-0.5 text-[10px] font-semibold ${hook.score >= 85 ? "bg-emerald-100 text-emerald-800" : hook.score >= 70 ? "bg-amber-100 text-amber-800" : "bg-ink-100 text-ink-600"}`} title={hook.scoreReason}>{hook.score}</span>}
               <span className="block">{hook.text}</span>
               {hook.onScreenText && <span className="mt-1.5 block text-[11px] font-semibold uppercase tracking-wide text-ink-700">{hook.onScreenText}</span>}
               {hook.visualDirection && <span className="mt-1 block text-xs text-ink-500">{hook.visualDirection}</span>}
@@ -331,6 +376,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
         draftMatchesVersion={draftMatchesVersion}
         markets={scorerMarkets}
         initialResult={initialScore}
+        onRectify={rectifyFromScore}
         setupError={scorerSetupError}
       />
       </div>

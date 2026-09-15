@@ -45,6 +45,14 @@ export const CreateScriptProjectSchema = z.object({
   editorUserId: z.string().nullable().optional(),
   format: z.string().trim().min(1).max(80),
   targetDurationSec: z.number().int().min(5).max(600),
+  // Engine v1.8 IDEA BRIEF knobs. Heat = how hard the copy goes (default 3);
+  // hookDirection = the brief's HOOK (built inside, never replaced); funnel
+  // decides enemy type + offer defaults inside the engine SOP.
+  heatLevel: z.union([z.literal(1), z.literal(2), z.literal(3), z.literal(4)]).default(3),
+  hookDirection: z.string().trim().max(600).nullable().optional(),
+  funnelStage: z.enum(["TOFU", "MOFU", "BOFU"]).default("MOFU"),
+  // Active market: pulls the MarketProfile tone block + market-scoped SOPs.
+  marketCode: z.string().trim().max(8).nullable().optional(),
   teardownRecordId: z.string().nullable().optional(),
   pipelineRunId: z.string().nullable().optional(),
   spySweepId: z.string().nullable().optional(),
@@ -54,7 +62,9 @@ export const CreateScriptProjectSchema = z.object({
   path: ["subAvatarId"],
 });
 
-export type CreateScriptProjectInput = z.infer<typeof CreateScriptProjectSchema>;
+// z.input, not z.infer: heatLevel/funnelStage carry zod defaults, so callers
+// (baseline harness, batch route) may omit them and parsing fills them in.
+export type CreateScriptProjectInput = z.input<typeof CreateScriptProjectSchema>;
 
 function asJson(value: unknown): Json {
   return JSON.parse(JSON.stringify(value)) as Json;
@@ -167,6 +177,12 @@ export async function createScriptProjectCore(
       url: teardown.source_url || null,
       brief: createTeardownBrief(teardown.parsed_output),
     } : null,
+    brief: {
+      heatLevel: parsed.heatLevel,
+      hookDirection: parsed.hookDirection ?? null,
+      funnelStage: parsed.funnelStage,
+      marketCode: parsed.marketCode?.toLowerCase() ?? null,
+    },
   });
 
   const generated = await generateResourceGroundedScript({

@@ -38,7 +38,8 @@ export default async function ScriptsPage() {
     );
   }
 
-  const projects = (projectsRes.data ?? []) as ScriptProjectRow[];
+  // Archived drafts (batch discards) stay out of the working table and counts.
+  const projects = ((projectsRes.data ?? []) as ScriptProjectRow[]).filter((project) => project.status !== "archived");
   const users = (usersRes.data ?? []) as AppUserRow[];
   const products = (productsRes.data ?? []) as ProductRow[];
   const assignments = (assignmentsRes.data ?? []) as ScriptAssignmentRow[];

@@ -134,7 +134,9 @@ async function countVerbatims(filters: { subAvatarId?: string; angleSlug?: strin
     .not("embedding", "is", null);
   if (filters.subAvatarId) query = query.eq("subAvatarId", filters.subAvatarId);
   if (filters.angleSlug) query = query.eq("angleSlug", filters.angleSlug);
-  if (filters.market) query = query.ilike("market", filters.market);
+  // NULL market = market-agnostic (how nearly the whole corpus is mined) —
+  // it counts for every scoring market. Tagged rows only count for their own.
+  if (filters.market) query = query.or(`market.is.null,market.ilike.${filters.market}`);
   const result = await query;
   if (result.error) throw new Error(result.error.message);
   return result.count ?? 0;

@@ -57,6 +57,7 @@ export function ScriptScoreWidget({
   markets,
   initialResult,
   setupError,
+  onRectify,
 }: {
   projectId: string;
   version: number;
@@ -65,10 +66,14 @@ export function ScriptScoreWidget({
   markets: MarketOption[];
   initialResult: ScriptScoreWidgetResult | null;
   setupError: string | null;
+  // Rewrites the flagged modules in the OPEN draft from this run's findings.
+  // Provided by the studio client, which owns the live document.
+  onRectify?: (runId: string) => Promise<void>;
 }) {
   const [result, setResult] = useState<ScriptScoreWidgetResult | null>(initialResult);
   const [marketCode, setMarketCode] = useState(initialResult?.run.marketCode ?? markets[0]?.code ?? "PH");
   const [pending, setPending] = useState(false);
+  const [fixPending, setFixPending] = useState(false);
   const [error, setError] = useState<string | null>(setupError);
 
   useEffect(() => {
@@ -183,6 +188,22 @@ export function ScriptScoreWidget({
             <button type="button" className="btn btn-primary w-full" disabled={pending || !hasImmutableVersion} onClick={runScorer}>
               {pending ? "Scoring version…" : result?.run.status === "complete" && result.run.marketCode === marketCode ? "Refresh result" : `Score v${version} · ${marketCode}`}
             </button>
+            {onRectify && result?.run.status === "complete" && (
+              <button
+                type="button"
+                className="btn w-full"
+                disabled={pending || fixPending}
+                onClick={async () => {
+                  setFixPending(true);
+                  setError(null);
+                  try { await onRectify(result.run.id); }
+                  catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+                  finally { setFixPending(false); }
+                }}
+              >
+                {fixPending ? "Rewriting flagged beats…" : "Fix flagged issues in draft"}
+              </button>
+            )}
             <Link href={reportHref} className="flex min-h-9 items-center justify-center rounded-full text-xs font-semibold text-ink-700 hover:bg-ink-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900">
               {result ? "Open full report" : "Open scorer setup"}
             </Link>

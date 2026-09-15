@@ -5,6 +5,7 @@ export const SCRIPT_WORKFLOW_STATUSES = [
   "submitted",
   "changes_requested",
   "approved",
+  "archived",
 ] as const;
 
 export type ScriptWorkflowStatus = (typeof SCRIPT_WORKFLOW_STATUSES)[number];
@@ -16,6 +17,7 @@ export const SCRIPT_STATUS_META: Record<ScriptWorkflowStatus, { label: string; c
   submitted: { label: "Submitted", className: "tag tag-ok" },
   changes_requested: { label: "Changes requested", className: "tag tag-danger" },
   approved: { label: "Approved", className: "tag tag-ok" },
+  archived: { label: "Discarded", className: "tag" },
 };
 
 export function normalizeScriptWorkflowStatus(
@@ -24,6 +26,7 @@ export function normalizeScriptWorkflowStatus(
 ): ScriptWorkflowStatus {
   // A video editor may be selected while the strategist is still authoring.
   // Assignment alone must not publish or lock a draft.
+  if (projectStatus === "archived") return "archived";
   if (projectStatus === "draft" || projectStatus === "generating") return "draft";
   if (assignmentStatus === "claimed") return "claimed";
   if (assignmentStatus === "submitted") return "submitted";
@@ -42,7 +45,8 @@ export function normalizeScriptWorkflowStatus(
 export function canEditScript(status: ScriptWorkflowStatus): boolean {
   // Script authorship belongs to Creative Strategists. The workflow status
   // controls the frozen video-editor handoff, not the strategist's live draft.
-  return SCRIPT_WORKFLOW_STATUSES.includes(status);
+  // Archived drafts are the one read-only state (batch discards).
+  return status !== "archived" && SCRIPT_WORKFLOW_STATUSES.includes(status);
 }
 
 export function canSendScript(status: ScriptWorkflowStatus): boolean {

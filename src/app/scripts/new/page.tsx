@@ -21,7 +21,7 @@ export const maxDuration = 300;
 export default async function NewScriptPage({ searchParams }: { searchParams: Promise<{ spySweepId?: string; spyAdIndex?: string }> }) {
   const query = await searchParams;
   const currentUser = await requireStrategist();
-  const [products, angles, avatars, frameworks, users, pipelineRunsRaw] = await Promise.all([
+  const [products, angles, avatars, frameworks, users, markets, pipelineRunsRaw] = await Promise.all([
     supabase
       .from("Product")
       .select("id, name, code, imagePath")
@@ -33,6 +33,7 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
     supabase.from("SubAvatar").select("*").order("name").then(unwrap),
     supabase.from("ReferenceFormat").select("*").order("order").order("createdAt").then(unwrap),
     supabase.from("AppUser").select("*").order("username").then(unwrap),
+    supabase.from("MarketProfile").select("code, name").order("order").then((res) => res.error ? [] : (res.data ?? [])),
     supabase
       .from("Research")
       .select("id, focus, angleSlug, drafts, createdAt")
@@ -111,6 +112,7 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
         <p className="mt-1 text-sm text-ink-500">Choose the strategy inputs first; AI uses your product, avatar research, verbatims, knowledge, winners, Teardown, and B-roll to deliver a complete editable first draft.</p>
       </header>
       <ScriptProjectForm
+        markets={(markets as { code: string; name: string }[])}
         products={products
           .filter((item) => item.code?.trim())
           .map((item) => ({ id: item.id, name: item.name, code: item.code!.trim(), imagePath: item.imagePath }))}
