@@ -8,7 +8,6 @@ import { supabase, newId } from "@/lib/db";
 import { getLLM, FAST_MODEL } from "@/lib/llm";
 import { recordUsage } from "@/lib/usage";
 import { filterNovel } from "@/lib/cellumove/novelty";
-import { subredditsForAngle } from "@/lib/cellumove/subreddits";
 import {
   classifyVerbatimCategory,
   normalizeVerbatimText,
@@ -21,12 +20,11 @@ import {
   applyClassification,
   commentFingerprint,
   gateComments,
-  normalizeApifyRedditComments,
-  normalizeApifyRedditPosts,
+  normalizeNestedRedditComments,
   normalizeFacebookComments,
   normalizeTiktokComments,
   normalizeTiktokVideos,
-  rankRedditPosts,
+  redditSearchTerms,
   rankTiktokVideos,
   type IngestPlatform,
   type RawComment,
@@ -252,11 +250,9 @@ interface ScrapeResult {
   usd: number;
 }
 
-// Reddit-lite empirically commits its whole run to the FIRST search's first
-// post, so multi-search inputs waste the run and a site-wide query hands it to
-// whatever viral post loosely matches (a "Heavy Legs" search landed on r/cats).
-// So: one subreddit-scoped search per actor run, looped under the budget guard.
-// Pay-per-result pricing makes several small runs cost the same as one big one.
+// Search discussion-rich posts, then flatten their nested comment trees. This
+// avoids the old actor's six sequential browser runs and keeps the expensive
+// unit (posts) small while yielding hundreds of first-person candidates.
 async function scrapeReddit(
   input: IngestInput,
   maxPosts: number,
@@ -264,59 +260,35 @@ async function scrapeReddit(
   budgetLeft: () => number,
   spend: (actorId: string, usd: number, runId: string, items: number) => Promise<void>,
 ): Promise<ScrapeResult> {
-  const subs = subredditsForAngle(
-    { slug: input.angleSlug, name: input.angleName, mechanism: input.mechanism, focus: input.focus },
-    6,
-  );
-  // Short keyword query + Reddit's subreddit: operator — long natural-language
-  // queries recall nothing on Reddit search.
-  const query = [input.angleName, input.focus ?? ""].join(" ").trim();
-  const postsPerSub = 2;
+  const queries = redditSearchTerms(input);
+  if (budgetLeft() <= 0) return { comments: [], targets: [], usd: 0 };
+  const postCap = Math.min(100, maxPosts);
+  const run = await runActorAndGetItems({
+    actorId: APIFY_ACTORS.reddit(),
+    input: {
+      mode: "search",
+      searchQuery: queries.join(" OR "),
+      sortBy: "top",
+      timeframe: "all",
+      maxPosts: postCap,
+      includeComments: true,
+      maxCommentsPerPost: maxComments,
+      maxDepth: 3,
+      monitorMode: false,
+    },
+    maxItems: postCap + 1,
+    timeoutSecs: 300,
+  });
+  await spend(APIFY_ACTORS.reddit(), run.usd, run.runId, run.items.length);
 
-  const comments: RawComment[] = [];
-  const targets: ScrapeResult["targets"] = [];
-  let postsSeen = 0;
-  for (const sub of subs) {
-    if (postsSeen >= maxPosts || budgetLeft() <= 0) break;
-    const perRun = Math.min(postsPerSub, maxPosts - postsSeen);
-    const cap = perRun * (maxComments + 1);
-    try {
-      const run = await runActorAndGetItems({
-        actorId: APIFY_ACTORS.reddit(),
-        input: {
-          searches: [`${query} subreddit:${sub}`],
-          startUrls: [],
-          skipComments: false,
-          skipUserPosts: true,
-          skipCommunity: true,
-          searchPosts: true,
-          searchComments: false,
-          includeMediaLinks: true,
-          sort: "top",
-          time: "year",
-          includeNSFW: false,
-          maxPostCount: perRun,
-          maxComments,
-          // The actor's own input cap — defaults to 10 and starves the run.
-          maxItems: cap,
-          proxy: { useApifyProxy: true },
-        },
-        maxItems: cap,
-        timeoutSecs: 300,
-      });
-      await spend(APIFY_ACTORS.reddit(), run.usd, run.runId, run.items.length);
-      const posts = rankRedditPosts(normalizeApifyRedditPosts(run.items), perRun);
-      const subComments = normalizeApifyRedditComments(run.items);
-      comments.push(...subComments);
-      postsSeen += posts.length || (subComments.length ? 1 : 0);
-      const byPost = new Map<string, number>();
-      for (const c of subComments) byPost.set(c.parentId, (byPost.get(c.parentId) ?? 0) + 1);
-      targets.push(...posts.map((p) => ({ externalId: p.id, url: p.url, commentCount: byPost.get(p.id) ?? 0 })));
-    } catch (e) {
-      console.warn(`[verbatim-ingest] reddit r/${sub} run failed:`, e instanceof Error ? e.message : e);
-    }
+  const comments = normalizeNestedRedditComments(run.items);
+  const byParent = new Map<string, { url: string; count: number }>();
+  for (const comment of comments) {
+    const current = byParent.get(comment.parentId);
+    byParent.set(comment.parentId, { url: current?.url || comment.sourceUrl, count: (current?.count ?? 0) + 1 });
   }
-  return { comments, targets, usd: 0 }; // usd already recorded per run via spend()
+  const targets = [...byParent].map(([externalId, value]) => ({ externalId, url: value.url, commentCount: value.count }));
+  return { comments, targets, usd: 0 }; // usd already recorded via spend()
 }
 
 // Own winning-ad FB post links + banked FB post links — the posts whose comment

@@ -7,6 +7,7 @@ import { appendHookAlternatives, MAX_SCRIPT_HOOK_ALTERNATIVES } from "@/lib/cell
 import { inspectScriptQuality, renderScriptDownload, scriptDownloadFilename, type ScriptDocument, type ScriptModule } from "@/lib/cellumove/script-studio";
 import { canEditScript, canSendScript, SCRIPT_STATUS_META, type ScriptWorkflowStatus } from "@/lib/cellumove/script-workflow";
 import { ScriptScoreWidget, type ScriptScoreWidgetResult } from "./ScriptScoreWidget";
+import { WorkflowStrategyPanel } from "./WorkflowStrategyPanel";
 
 type View = "modules" | "document";
 
@@ -73,6 +74,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
   const sendable = canSendScript(status);
   const assistModule = document.modules.find((module) => module.id === assistModuleId) ?? null;
   const draftMatchesVersion = useMemo(() => namedVersionDocument !== null && JSON.stringify(document) === JSON.stringify(namedVersionDocument), [document, namedVersionDocument]);
+  const hasUnsavedChanges = useMemo(() => JSON.stringify(document) !== JSON.stringify(lastSavedDocument), [document, lastSavedDocument]);
 
   useEffect(() => {
     if (!assistModuleId) return;
@@ -101,6 +103,17 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
   const removeModule = (id: string) => {
     if (document.modules.length === 1 || !confirm("Remove this beat?")) return;
     setDocument((current) => ({ ...current, modules: current.modules.filter((module) => module.id !== id) }));
+  };
+  const applyWorkflowModules = (patches: Array<Pick<ScriptModule, "id" | "spokenText" | "onScreenText" | "visualDirection">>) => {
+    const byId = new Map(patches.map((module) => [module.id, module]));
+    setDocument((current) => ({
+      ...current,
+      modules: current.modules.map((module) => {
+        const patch = byId.get(module.id);
+        return patch ? { ...module, spokenText: patch.spokenText, onScreenText: patch.onScreenText, visualDirection: patch.visualDirection } : module;
+      }),
+    }));
+    setMessage("Workflow fixes were applied as unsaved changes. Review the affected beats, then save.");
   };
   const openModuleAssist = (moduleId: string) => {
     setAssistModuleId(moduleId);
@@ -277,12 +290,10 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
         <div className="flex flex-wrap items-center gap-2"><div className="rounded-full bg-ink-100 p-1"><button className={`rounded-full px-3 py-1 text-sm ${view === "modules" ? "bg-white shadow-sm" : "text-ink-500"}`} onClick={() => setView("modules")}>Modules</button><button className={`rounded-full px-3 py-1 text-sm ${view === "document" ? "bg-white shadow-sm" : "text-ink-500"}`} onClick={() => setView("document")}>Document</button></div><span className={statusMeta.className}>{statusMeta.label}</span><span className="text-xs text-ink-500">{totalDuration}s / {document.targetDurationSec}s · {issues.length} checks</span></div>
         <div className="flex flex-wrap gap-2"><button className="btn" onClick={generateDraft} disabled={pending || hooksPending || !editable}>{pending ? "Generating…" : "AI fill all"}</button><button className="btn" onClick={downloadScript}>Download script</button><button className="btn" onClick={snapshot} disabled={pending || !editable}>Create version</button><button className="btn" onClick={save} disabled={pending || !editable}>{pending ? "Working…" : "Save changes"}</button><button className="btn btn-primary" onClick={sendToEditor} disabled={pending || !sendable}>{sendLabel}</button></div>
       </div>
-      <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_17.5rem]">
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_20rem]">
       <div className="order-last min-w-0 space-y-4 lg:order-none">
       {message && <div className={`rounded-lg border p-3 text-sm ${/changed|error|could not/i.test(message) ? "border-red-300 bg-red-50 text-red-700" : "border-emerald-300 bg-emerald-50 text-emerald-700"}`}>{message}</div>}
       {handoffVersion !== null && <div className="rounded-xl border border-brand-purple/20 bg-brand-purple/5 px-4 py-3 text-sm text-ink-700"><span className="font-semibold">Video editor handoff is frozen at version {handoffVersion}.</span> Your working script remains editable. Saved changes do not alter the video editor's copy until you explicitly send an updated handoff.</div>}
-
-      {document.fiveD && <section className="card"><div className="flex items-center justify-between gap-3"><div><h2 className="font-semibold">5D creative strategy</h2><p className="text-xs text-ink-500">Required generation contract used across every module.</p></div><span className="tag">5D complete</span></div><dl className="mt-3 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-5"><div><dt className="label">Avatar</dt><dd>{document.fiveD.avatar}</dd></div><div><dt className="label">Angle</dt><dd>{document.fiveD.angle}</dd></div><div><dt className="label">Video format</dt><dd>{document.fiveD.videoFormat}</dd></div><div><dt className="label">Identity level</dt><dd>{document.fiveD.identityLevel}</dd></div><div><dt className="label">Dynamism level</dt><dd>{document.fiveD.dynamismLevel}</dd></div></dl></section>}
 
       <section className="card space-y-3">
         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -324,15 +335,19 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
       {issues.some((issue) => issue.moduleId === "document") && <div className="card border-amber-300 bg-amber-50"><h3 className="text-sm font-semibold text-amber-900">Document checks</h3>{issues.filter((issue) => issue.moduleId === "document").map((issue) => <p key={issue.message} className="mt-1 text-sm text-amber-800">{issue.message}</p>)}</div>}
             <p className="text-xs text-ink-400">Working revision {revision} · named version {version}. Locked modules remain editable only after unlocking.</p>
       </div>
-      <ScriptScoreWidget
-        projectId={projectId}
-        version={version}
-        hasImmutableVersion={namedVersionDocument !== null}
-        draftMatchesVersion={draftMatchesVersion}
-        markets={scorerMarkets}
-        initialResult={initialScore}
-        setupError={scorerSetupError}
-      />
+      <aside className="order-first space-y-3 xl:order-none xl:sticky xl:top-40 xl:max-h-[calc(100dvh-11rem)] xl:overflow-y-auto xl:pr-1">
+        <WorkflowStrategyPanel projectId={projectId} document={document} revision={revision} version={version} draftMatchesVersion={draftMatchesVersion} onApplyModules={applyWorkflowModules} />
+        <ScriptScoreWidget
+          projectId={projectId}
+          version={version}
+          hasImmutableVersion={namedVersionDocument !== null}
+          draftMatchesVersion={draftMatchesVersion}
+          markets={scorerMarkets}
+          initialResult={initialScore}
+          setupError={scorerSetupError}
+        />
+        {hasUnsavedChanges && <p className="px-2 text-[11px] leading-4 text-amber-700">Unsaved edits are visible in the Workflow audit only after you rerun it. Evidence scores remain tied to immutable v{version}.</p>}
+      </aside>
       </div>
     </div>
   );

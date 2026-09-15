@@ -15,7 +15,7 @@ import {
 } from "./script-scorer";
 
 const document: ScriptDocument = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   title: "Test script",
   product: { id: "product-1", name: "Move", code: "V1" },
   avatar: { id: "avatar-1", name: "Busy parent" },
@@ -26,6 +26,12 @@ const document: ScriptDocument = {
   sourceRefs: [],
   hookAlternatives: [],
   selectedHookId: null,
+  workflow: {
+    brief: { conceptLabel: "Test", hookDirection: null, marketCode: "PH", heatLevel: 3, funnelStage: "MOFU", voicePlan: "Standard UGC", offerId: null, referenceMode: "structure_beats", playbookVersionId: "playbook-1" },
+    playbook: { id: "playbook-1", version: "v1", title: "Test playbook", sourceHash: "hash", promptInstructions: "Test instructions", config: {} },
+    evidence: { verbatimIds: [], factIds: [], offerIds: [], referenceIds: [] },
+    generatedAt: null,
+  },
   modules: [
     { id: "m1", kind: "hook", label: "Hook", durationSec: 5, spokenText: "At 6 PM, my knees felt locked.", onScreenText: "", visualDirection: "", brollRefs: [], locked: false, claimFlags: [] },
     { id: "m2", kind: "solution", label: "Solution", durationSec: 5, spokenText: "Move supports daily mobility.", onScreenText: "", visualDirection: "", brollRefs: [], locked: false, claimFlags: [] },

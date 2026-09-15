@@ -3,7 +3,7 @@ import { requireStrategist } from "@/lib/authorization";
 import { SCRIPT_FORMATS } from "@/lib/cellumove/script-studio";
 import { PIPELINE_STAGES } from "@/lib/cellumove/pipeline-stages";
 import { parsePipelineRunSelection } from "@/lib/cellumove/pipeline-selection";
-import type { ResearchRow } from "@/lib/database.types";
+import type { ProductOfferRow, ResearchRow, ScriptPlaybookVersionRow } from "@/lib/database.types";
 import { supabase, unwrap } from "@/lib/db";
 import {
   getTeardownConfigurationIssue,
@@ -21,7 +21,7 @@ export const maxDuration = 300;
 export default async function NewScriptPage({ searchParams }: { searchParams: Promise<{ spySweepId?: string; spyAdIndex?: string }> }) {
   const query = await searchParams;
   const currentUser = await requireStrategist();
-  const [products, angles, avatars, frameworks, users, pipelineRunsRaw] = await Promise.all([
+  const [products, angles, avatars, frameworks, users, pipelineRunsRaw, marketsResult, offersResult, playbookResult] = await Promise.all([
     supabase
       .from("Product")
       .select("id, name, code, imagePath")
@@ -40,7 +40,15 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
       .order("createdAt", { ascending: false })
       .limit(100)
       .then(unwrap),
+    supabase.from("MarketProfile").select("code, name").order("order"),
+    supabase.from("ProductOffer").select("id, productId, marketCode, statement, validFrom, validUntil").eq("status", "approved").order("updatedAt", { ascending: false }),
+    supabase.from("ScriptPlaybookVersion").select("*").eq("status", "published").order("publishedAt", { ascending: false }).limit(1).maybeSingle(),
   ]);
+  const markets = marketsResult.error || !marketsResult.data?.length
+    ? [{ code: "US", name: "United States" }, { code: "UK", name: "United Kingdom" }]
+    : marketsResult.data.map((market) => ({ code: market.code.toUpperCase(), name: market.name }));
+  const offers = (offersResult.data ?? []) as Pick<ProductOfferRow, "id" | "productId" | "marketCode" | "statement" | "validFrom" | "validUntil">[];
+  const playbook = playbookResult.data as ScriptPlaybookVersionRow | null;
 
   const avatarById = new Map(avatars.map((avatar) => [avatar.id, avatar]));
   const angleById = new Map(angles.map((angle) => [angle.id, angle]));
@@ -125,6 +133,9 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
           name: `${item.ad_name || item.original_filename} · ${item.platform || item.ad_kind} · ${item.field_count} insights`,
         }))}
         formats={[...SCRIPT_FORMATS]}
+        markets={markets}
+        offers={offers}
+        playbook={playbook ? { id: playbook.id, version: playbook.version, title: playbook.title } : null}
         currentUserId={currentUser.id}
         teardownConfigured={teardownConfigured}
         teardownWarning={teardownWarning}

@@ -31,9 +31,11 @@ import { PIPELINE_STAGES } from "@/lib/cellumove/pipeline-stages";
 import type {
   AngleRow,
   AvatarResearchRow,
+  BrandFactRow,
   CopyPrincipleRow,
   KnowledgeNoteRow,
   ProductRow,
+  ProductOfferRow,
   ReferenceFormatRow,
   ResearchRow,
   SubAvatarRow,
@@ -171,6 +173,8 @@ function scriptRagCandidates(input: {
   pipelineContext: ReturnType<typeof latestPipelineContext>;
   teardownBrief: ReturnType<typeof createTeardownBrief> | null;
   teardownUrl: string | null;
+  approvedFacts: BrandFactRow[];
+  approvedOffers: ProductOfferRow[];
 }): ScriptRagCandidate[] {
   const candidates: ScriptRagCandidate[] = [];
   const add = (candidate: ScriptRagCandidate) => {
@@ -182,7 +186,7 @@ function scriptRagCandidates(input: {
     id: `product:${input.product.id}`,
     source: "product",
     category: "product features mechanism offer options",
-    title: `${input.product.name} product facts`,
+    title: `${input.product.name} product context`,
     text: [
       input.product.description,
       input.shopify ? JSON.stringify({
@@ -198,8 +202,27 @@ function scriptRagCandidates(input: {
       }) : "",
     ].filter(Boolean).join("\n"),
     url: input.shopify?.onlineStoreUrl ?? null,
-    verified: true,
+    verified: false,
   });
+
+  input.approvedFacts.forEach((fact) => add({
+    id: `brand_fact:${fact.id}`,
+    source: "brand_fact",
+    category: `approved product fact ${fact.factType}`,
+    title: `Approved fact · ${fact.factType}`,
+    text: fact.statement,
+    url: fact.sourceUrl,
+    verified: true,
+  }));
+  input.approvedOffers.forEach((offer) => add({
+    id: `product_offer:${offer.id}`,
+    source: "product_offer",
+    category: `approved offer ${offer.offerType}`,
+    title: `Approved offer · ${offer.offerType}`,
+    text: offer.statement,
+    url: offer.sourceUrl,
+    verified: true,
+  }));
 
   if (input.avatarResearch) {
     const avatarFields: Array<[string, string, string]> = [
@@ -302,7 +325,7 @@ export async function generateResourceGroundedScript(input: {
   onProgress?: ScriptGenerationProgressSink;
   preserveLocked?: boolean;
 }): Promise<ResourceGroundedScriptResult> {
-  const scaffold = ensureScriptDurationPlan(input.scaffold);
+  let scaffold = ensureScriptDurationPlan(input.scaffold);
   if (scaffold.modules.length > input.scaffold.modules.length) {
     await reportScriptGenerationProgress(input.onProgress, {
       stage: "setup",
@@ -325,6 +348,8 @@ export async function generateResourceGroundedScript(input: {
     brollContext,
     winningAds,
     pipelineRows,
+    approvedFacts,
+    applicableOffers,
   ] = await Promise.all([
     input.avatar
       ? optionalOne<AvatarResearchRow>(
@@ -342,7 +367,7 @@ export async function generateResourceGroundedScript(input: {
             .like("researchId", "verified:%")
             .order("sourceWeight", { ascending: false })
             .order("engagementScore", { ascending: false })
-            .limit(24),
+            .limit(48),
         )
       : Promise.resolve([]),
     optionalRows<VerbatimRow>(
@@ -352,6 +377,7 @@ export async function generateResourceGroundedScript(input: {
         .select("*")
         .eq("angleSlug", input.angle.slug)
         .like("researchId", "verified:%")
+        .ilike("market", scaffold.workflow.brief.marketCode)
         .order("sourceWeight", { ascending: false })
         .order("engagementScore", { ascending: false })
         .limit(24),
@@ -385,16 +411,61 @@ export async function generateResourceGroundedScript(input: {
           supabase.from("Research").select("*").eq("type", "pipeline").order("createdAt", { ascending: false }).limit(12),
         )
       : Promise.resolve([]),
+    optionalRows<BrandFactRow>(
+      "approved product facts",
+      supabase
+        .from("BrandFact")
+        .select("*")
+        .eq("productId", input.product.id)
+        .eq("status", "approved")
+        .or(`marketCode.is.null,marketCode.ilike.${scaffold.workflow.brief.marketCode}`)
+        .order("updatedAt", { ascending: false }),
+    ),
+    optionalRows<ProductOfferRow>(
+      "approved product offers",
+      supabase
+        .from("ProductOffer")
+        .select("*")
+        .eq("productId", input.product.id)
+        .eq("status", "approved")
+        .or(`marketCode.is.null,marketCode.ilike.${scaffold.workflow.brief.marketCode}`)
+        .or(`validFrom.is.null,validFrom.lte.${new Date().toISOString()}`)
+        .or(`validUntil.is.null,validUntil.gte.${new Date().toISOString()}`)
+        .order("updatedAt", { ascending: false }),
+    ),
   ]);
+
+  const approvedOffers = scaffold.workflow.brief.offerId
+    ? applicableOffers.filter((offer) => offer.id === scaffold.workflow.brief.offerId)
+    : [];
 
   await reportScriptGenerationProgress(input.onProgress, {
     stage: "resources",
     level: "success",
     message: "Resource stores loaded",
-    detail: `${avatarResearch ? 1 : 0} avatar profile · ${avatarVerbatims.length + angleVerbatims.length} verified verbatim matches · ${knowledgeNotes.length} knowledge notes · ${copyPrinciples.length} copy principles · ${winningAds.length} winning ads · ${brollContext.clips.length} analyzed B-roll clips`,
+    detail: `${avatarResearch ? 1 : 0} avatar profile · ${avatarVerbatims.length + angleVerbatims.length} verified verbatim matches · ${approvedFacts.length} approved facts · ${approvedOffers.length} selected offers · ${winningAds.length} winning ads · ${brollContext.clips.length} analyzed B-roll clips`,
   });
 
-  const verbatims = uniqueById([...avatarVerbatims, ...angleVerbatims]).slice(0, 36);
+  const marketCode = scaffold.workflow.brief.marketCode.toUpperCase();
+  const prioritizedAvatarVerbatims = [...avatarVerbatims].sort((left, right) => {
+    const leftMatch = left.market?.toUpperCase() === marketCode ? 1 : 0;
+    const rightMatch = right.market?.toUpperCase() === marketCode ? 1 : 0;
+    return rightMatch - leftMatch;
+  });
+  const verbatims = uniqueById([...prioritizedAvatarVerbatims, ...angleVerbatims]).slice(0, 12);
+  scaffold = {
+    ...scaffold,
+    workflow: {
+      ...scaffold.workflow,
+      evidence: {
+        verbatimIds: verbatims.map((row) => row.id),
+        factIds: approvedFacts.map((row) => row.id),
+        offerIds: approvedOffers.map((row) => row.id),
+        referenceIds: [input.framework?.id, input.teardown?.id].filter((id): id is string => Boolean(id)),
+      },
+      generatedAt: new Date().toISOString(),
+    },
+  };
   const profile = parseAvatarProfile(avatarResearch?.profile);
   const pipelineContext = latestPipelineContext(pipelineRows, input.avatar?.id ?? null);
   const shopify = readShopifyProductMetadata(input.product.context);
@@ -417,6 +488,8 @@ export async function generateResourceGroundedScript(input: {
     pipelineContext,
     teardownBrief,
     teardownUrl: input.teardown?.source_url ?? null,
+    approvedFacts,
+    approvedOffers,
   });
   await reportScriptGenerationProgress(input.onProgress, {
     stage: "retrieval",
@@ -511,6 +584,22 @@ export async function generateResourceGroundedScript(input: {
       instruction: "Return an empty brollClipIds array. AdFactory attaches clips after validating the finished module.",
       analyzedClipCount: brollContext.clips.length,
     },
+    approvedFacts: approvedFacts.map((fact) => ({
+      id: fact.id,
+      type: fact.factType,
+      statement: fact.statement,
+      marketCode: fact.marketCode,
+      sourceUrl: fact.sourceUrl,
+    })),
+    approvedOffers: approvedOffers.map((offer) => ({
+      id: offer.id,
+      type: offer.offerType,
+      statement: offer.statement,
+      marketCode: offer.marketCode,
+      validFrom: offer.validFrom,
+      validUntil: offer.validUntil,
+      sourceUrl: offer.sourceUrl,
+    })),
   };
 
   const sources: GeneratedScriptSource[] = [{
@@ -527,6 +616,33 @@ export async function generateResourceGroundedScript(input: {
       title: `Avatar research · ${input.avatar.name}`,
       url: null,
       snapshot: { avatar: resources.avatar, researchId: avatarResearch.id },
+    });
+  }
+  for (const verbatim of verbatims) {
+    sources.push({
+      sourceType: "research",
+      sourceId: verbatim.id,
+      title: `Verified verbatim · ${verbatim.category}`,
+      url: verbatim.sourceUrl,
+      snapshot: { id: verbatim.id, text: verbatim.text, market: verbatim.market, researchId: verbatim.researchId },
+    });
+  }
+  for (const fact of approvedFacts) {
+    sources.push({
+      sourceType: "manual",
+      sourceId: fact.id,
+      title: `Approved fact · ${fact.factType}`,
+      url: fact.sourceUrl,
+      snapshot: { id: fact.id, statement: fact.statement, marketCode: fact.marketCode, status: fact.status },
+    });
+  }
+  for (const offer of approvedOffers) {
+    sources.push({
+      sourceType: "manual",
+      sourceId: offer.id,
+      title: `Approved offer · ${offer.offerType}`,
+      url: offer.sourceUrl,
+      snapshot: { id: offer.id, statement: offer.statement, marketCode: offer.marketCode, validFrom: offer.validFrom, validUntil: offer.validUntil, status: offer.status },
     });
   }
   const selectedEvidenceCount = moduleEvidence.reduce((sum, pack) => sum + pack.items.length, 0);
@@ -574,6 +690,8 @@ export async function generateResourceGroundedScript(input: {
       ? Object.values(teardownBrief).filter(Array.isArray).reduce((sum, value) => sum + value.length, 0)
       : 0,
     brollClips: brollContext.clips.length,
+    approvedFacts: approvedFacts.length,
+    approvedOffers: approvedOffers.length,
     ragCandidates: ragCandidates.length,
     ragModules: moduleEvidence.length,
     ragEvidenceItems: selectedEvidenceCount,

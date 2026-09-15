@@ -113,8 +113,7 @@ export function ScriptScoreWidget({
   const reportHref = result ? `/scorer/${result.run.id}` : `/scorer?project=${encodeURIComponent(projectId)}&version=${version}`;
 
   return (
-    <aside aria-label="Script score" className="order-first lg:order-none lg:sticky lg:top-40">
-      <section className="max-h-[calc(100dvh-11rem)] overflow-y-auto rounded-2xl border border-ink-200/80 bg-white shadow-pop">
+      <section aria-label="Evidence scorer" className="overflow-hidden rounded-2xl border border-ink-200/80 bg-white shadow-pop">
         <div className="bg-ink-900 px-4 py-4 text-white">
           <div className="flex items-start justify-between gap-3">
             <div>
@@ -189,6 +188,5 @@ export function ScriptScoreWidget({
           </div>
         </div>
       </section>
-    </aside>
   );
 }

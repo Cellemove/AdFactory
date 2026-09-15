@@ -1,6 +1,10 @@
 import { z } from "zod";
 import type { ReferenceFormatBeat } from "@/lib/cellumove/reference-formats";
 import { TeardownBriefSchema, type TeardownBrief, type TeardownInsight } from "@/lib/cellumove/teardown-brief";
+import {
+  ScriptWorkflowSnapshotSchema,
+  type ScriptWorkflowSnapshot,
+} from "@/lib/cellumove/script-creative-workflow";
 
 export const SCRIPT_FORMATS = [
   "UGC",
@@ -50,8 +54,7 @@ export const ScriptFiveDSchema = z.object({
   dynamismLevel: z.string().trim().min(1),
 }).strict();
 
-export const ScriptDocumentSchema = z.object({
-  schemaVersion: z.literal(1),
+const ScriptDocumentFields = {
   title: z.string(),
   product: z.object({ id: z.string(), name: z.string(), code: z.string() }),
   avatar: z.object({ id: z.string(), name: z.string() }).nullable(),
@@ -72,10 +75,47 @@ export const ScriptDocumentSchema = z.object({
   })),
   selectedHookId: z.string().nullable(),
   modules: z.array(ScriptModuleSchema).min(1),
+};
+
+export const LegacyScriptDocumentSchema = z.object({
+  schemaVersion: z.literal(1),
+  ...ScriptDocumentFields,
+});
+
+export const ScriptDocumentSchema = z.object({
+  schemaVersion: z.literal(2),
+  ...ScriptDocumentFields,
+  workflow: ScriptWorkflowSnapshotSchema,
 });
 
 export type ScriptDocument = z.infer<typeof ScriptDocumentSchema>;
 export type ScriptModule = z.infer<typeof ScriptModuleSchema>;
+
+function legacyWorkflowSnapshot(document: z.infer<typeof LegacyScriptDocumentSchema>): ScriptWorkflowSnapshot {
+  return {
+    brief: {
+      conceptLabel: document.title || "Legacy script",
+      hookDirection: null,
+      marketCode: "UNSET",
+      heatLevel: 3,
+      funnelStage: "MOFU",
+      voicePlan: document.format || "Standard UGC",
+      offerId: null,
+      referenceMode: "structure_beats",
+      playbookVersionId: "legacy-script-playbook",
+    },
+    playbook: {
+      id: "legacy-script-playbook",
+      version: "legacy-unversioned",
+      title: "Legacy unversioned workflow",
+      sourceHash: "legacy",
+      promptInstructions: "Legacy Script Studio document created before versioned workflow playbooks.",
+      config: {},
+    },
+    evidence: { verbatimIds: [], factIds: [], offerIds: [], referenceIds: [] },
+    generatedAt: null,
+  };
+}
 
 function teardownInsightForKind(
   kind: ScriptModule["kind"],
@@ -91,7 +131,14 @@ function teardownInsightForKind(
 }
 
 export function parseScriptDocument(value: unknown): ScriptDocument {
-  return ScriptDocumentSchema.parse(value);
+  const current = ScriptDocumentSchema.safeParse(value);
+  if (current.success) return current.data;
+  const legacy = LegacyScriptDocumentSchema.parse(value);
+  return ScriptDocumentSchema.parse({
+    ...legacy,
+    schemaVersion: 2,
+    workflow: legacyWorkflowSnapshot(legacy),
+  });
 }
 
 // Exported so the video-framework extractor can verify that a beat label it is
@@ -259,6 +306,7 @@ export function createInitialScriptDocument(input: {
   targetDurationSec: number;
   idea: string;
   teardown: { id: string; title: string; url: string | null; brief: TeardownBrief } | null;
+  workflow?: ScriptWorkflowSnapshot;
 }): ScriptDocument {
   const fallbackBeats: ReferenceFormatBeat[] = [
     { label: "Hook", time: "0-3s", note: "Stop the scroll and open the core idea." },
@@ -304,7 +352,7 @@ export function createInitialScriptDocument(input: {
   }
 
   return ensureScriptDurationPlan(ScriptDocumentSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: 2,
     title: input.title,
     product: input.product,
     avatar: input.avatar,
@@ -321,6 +369,29 @@ export function createInitialScriptDocument(input: {
     })),
     selectedHookId: null,
     modules,
+    workflow: input.workflow ?? {
+      brief: {
+        conceptLabel: input.title || "Untitled concept",
+        hookDirection: null,
+        marketCode: "UNSET",
+        heatLevel: 3,
+        funnelStage: "MOFU",
+        voicePlan: input.format || "Standard UGC",
+        offerId: null,
+        referenceMode: "structure_beats",
+        playbookVersionId: "legacy-script-playbook",
+      },
+      playbook: {
+        id: "legacy-script-playbook",
+        version: "legacy-unversioned",
+        title: "Legacy unversioned workflow",
+        sourceHash: "legacy",
+        promptInstructions: "Compatibility workflow for directly constructed documents.",
+        config: {},
+      },
+      evidence: { verbatimIds: [], factIds: [], offerIds: [], referenceIds: [] },
+      generatedAt: null,
+    },
   }));
 }
 

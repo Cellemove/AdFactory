@@ -7,10 +7,12 @@ import {
   isPlatformNoise,
   normalizeApifyRedditComments,
   normalizeApifyRedditPosts,
+  normalizeNestedRedditComments,
   normalizeFacebookComments,
   normalizeTiktokComments,
   normalizeTiktokVideos,
   rankRedditPosts,
+  redditSearchTerms,
   rankTiktokVideos,
   type RawComment,
 } from "./apify";
@@ -90,6 +92,12 @@ test("rankRedditPosts orders by score+2*comments, floors at 5 comments, caps", (
   assert.deepEqual(ranked.map((p) => p.id), ["c", "b"]);
 });
 
+test("reddit searches use audience vocabulary instead of marketing labels", () => {
+  assert.deepEqual(redditSearchTerms({ angleSlug: "anti-cellulite", angleName: "Anti-Cellulite" }).slice(0, 2), ["cellulite", "my cellulite"]);
+  assert.deepEqual(redditSearchTerms({ angleSlug: "lipoedema", angleName: "Lipoedema" }).slice(0, 2), ["lipedema", "lipoedema"]);
+  assert.equal(redditSearchTerms({ angleSlug: "heavy-legs", angleName: "Heavy Legs" })[0], "heavy legs");
+});
+
 test("rankTiktokVideos floors at 10 comments and sorts by plays+10*likes", () => {
   const vids = [
     { id: "low", url: "u", plays: 9999, likes: 999, commentCount: 3, language: null },
@@ -113,6 +121,25 @@ test("reddit normalizers split posts and comments, tolerate malformed items", ()
   assert.equal(comments.length, 1);
   assert.equal(comments[0]!.parentId, "p1");
   assert.equal(comments[0]!.engagement, 4);
+});
+
+test("nested reddit normalizer flattens replies with post provenance", () => {
+  const rows = normalizeNestedRedditComments([{
+    id: "p1",
+    permalink: "/r/lipedema/comments/p1/story/",
+    comments: [{
+      id: "c1",
+      author: "a",
+      body: GOOD_TEXT,
+      score: 5,
+      created_utc: 1_700_000_000,
+      replies: [{ id: "c2", body: "My lipedema pain got worse after pregnancy and compression is the only thing that makes work bearable", score: 2 }],
+    }],
+  }]);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0]!.parentId, "p1");
+  assert.equal(rows[0]!.sourceUrl, "https://www.reddit.com/r/lipedema/comments/p1/story/");
+  assert.equal(rows[1]!.externalId, "c2");
 });
 
 test("facebook normalizer maps ids, likes, dates; skips textless items", () => {

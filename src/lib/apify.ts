@@ -64,6 +64,24 @@ export interface RedditPostItem {
   subreddit: string | null;
 }
 
+/**
+ * Reddit search works best with short phrases people actually type. Marketing
+ * angle names such as "Anti-Cellulite" are useful labels, but poor literal
+ * searches, so map the priority research themes to audience vocabulary.
+ */
+export function redditSearchTerms(input: {
+  angleSlug?: string | null;
+  angleName?: string | null;
+  focus?: string | null;
+}): string[] {
+  const topic = [input.angleSlug, input.angleName, input.focus].filter(Boolean).join(" ").toLocaleLowerCase();
+  if (/lipoedema|lipedema/.test(topic)) return ["lipedema", "lipoedema", "lipedema legs", "lipedema pain"];
+  if (/anti[- ]?cellulite|cellulite/.test(topic)) return ["cellulite", "my cellulite", "cellulite treatment", "cellulite legs"];
+  if (/heavy[- ]?legs?|tired legs?|swollen legs?/.test(topic)) return ["heavy legs", "legs feel heavy", "tired aching legs", "swollen legs"];
+  const fallback = [input.angleName, input.focus].filter((value): value is string => Boolean(value?.trim())).join(" ").trim();
+  return fallback ? [fallback] : ["women leg symptoms"];
+}
+
 export function normalizeApifyRedditPosts(items: unknown[]): RedditPostItem[] {
   const out: RedditPostItem[] = [];
   for (const raw of items) {
@@ -105,6 +123,57 @@ export function normalizeApifyRedditComments(items: unknown[]): RawComment[] {
       engagement: Math.max(0, Math.round(d.upVotes ?? d.score ?? 0)),
       sourceUrl: d.url ?? "",
     });
+  }
+  return out;
+}
+
+const NestedRedditCommentSchema = z.object({
+  id: z.string().min(1),
+  author: z.string().optional(),
+  body: z.string().optional(),
+  score: z.number().optional(),
+  created_utc: z.union([z.number(), z.string()]).optional(),
+  replies: z.array(z.unknown()).optional(),
+}).passthrough();
+
+const RedditThreadSchema = z.object({
+  id: z.string().min(1),
+  permalink: z.string().optional(),
+  url: z.string().optional(),
+  comments: z.array(z.unknown()).optional(),
+}).passthrough();
+
+/** Normalize themineworks/reddit-scraper's nested comment trees. */
+export function normalizeNestedRedditComments(items: unknown[]): RawComment[] {
+  const out: RawComment[] = [];
+  for (const raw of items) {
+    const post = RedditThreadSchema.safeParse(raw);
+    if (!post.success || !post.data.comments?.length) continue;
+    const rawUrl = post.data.permalink ?? post.data.url ?? "";
+    const sourceUrl = rawUrl.startsWith("http") ? rawUrl : rawUrl ? `https://www.reddit.com${rawUrl}` : "";
+    const visit = (comments: unknown[]) => {
+      for (const value of comments) {
+        const parsed = NestedRedditCommentSchema.safeParse(value);
+        if (!parsed.success) continue;
+        const comment = parsed.data;
+        const body = comment.body?.trim() ?? "";
+        if (body && body !== "[deleted]" && body !== "[removed]") {
+          const epoch = typeof comment.created_utc === "string" ? Number(comment.created_utc) : comment.created_utc;
+          out.push({
+            platform: "reddit",
+            externalId: comment.id,
+            parentId: post.data.id,
+            text: body,
+            author: comment.author ?? null,
+            publishedAt: Number.isFinite(epoch) ? new Date((epoch as number) * 1000).toISOString() : null,
+            engagement: Math.max(0, Math.round(comment.score ?? 0)),
+            sourceUrl,
+          });
+        }
+        if (comment.replies?.length) visit(comment.replies);
+      }
+    };
+    visit(post.data.comments);
   }
   return out;
 }

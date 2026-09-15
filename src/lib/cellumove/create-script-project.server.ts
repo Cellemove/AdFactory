@@ -14,14 +14,23 @@ import {
 } from "@/lib/cellumove/script-generation-progress";
 import { persistScriptSources } from "@/lib/cellumove/script-sources.server";
 import { recordScriptBrollSuggestions } from "@/lib/cellumove/broll-tracking.server";
+import { runScriptWorkflowAudit } from "@/lib/cellumove/script-workflow-audit.server";
 import { parsePipelineRunSelection } from "@/lib/cellumove/pipeline-selection";
 import type { ReferenceFormatBeat } from "@/lib/cellumove/reference-formats";
 import { createTeardownBrief } from "@/lib/cellumove/teardown-brief";
+import {
+  ScriptFunnelStageSchema,
+  ScriptHeatLevelSchema,
+  ScriptReferenceModeSchema,
+  ScriptWorkflowSnapshotSchema,
+} from "@/lib/cellumove/script-creative-workflow";
+import { loadPublishedScriptPlaybook, playbookSnapshot } from "@/lib/cellumove/script-playbook.server";
 import type {
   AngleRow,
   AppUserRow,
   Json,
   ProductRow,
+  ProductOfferRow,
   ReferenceFormatRow,
   ResearchRow,
   SubAvatarRow,
@@ -32,6 +41,15 @@ import { getTeardownDeconstruction } from "@/lib/teardown";
 export const CreateScriptProjectSchema = z.object({
   title: z.string().trim().min(2).max(120),
   idea: z.string().trim().min(5).max(4000),
+  conceptLabel: z.string().trim().min(1).max(160),
+  hookDirection: z.string().trim().max(600).nullable().optional(),
+  marketCode: z.string().trim().regex(/^[a-zA-Z]{2,12}$/).transform((value) => value.toUpperCase()),
+  heatLevel: ScriptHeatLevelSchema,
+  funnelStage: ScriptFunnelStageSchema,
+  voicePlan: z.string().trim().min(1).max(160),
+  offerId: z.string().nullable().optional(),
+  referenceMode: ScriptReferenceModeSchema,
+  playbookVersionId: z.string().min(1),
   adNumber: z.string().trim().min(1).max(40),
   creativeName: z.string().trim().min(2).max(120),
   productId: z.string().min(1),
@@ -81,7 +99,7 @@ export async function createScriptProjectCore(
     level: "info",
     message: "Loading the selected product, angle, avatar, framework, and source records",
   });
-  const [productRaw, strategistRaw, editorRaw, avatarRaw, frameworkRaw, pipelineRunRaw, spySweepRaw] = await Promise.all([
+  const [productRaw, strategistRaw, editorRaw, avatarRaw, frameworkRaw, pipelineRunRaw, spySweepRaw, offerRaw, playbook] = await Promise.all([
     unwrapOpt(await supabase.from("Product").select("*").eq("id", parsed.productId).maybeSingle()),
     unwrapOpt(await supabase.from("AppUser").select("*").eq("id", parsed.strategistUserId).maybeSingle()),
     parsed.editorUserId ? unwrapOpt(await supabase.from("AppUser").select("*").eq("id", parsed.editorUserId).maybeSingle()) : null,
@@ -89,6 +107,8 @@ export async function createScriptProjectCore(
     parsed.referenceFormatId ? unwrapOpt(await supabase.from("ReferenceFormat").select("*").eq("id", parsed.referenceFormatId).maybeSingle()) : null,
     parsed.pipelineRunId ? unwrapOpt(await supabase.from("Research").select("*").eq("id", parsed.pipelineRunId).eq("type", "pipeline").maybeSingle()) : null,
     parsed.spySweepId ? unwrapOpt(await supabase.from("Research").select("*").eq("id", parsed.spySweepId).eq("type", "competitor_spy").maybeSingle()) : null,
+    parsed.offerId ? unwrapOpt(await supabase.from("ProductOffer").select("*").eq("id", parsed.offerId).maybeSingle()) : null,
+    loadPublishedScriptPlaybook(parsed.playbookVersionId),
   ]);
   const product = productRaw as ProductRow | null;
   const strategist = strategistRaw as AppUserRow | null;
@@ -97,6 +117,7 @@ export async function createScriptProjectCore(
   const framework = frameworkRaw as ReferenceFormatRow | null;
   const pipelineRun = pipelineRunRaw as ResearchRow | null;
   const spySweep = spySweepRaw as ResearchRow | null;
+  const selectedOffer = offerRaw as ProductOfferRow | null;
 
   if (parsed.subAvatarId && !avatar) throw new Error("The selected avatar was not found.");
 
@@ -123,6 +144,18 @@ export async function createScriptProjectCore(
   }
   if (pipelineDoc && pipelineDoc.completedStages === 0) throw new Error("The selected pipeline run has no completed stages yet.");
   if (parsed.spySweepId && !spySweep) throw new Error("The selected Spy sweep is unavailable.");
+  if (parsed.offerId) {
+    if (!selectedOffer || selectedOffer.productId !== product.id || selectedOffer.status !== "approved") {
+      throw new Error("The selected offer is unavailable or not approved for this product.");
+    }
+    if (selectedOffer.marketCode && selectedOffer.marketCode.toUpperCase() !== parsed.marketCode) {
+      throw new Error("The selected offer does not apply to this market.");
+    }
+    const nowMs = Date.now();
+    if ((selectedOffer.validFrom && new Date(selectedOffer.validFrom).getTime() > nowMs) || (selectedOffer.validUntil && new Date(selectedOffer.validUntil).getTime() < nowMs)) {
+      throw new Error("The selected offer is outside its approved validity window.");
+    }
+  }
 
   await reportScriptGenerationProgress(progress, {
     stage: "resources",
@@ -167,6 +200,22 @@ export async function createScriptProjectCore(
       url: teardown.source_url || null,
       brief: createTeardownBrief(teardown.parsed_output),
     } : null,
+    workflow: ScriptWorkflowSnapshotSchema.parse({
+      brief: {
+        conceptLabel: parsed.conceptLabel,
+        hookDirection: parsed.hookDirection?.trim() || null,
+        marketCode: parsed.marketCode,
+        heatLevel: parsed.heatLevel,
+        funnelStage: parsed.funnelStage,
+        voicePlan: parsed.voicePlan,
+        offerId: parsed.offerId ?? null,
+        referenceMode: parsed.referenceMode,
+        playbookVersionId: playbook.id,
+      },
+      playbook: playbookSnapshot(playbook),
+      evidence: { verbatimIds: [], factIds: [], offerIds: [], referenceIds: [] },
+      generatedAt: null,
+    }),
   });
 
   const generated = await generateResourceGroundedScript({
@@ -219,6 +268,15 @@ export async function createScriptProjectCore(
       creativeName: parsed.creativeName,
       format: parsed.format,
       targetDurationSec: parsed.targetDurationSec,
+      conceptLabel: parsed.conceptLabel,
+      hookDirection: parsed.hookDirection?.trim() || null,
+      marketCode: parsed.marketCode,
+      heatLevel: parsed.heatLevel,
+      funnelStage: parsed.funnelStage,
+      voicePlan: parsed.voicePlan,
+      offerId: parsed.offerId ?? null,
+      referenceMode: parsed.referenceMode,
+      playbookVersionId: playbook.id,
       teardownRecordId: teardown?.id ?? null,
       teardownSnapshot: teardown ? asJson(teardown) : null,
       document: asJson(document),
@@ -262,6 +320,7 @@ export async function createScriptProjectCore(
         pipelineRunId: pipelineRun?.id ?? null,
         spySweepId: spySweep?.id ?? null,
         spyAdIndex: parsed.spyAdIndex ?? null,
+        workflow: generated.document.workflow,
         generation: {
           model: generated.model,
           promptVersion: generated.promptVersion,
@@ -270,13 +329,21 @@ export async function createScriptProjectCore(
       }),
       createdAt,
     }).select("id").single());
+
+    await reportScriptGenerationProgress(progress, { stage: "validation", level: "info", message: "Running the first Creative Workflow audit" });
+    try {
+      const savedProject = unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()) as import("@/lib/database.types").ScriptProjectRow | null;
+      if (savedProject) {
+        const audit = await runScriptWorkflowAudit({ project: savedProject, document, revision: 0, scriptVersion: 1, actorUserId: options.actor.id });
+        await reportScriptGenerationProgress(progress, { stage: "validation", level: "success", message: `Workflow audit complete · ${Math.round(audit.run.score ?? 0)}/100`, detail: "This playbook score is separate from the evidence scorer." });
+      }
+    } catch (auditError) {
+      await reportScriptGenerationProgress(progress, { stage: "validation", level: "warning", message: "Script saved, but its first Workflow audit could not finish", detail: auditError instanceof Error ? auditError.message : String(auditError) });
+    }
   } catch (error) {
     await supabase.from("ScriptProject").delete().eq("id", projectId);
     const message = error instanceof Error ? error.message : String(error);
     await reportScriptGenerationProgress(progress, { stage: "persistence", level: "error", message: "Saving failed; partial project data was rolled back", detail: message });
-    if (/ScriptProject|schema cache|relation/i.test(message)) {
-      throw new Error("Script Studio is not installed in the database. Apply migrations/009_script_studio.sql first.");
-    }
     throw error;
   }
 
