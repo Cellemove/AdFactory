@@ -344,10 +344,10 @@ export async function rectifyScriptFromScore(input: {
   const skipped: string[] = [];
   const targets: Array<{ module: z.infer<typeof ScriptModuleSchema>; findings: typeof actionable }> = [];
   for (const [moduleId, findings] of byModule) {
-    const module = parsed.document.modules.find((item) => item.id === moduleId);
-    if (!module) { skipped.push(`${moduleId} (no longer exists)`); continue; }
-    if (module.locked) { skipped.push(`${module.label} (locked)`); continue; }
-    targets.push({ module, findings });
+    const beatModule = parsed.document.modules.find((item) => item.id === moduleId);
+    if (!beatModule) { skipped.push(`${moduleId} (no longer exists)`); continue; }
+    if (beatModule.locked) { skipped.push(`${beatModule.label} (locked)`); continue; }
+    targets.push({ module: beatModule, findings });
   }
   if (!targets.length) throw new Error("Every flagged module is locked or gone — unlock modules to apply scorer fixes.");
   // Worst modules first (critical count, then finding count); bounded cost.
