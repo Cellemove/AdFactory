@@ -8,6 +8,7 @@
 import { useCallback, useRef, useState } from "react";
 import { fetchQueue, isBatchStage, runBatchStage, runStep, syncTeardowns } from "./api";
 import { PIPELINE_PLAN, stageDef } from "./stages";
+import { finishedPhase } from "./progress";
 import type { AdStageKey, PipelineOptions, PipelineRun, QueueItem, RunRow, StageKey, StageOptions, StageProgress } from "./types";
 
 const TEARDOWN_POLL_MS = 15_000;
@@ -31,6 +32,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
   const [run, setRun] = useState<PipelineRun | null>(null);
   const [stopping, setStopping] = useState(false);
   const stopRef = useRef(false);
+  const runningRef = useRef(false);
   const wakeRef = useRef<(() => void) | null>(null);
   const busy = run?.phase === "running";
 
@@ -77,6 +79,8 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
 
     let cursor = 0;
     let costUsd = 0;
+    let failed = 0;
+    let review = 0;
     const lane = async () => {
       while (!stopRef.current && cursor < items.length) {
         const item = items[cursor++]!;
@@ -84,6 +88,8 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
         try {
           const result = await runStep({ stage, adId: item.id, force: options.force, retryReview: options.retryReview, skipGate: options.skipGate });
           costUsd += result.costUsd ?? 0;
+          if (result.outcome === "failed") failed += 1;
+          if (result.outcome === "quarantined") review += 1;
           patchRow(item.id, { status: result.outcome, detail: result.detail, costUsd: result.costUsd });
           setRun((current) => {
             if (!current) return current;
@@ -103,6 +109,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
             };
           });
         } catch (error) {
+          failed += 1;
           // A per-ad failure never stops the run; a stage-level failure (the queue
           // call) throws before we get here and does.
           patchRow(item.id, { status: "failed", detail: error instanceof Error ? error.message : String(error) });
@@ -115,7 +122,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
       }
     };
     await Promise.all(Array.from({ length: Math.min(def.lanes ?? 2, items.length) }, lane));
-    patchStage(stage, { status: stopRef.current ? "stopped" : "done", finishedAt: Date.now() });
+    patchStage(stage, { status: stopRef.current ? "stopped" : failed || review ? "failed" : "done", finishedAt: Date.now() });
     return { items, costUsd };
   }, [patchRow, patchStage]);
 
@@ -139,6 +146,8 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
   }, [patchRow, patchStage, sleep]);
 
   const runPipeline = useCallback(async (options: PipelineOptions) => {
+    if (runningRef.current) return;
+    runningRef.current = true;
     stopRef.current = false;
     setStopping(false);
     const order: StageKey[] = options.includeCollect ? [...PIPELINE_PLAN] : PIPELINE_PLAN.filter((key) => key !== "ingest");
@@ -163,7 +172,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
         if (isBatchStage(stage)) {
           patchStage(stage, { status: "running", startedAt: Date.now() });
           const batch = await runBatchStage(stage, { brand: options.brand, target: options.target });
-          patchStage(stage, { status: "done", note: batch.title, finishedAt: Date.now() });
+          patchStage(stage, { status: batch.incomplete ? "failed" : "done", note: batch.title, finishedAt: Date.now() });
           setRun((current) => current && ({ ...current, notes: [...current.notes, `${batch.title}`, ...batch.lines] }));
           // The corpus and the brand rail change the moment ads are collected.
           if (stage === "ingest") onCorpusChanged();
@@ -174,7 +183,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
       }
       setRun((current) => current && ({
         ...current,
-        phase: stopRef.current ? "stopped" : "finished",
+        phase: stopRef.current ? "stopped" : finishedPhase(current),
         current: null,
         finishedAt: Date.now(),
       }));
@@ -187,6 +196,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
         error: error instanceof Error ? error.message : String(error),
       }));
     } finally {
+      runningRef.current = false;
       setStopping(false);
       onCorpusChanged();
     }
@@ -194,6 +204,8 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
 
   /** Advanced mode: run exactly one stage, the way the page did before. */
   const runSingleStage = useCallback(async (stage: StageKey, brand: string, options: StageOptions) => {
+    if (runningRef.current) return;
+    runningRef.current = true;
     stopRef.current = false;
     setStopping(false);
     setRun({
@@ -212,7 +224,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
       if (isBatchStage(stage)) {
         patchStage(stage, { status: "running", startedAt: Date.now() });
         const batch = await runBatchStage(stage, { brand, target: options.target });
-        patchStage(stage, { status: "done", note: batch.title, finishedAt: Date.now() });
+        patchStage(stage, { status: batch.incomplete ? "failed" : "done", note: batch.title, finishedAt: Date.now() });
         setRun((current) => current && ({ ...current, notes: [batch.title, ...batch.lines] }));
       } else {
         const { items } = await runAdStage(stage, brand, options);
@@ -220,10 +232,11 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
           await watchTeardowns(items.map((item) => item.id));
         }
       }
-      setRun((current) => current && ({ ...current, phase: stopRef.current ? "stopped" : "finished", current: null, finishedAt: Date.now() }));
+      setRun((current) => current && ({ ...current, phase: stopRef.current ? "stopped" : finishedPhase(current), current: null, finishedAt: Date.now() }));
     } catch (error) {
       setRun((current) => current && ({ ...current, phase: "error", current: null, finishedAt: Date.now(), error: error instanceof Error ? error.message : String(error) }));
     } finally {
+      runningRef.current = false;
       setStopping(false);
       onCorpusChanged();
     }

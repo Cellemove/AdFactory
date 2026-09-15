@@ -44,7 +44,7 @@ function ReportTableView({ table }: { table: ReportTable }) {
       {table.note && <p className="mt-1 text-xs text-ink-500">{table.note}</p>}
       {table.rows.length ? (
         <table className="mt-3 w-full text-sm">
-          <thead><tr className="text-left text-xs uppercase tracking-wide text-ink-400">{table.columns.map((column) => <th key={column} className="py-1 pr-3 font-medium">{column}</th>)}</tr></thead>
+          <thead><tr className="text-left text-xs uppercase tracking-wide text-ink-400">{table.columns.map((column, index) => <th key={`${column}-${index}`} className="py-1 pr-3 font-medium">{column}</th>)}</tr></thead>
           <tbody>
             {table.rows.map((row, index) => (
               <tr key={index} className={highlighted.has(index) ? "bg-amber-50 font-medium" : ""}>

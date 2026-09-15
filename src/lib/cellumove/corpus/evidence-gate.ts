@@ -143,7 +143,7 @@ export type SegmentMatch = {
  * A cheap token-overlap prefilter keeps the Levenshtein work proportional to
  * the number of plausible candidates rather than the whole transcript.
  */
-export function bestSegmentMatch(quote: string, segments: GateSegment[], channel: TranscriptChannel): SegmentMatch {
+export function bestSegmentMatch(quote: string, segments: GateSegment[], channel: TranscriptChannel, window?: [number, number]): SegmentMatch {
   const inChannel = segments.filter((segment) => segment.channel === channel).sort((a, b) => a.orderIndex - b.orderIndex);
   const quoteTokens = tokens(quote);
   type Candidate = { text: string; first: GateSegment; span: [number, number]; lowConfidence: boolean };
@@ -157,7 +157,7 @@ export function bestSegmentMatch(quote: string, segments: GateSegment[], channel
   }));
   inChannel.forEach((segment, index) => {
     const next = inChannel[index + 1];
-    if (next) {
+    if (next && !normalizeForMatch(segment.text).includes(normalizeForMatch(quote)) && !normalizeForMatch(next.text).includes(normalizeForMatch(quote))) {
       candidates.push({
         text: `${segment.text} ${next.text}`,
         first: segment,
@@ -169,7 +169,13 @@ export function bestSegmentMatch(quote: string, segments: GateSegment[], channel
 
   let best: SegmentMatch = { score: 0, segmentId: null, channel: null, span: null, lowConfidence: false };
   const plausible = candidates.filter((candidate) => jaccard(quoteTokens, tokens(candidate.text)) >= 0.25);
-  for (const candidate of plausible.length ? plausible : candidates) {
+  const ranked = plausible.length ? plausible : candidates;
+  // Repeated copy must match the occurrence at this beat's time, not the first one.
+  if (window) ranked.sort((a, b) => {
+    const distance = (span: [number, number]) => Math.max(0, span[0] - window[1], window[0] - span[1]);
+    return distance(a.span) - distance(b.span) || (a.span[1] - a.span[0]) - (b.span[1] - b.span[0]);
+  });
+  for (const candidate of ranked) {
     const score = partialRatio(quote, candidate.text);
     if (score > best.score) {
       best = { score, segmentId: candidate.first.id, channel, span: candidate.span, lowConfidence: candidate.lowConfidence };
@@ -201,10 +207,10 @@ export function gateBeats(
 
   for (const beat of ordered) {
     const beatErrors: string[] = [];
-    let match = bestSegmentMatch(beat.evidenceQuote, segments, beat.channel);
+    let match = bestSegmentMatch(beat.evidenceQuote, segments, beat.channel, [beat.tStart, beat.tEnd]);
     if (match.score < threshold) {
       const other: TranscriptChannel = beat.channel === "vo" ? "ost" : "vo";
-      const crossed = bestSegmentMatch(beat.evidenceQuote, segments, other);
+      const crossed = bestSegmentMatch(beat.evidenceQuote, segments, other, [beat.tStart, beat.tEnd]);
       if (crossed.score >= threshold) {
         beatErrors.push(`Beat ${beat.orderIndex} declares channel "${beat.channel}" but its evidence_quote is in the "${other}" channel; set channel to "${other}".`);
         match = crossed;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { etaSeconds, overallPercent, stageShare, totalCostUsd, totals } from "./progress";
+import { etaSeconds, finishedPhase, overallPercent, stageShare, totalCostUsd, totals } from "./progress";
 import type { PipelineRun, StageKey, StageProgress } from "./types";
 
 function progress(key: StageKey, patch: Partial<StageProgress> = {}): StageProgress {
@@ -8,6 +8,15 @@ function progress(key: StageKey, patch: Partial<StageProgress> = {}): StageProgr
 }
 
 const order: StageKey[] = ["ingest", "media", "transcribe", "extract", "score", "mine"];
+
+test("failed and quarantined ads never count as successful completion", () => {
+  const failed = progress("transcribe", { status: "failed", total: 90, settled: 90, failed: 69 });
+  assert.equal(stageShare(failed), 21 / 90);
+  assert.equal(stageShare(progress("mine", { status: "failed" })), 0);
+  assert.equal(finishedPhase({ stages: { transcribe: failed } }), "partial");
+  assert.equal(finishedPhase({ stages: { extract: progress("extract", { status: "done", review: 7 }) } }), "partial");
+  assert.equal(finishedPhase({ stages: { mine: progress("mine", { status: "done" }) } }), "finished");
+});
 
 function run(stages: Partial<Record<StageKey, StageProgress>>): Pick<PipelineRun, "order" | "stages"> {
   return { order, stages };

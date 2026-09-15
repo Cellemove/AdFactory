@@ -32,6 +32,7 @@ export type RunSnapshot = {
   /** Newest playbook for this brand, for the "playbook" row and the summary link. */
   lastPlaybook: { at: string; adCount: number } | null;
   defaultTarget: number;
+  issues?: Partial<Record<AdStageKey, RunRow[]>>;
 };
 
 export type RowStatus = "waiting" | "running" | StepOutcome;
@@ -50,7 +51,7 @@ export type StageProgress = {
   finishedAt?: number;
 };
 
-export type RunPhase = "running" | "finished" | "stopped" | "error";
+export type RunPhase = "running" | "finished" | "partial" | "stopped" | "error";
 
 export type PipelineRun = {
   brand: string;

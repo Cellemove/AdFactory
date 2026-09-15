@@ -8,10 +8,12 @@ import { latestGate1 } from "@/lib/cellumove/corpus/eval.server";
 import { latestBrandReport } from "@/lib/cellumove/corpus/mine.server";
 import { latestBrandPlaybook } from "@/lib/cellumove/corpus/playbook.server";
 import { planTeardown, selectStageRows } from "@/lib/cellumove/corpus/queue";
+import { MEDIA_FAILED } from "@/lib/cellumove/corpus/constants";
 import { loadCorpusState } from "@/lib/cellumove/corpus/state.server";
 import { loadAdTeardowns } from "@/lib/cellumove/corpus/teardown.server";
 import { WINNER_DEFAULT_TARGET } from "@/lib/cellumove/corpus/winners";
 import type { AdTeardownRow } from "@/lib/database.types";
+import { supabase } from "@/lib/db";
 import { MinerTabs } from "./MinerTabs";
 import { RunClient } from "./_run/RunClient";
 import type { RunSnapshot } from "./_run/types";
@@ -19,7 +21,6 @@ import type { RunSnapshot } from "./_run/types";
 export const metadata: Metadata = { title: "Run pipeline · Corpus Miner · AdFactory" };
 export const dynamic = "force-dynamic";
 
-const MEDIA_FAILED = new Set(["failed", "oversize", "unavailable", "expired", "not_video"]);
 
 export default async function MinerRunPage({ searchParams }: { searchParams: Promise<{ brand?: string }> }) {
   await requireUser();
@@ -52,6 +53,10 @@ export default async function MinerRunPage({ searchParams }: { searchParams: Pro
     const [mined, playbook] = brand
       ? await Promise.all([latestBrandReport(brand.domain).catch(() => null), latestBrandPlaybook(brand.domain).catch(() => null)])
       : [null, null];
+    const transcriptFailures = ofBrand.filter(row => row.corpusIncluded && row.transcriptStatus === "failed" && row.transcriptRunId);
+    const failedRuns = transcriptFailures.length ? await supabase.from("CorpusTranscriptRun").select("id, errorSummary").in("id", transcriptFailures.map(row => row.transcriptRunId!)) : null;
+    if (failedRuns?.error) throw new Error(failedRuns.error.message);
+    const transcriptErrors = new Map((failedRuns?.data ?? []).map(row => [row.id, row.errorSummary]));
 
     snapshot = {
       brand,
@@ -82,6 +87,11 @@ export default async function MinerRunPage({ searchParams }: { searchParams: Pro
       lastMined: mined ? { at: mined.row.createdAt, adCount: mined.row.adCount } : null,
       lastPlaybook: playbook ? { at: playbook.row.createdAt, adCount: playbook.row.adCount } : null,
       defaultTarget: WINNER_DEFAULT_TARGET,
+      issues: {
+        media: ofBrand.filter(row => row.corpusIncluded && MEDIA_FAILED.has(row.mediaStatus ?? "")).map(row => ({ id: row.id, brandName: row.brandName, winnerScore: row.winnerScore, status: "failed", detail: row.mediaReason ?? "Video unavailable." })),
+        transcribe: transcriptFailures.map(row => ({ id: row.id, brandName: row.brandName, winnerScore: row.winnerScore, status: "failed", detail: transcriptErrors.get(row.transcriptRunId!) ?? "Transcription failed." })),
+        extract: ofBrand.filter(row => row.corpusIncluded && (row.extractStatus === "failed" || row.extractStatus === "needs_human_review")).map(row => ({ id: row.id, brandName: row.brandName, winnerScore: row.winnerScore, status: row.extractStatus === "needs_human_review" ? "quarantined" : "failed", detail: row.extractError ?? "Analysis needs review." })),
+      },
     };
   } catch (error) {
     return (

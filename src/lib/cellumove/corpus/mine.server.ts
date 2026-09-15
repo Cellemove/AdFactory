@@ -6,6 +6,7 @@ import { CORPUS_ENGINE_VERSION, CORPUS_TAXONOMY_VERSION, MINE_MIN_SUPPORT } from
 import { reportId } from "./ids";
 import { cohortsOf, mineCorpus, type MinedAd } from "./mine";
 import { reportInputHash, type CorpusPatternReportJson } from "./report";
+import { loadAllRows } from "./pagination";
 
 export type MinedAdWithRun = MinedAd & { extractRunId: string };
 
@@ -21,15 +22,14 @@ export async function loadMinedAds(taxonomyVersion: string = CORPUS_TAXONOMY_VER
   const runIds = [...latestByAd.values()].map((run) => run.id);
   const adIds = [...latestByAd.keys()];
   const [beats, ads, media] = await Promise.all([
-    supabase.from("AdBeat").select("*").in("runId", runIds).order("orderIndex"),
+    loadAllRows((from, to) => supabase.from("AdBeat").select("*").in("runId", runIds).order("id").range(from, to)),
     supabase.from("CompetitorAd").select("*").in("id", adIds).eq("corpusIncluded", true),
     supabase.from("AdMedia").select("competitorAdId, durationSec").in("competitorAdId", adIds),
   ]);
-  if (beats.error) throw new Error(beats.error.message);
   if (ads.error) throw new Error(ads.error.message);
   if (media.error) throw new Error(media.error.message);
   const beatsByRun = new Map<string, AdBeatRow[]>();
-  for (const beat of (beats.data ?? []) as AdBeatRow[]) beatsByRun.set(beat.runId, [...(beatsByRun.get(beat.runId) ?? []), beat]);
+  for (const beat of beats as AdBeatRow[]) beatsByRun.set(beat.runId, [...(beatsByRun.get(beat.runId) ?? []), beat]);
   const durationByAd = new Map((media.data ?? []).map((row) => [row.competitorAdId, row.durationSec]));
   return ((ads.data ?? []) as CompetitorAdRow[]).flatMap((ad) => {
     const run = latestByAd.get(ad.id)!;

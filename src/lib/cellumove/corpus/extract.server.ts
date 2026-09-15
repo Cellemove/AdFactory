@@ -11,6 +11,7 @@ import { readAdMedia } from "./media.server";
 import { loadTaxonomy } from "./taxonomy.server";
 import { renderTranscript } from "./transcribe";
 import { loadTranscriptSegments } from "./transcribe.server";
+import { claimModelRun } from "./run-claim.server";
 
 export const EXTRACT_MODEL = process.env.CORPUS_EXTRACT_MODEL?.trim() || DEFAULT_MODEL;
 
@@ -86,7 +87,7 @@ export async function extractAdBeats(
   const key = options.force ? runKey([baseKey, Date.now(), Math.random()]) : baseKey;
   const runId = extractRunId(key);
   const startedAt = new Date().toISOString();
-  const opened = await supabase.from("CorpusExtractRun").upsert({
+  const claimed = await claimModelRun("CorpusExtractRun", runId, startedAt, () => supabase.from("CorpusExtractRun").insert({
     id: runId,
     runKey: key,
     competitorAdId: ad.id,
@@ -107,17 +108,10 @@ export async function extractAdBeats(
     reviewNote: null,
     startedAt,
     completedAt: null,
-  }, { onConflict: "runKey" });
-  if (opened.error) throw new Error(opened.error.message);
-  const stale = await supabase.from("AdBeat").delete().eq("runId", runId);
-  if (stale.error) throw new Error(stale.error.message);
+  }), Boolean(options.retryReview));
+  if (!claimed) return { run: (await loadExtractRun(runId))!, beats: await loadAdBeats(runId), reused: true };
 
   let videoPart: StructuredPart | null = null;
-  if (withVideo) {
-    if (!options.media) throw new Error("withVideo requires the ad's AdMedia row.");
-    const { bytes, mime } = await readAdMedia(options.media);
-    videoPart = { inlineData: { mimeType: mime, data: bytes.toString("base64") } };
-  }
 
   let usage: UsageSummary | null = null;
   let attempts = 0;
@@ -127,6 +121,13 @@ export async function extractAdBeats(
   let validated: ValidatedExtraction | null = null;
 
   try {
+    const stale = await supabase.from("AdBeat").delete().eq("runId", runId);
+    if (stale.error) throw new Error(stale.error.message);
+    if (withVideo) {
+      if (!options.media) throw new Error("withVideo requires the ad's AdMedia row.");
+      const { bytes, mime } = await readAdMedia(options.media);
+      videoPart = { inlineData: { mimeType: mime, data: bytes.toString("base64") } };
+    }
     for (attempts = 1; attempts <= 2 && !validated; attempts += 1) {
       const prompt = buildExtractPrompt({
         taxonomyVersion,
@@ -228,7 +229,7 @@ export async function extractAdBeats(
       errorCode: "MODEL",
       errorSummary: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
       completedAt: new Date().toISOString(),
-    }).eq("id", runId);
+    }).eq("id", runId).eq("status", "running").eq("startedAt", startedAt);
     throw error;
   }
 }

@@ -6,12 +6,11 @@
 // rail a to-do list instead of a filter.
 
 import type { AdTeardownRow, CorpusAdStateRow } from "@/lib/database.types";
+import { MEDIA_FAILED } from "./constants";
 import { readWinnerPick, type TrackedCompetitor } from "./winners";
 
 /** Share of the bar each stage is worth. Transcribe and beats dominate the real work. */
 const WEIGHTS = { collected: 0.1, downloaded: 0.2, transcribed: 0.3, extracted: 0.3, ranked: 0.1 } as const;
-
-const MEDIA_FAILED = new Set(["failed", "oversize", "unavailable", "expired", "not_video"]);
 
 export type BrandState = "untouched" | "collecting" | "processing" | "ready" | "attention";
 
@@ -21,6 +20,8 @@ export type BrandSummary = {
   /** False when the brand has ads in the corpus but is no longer tracked in Spectre. */
   tracked: boolean;
   inCorpus: number;
+  /** Ads still able to reach a playbook: inCorpus minus the ones with no usable video. */
+  reachable: number;
   downloaded: number;
   transcribed: number;
   extracted: number;
@@ -48,6 +49,7 @@ function summaryFor(domain: string, name: string, tracked: boolean, rows: Corpus
   const needsReview = count((row) => row.extractStatus === "needs_human_review");
   const failed = count((row) => row.extractStatus === "failed" || row.transcriptStatus === "failed" || MEDIA_FAILED.has(row.mediaStatus ?? ""));
   const ranked = count((row) => row.winnerScore != null);
+  const reachable = inCorpus - count((row) => MEDIA_FAILED.has(row.mediaStatus ?? ""));
 
   const picks = videos.map((row) => readWinnerPick(row.winnerPick)?.pickedAt).filter((value): value is string => Boolean(value)).sort();
   const expiries = videos
@@ -73,7 +75,7 @@ function summaryFor(domain: string, name: string, tracked: boolean, rows: Corpus
 
   return {
     domain, name, tracked,
-    inCorpus, downloaded, transcribed, extracted, needsReview, failed, ranked,
+    inCorpus, reachable, downloaded, transcribed, extracted, needsReview, failed, ranked,
     teardownsDone: teardowns.filter((row) => row.status === "completed").length,
     teardownsPending: teardowns.filter((row) => row.status === "queued" || row.status === "processing").length,
     lastPickedAt: picks.at(-1) ?? null,

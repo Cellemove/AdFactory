@@ -65,6 +65,7 @@ export type BrandPlaybook = {
   taxonomyVersion: string;
   brand: string;
   adCount: number;
+  coverage?: { analyzedAds: number; totalAds: number };
   generatedAt: string;
   selection: string;
   medianDurationSec: number | null;
@@ -185,13 +186,15 @@ export function lawsFrom(report: CorpusPatternReportJson | null, taxonomy: Taxon
   return [...layerLaws, ...codeLaws].sort((a, b) => b.share - a.share || b.ads - a.ads).slice(0, 12);
 }
 
-export function buildPlaybook(input: { brand: string; ads: PlaybookAd[]; taxonomy: TaxonomyEntry[]; report: CorpusPatternReportJson | null }, options: PlaybookOptions): BrandPlaybook {
+export function buildPlaybook(input: { brand: string; ads: PlaybookAd[]; taxonomy: TaxonomyEntry[]; report: CorpusPatternReportJson | null; totalAds?: number }, options: PlaybookOptions): BrandPlaybook {
   const minSupport = options.minSupport ?? 3;
   const examplesPerBeat = options.examplesPerBeat ?? 3;
   const ads = input.ads;
   const library = beatLibrary(ads, input.taxonomy, { minSupport, examplesPerBeat });
   const durations = ads.map((ad) => ad.durationSec).filter((value): value is number => value != null);
   const caveats: string[] = [];
+  const totalAds = input.totalAds ?? ads.length;
+  if (ads.length < totalAds) caveats.push(`Preliminary playbook: ${ads.length} of ${totalAds} ads analyzed. Missing and unverified ads are excluded; patterns may change as coverage grows.`);
   if (ads.length < 20) caveats.push(`Only ${ads.length} ads: percentages move a lot with each ad. Treat rules as leads until the brand has 50+.`);
   const withVisuals = ads.filter((ad) => ad.visuals.length).length;
   if (withVisuals < ads.length) caveats.push(`${ads.length - withVisuals} ad(s) were transcribed before visual direction was captured; their examples show words only.`);
@@ -202,6 +205,7 @@ export function buildPlaybook(input: { brand: string; ads: PlaybookAd[]; taxonom
     taxonomyVersion: options.taxonomyVersion,
     brand: input.brand,
     adCount: ads.length,
+    coverage: { analyzedAds: ads.length, totalAds },
     generatedAt: (options.now ?? new Date()).toISOString(),
     selection: "Winning ads: still running 3+ weeks after launch, highest spend first",
     medianDurationSec: median(durations) == null ? null : round1(median(durations)!),

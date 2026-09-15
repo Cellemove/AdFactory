@@ -6,10 +6,17 @@ import type { PipelineRun, StageProgress } from "./types";
 
 /** A stage's own completion, 0..1. Batch stages are all-or-nothing. */
 export function stageShare(progress: StageProgress): number {
+  if (progress.total > 0 && (progress.failed > 0 || progress.review > 0)) {
+    return Math.max(0, Math.min(1, (progress.settled - progress.failed - progress.review) / progress.total));
+  }
   if (progress.status === "done" || progress.status === "skipped") return 1;
   if (progress.status === "waiting") return 0;
-  if (progress.total <= 0) return progress.status === "running" ? 0 : 1;
+  if (progress.total <= 0) return 0;
   return Math.min(1, progress.settled / progress.total);
+}
+
+export function finishedPhase(run: Pick<PipelineRun, "stages">): "finished" | "partial" {
+  return Object.values(run.stages).some(stage => stage && (stage.failed > 0 || stage.review > 0 || stage.status === "failed")) ? "partial" : "finished";
 }
 
 /**

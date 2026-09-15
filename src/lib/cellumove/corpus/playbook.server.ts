@@ -1,13 +1,14 @@
 import "server-only";
+import { createHash } from "node:crypto";
 
 import type { AdBeatRow, CompetitorAdRow, CorpusBrandPlaybookRow, CorpusExtractRunRow, CorpusTranscriptSegmentRow, Json } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
-import { CORPUS_TAXONOMY_VERSION, MINE_MIN_SUPPORT, VISUAL_CHANNEL, type TranscriptChannel } from "./constants";
+import { CORPUS_ENGINE_VERSION, CORPUS_TAXONOMY_VERSION, MEDIA_FAILED, MINE_MIN_SUPPORT, VISUAL_CHANNEL, type TranscriptChannel } from "./constants";
 import { playbookId } from "./ids";
-import { latestBrandReport } from "./mine.server";
+import { mineCorpus } from "./mine";
 import { buildPlaybook, PLAYBOOK_ENGINE_VERSION, type BrandPlaybook, type PlaybookAd } from "./playbook";
-import { reportInputHash } from "./report";
 import { loadTaxonomy } from "./taxonomy.server";
+import { loadAllRows } from "./pagination";
 
 export type LatestPlaybook = { row: CorpusBrandPlaybookRow; playbook: BrandPlaybook };
 
@@ -34,18 +35,16 @@ async function loadPlaybookAds(brand: string, taxonomyVersion: string): Promise<
   const transcriptRunIds = [...new Set([...latestByAd.values()].map((run) => run.transcriptRunId))];
 
   const [beats, segments, media] = await Promise.all([
-    supabase.from("AdBeat").select("*").in("runId", runIds).order("orderIndex"),
-    supabase.from("CorpusTranscriptSegment").select("*").in("runId", transcriptRunIds).order("tStart"),
+    loadAllRows((from, to) => supabase.from("AdBeat").select("*").in("runId", runIds).order("id").range(from, to)),
+    loadAllRows((from, to) => supabase.from("CorpusTranscriptSegment").select("*").in("runId", transcriptRunIds).order("id").range(from, to)),
     supabase.from("AdMedia").select("competitorAdId, durationSec").in("competitorAdId", adIds),
   ]);
-  if (beats.error) throw new Error(beats.error.message);
-  if (segments.error) throw new Error(segments.error.message);
   if (media.error) throw new Error(media.error.message);
 
   const beatsByRun = new Map<string, AdBeatRow[]>();
-  for (const beat of (beats.data ?? []) as AdBeatRow[]) beatsByRun.set(beat.runId, [...(beatsByRun.get(beat.runId) ?? []), beat]);
+  for (const beat of beats as AdBeatRow[]) beatsByRun.set(beat.runId, [...(beatsByRun.get(beat.runId) ?? []), beat]);
   const segmentsByRun = new Map<string, CorpusTranscriptSegmentRow[]>();
-  for (const segment of (segments.data ?? []) as CorpusTranscriptSegmentRow[]) segmentsByRun.set(segment.runId, [...(segmentsByRun.get(segment.runId) ?? []), segment]);
+  for (const segment of segments as CorpusTranscriptSegmentRow[]) segmentsByRun.set(segment.runId, [...(segmentsByRun.get(segment.runId) ?? []), segment]);
   const durationByAd = new Map((media.data ?? []).map((row) => [row.competitorAdId, row.durationSec]));
 
   return adRows.flatMap((ad) => {
@@ -53,7 +52,7 @@ async function loadPlaybookAds(brand: string, taxonomyVersion: string): Promise<
     if (!run) return [];
     const adBeats = beatsByRun.get(run.id) ?? [];
     if (!adBeats.length) return [];
-    const adSegments = segmentsByRun.get(run.transcriptRunId) ?? [];
+    const adSegments = (segmentsByRun.get(run.transcriptRunId) ?? []).sort((a, b) => a.tStart - b.tStart || a.orderIndex - b.orderIndex);
     return [{
       id: ad.id,
       extractRunId: run.id,
@@ -76,9 +75,19 @@ export async function buildAndSavePlaybook(brand: string, options: { taxonomyVer
   const taxonomyVersion = options.taxonomyVersion ?? CORPUS_TAXONOMY_VERSION;
   const ads = await loadPlaybookAds(brand, taxonomyVersion);
   if (!ads.length) return { playbook: null, written: false, adCount: 0 };
-  const [taxonomy, report] = await Promise.all([loadTaxonomy(taxonomyVersion), latestBrandReport(brand, taxonomyVersion)]);
-  const playbook = buildPlaybook({ brand, ads, taxonomy: taxonomy.entries, report: report?.report ?? null }, { taxonomyVersion, minSupport: Math.min(MINE_MIN_SUPPORT, Math.max(2, Math.ceil(ads.length / 10))) });
-  const inputHash = reportInputHash(ads);
+  const [taxonomy, state] = await Promise.all([
+    loadTaxonomy(taxonomyVersion),
+    supabase.from("CorpusAdState").select("mediaStatus").eq("brandName", brand).eq("corpusIncluded", true).eq("mediaType", "video"),
+  ]);
+  if (state.error) throw new Error(state.error.message);
+  // Ads whose video the download stage gave up on can never reach the playbook;
+  // counting them would leave the brand permanently short of its own total.
+  const reachable = (state.data ?? []).filter((row) => !MEDIA_FAILED.has(row.mediaStatus ?? "")).length;
+  // Derive patterns from exactly this snapshot's evidence; a previous report may be stale.
+  const report = ads.length >= MINE_MIN_SUPPORT ? mineCorpus(ads, { taxonomyVersion, engineVersion: CORPUS_ENGINE_VERSION, cohort: "brand", cohortKey: brand, minSupport: MINE_MIN_SUPPORT }) : null;
+  const totalAds = Math.max(reachable, ads.length);
+  const playbook = buildPlaybook({ brand, ads, taxonomy: taxonomy.entries, report, totalAds }, { taxonomyVersion, minSupport: Math.min(MINE_MIN_SUPPORT, Math.max(2, Math.ceil(ads.length / 10))) });
+  const inputHash = createHash("sha256").update(JSON.stringify({ ads: [...ads].sort((a, b) => a.id.localeCompare(b.id)), totalAds, taxonomy: taxonomy.entries })).digest("hex");
 
   const existing = await supabase.from("CorpusBrandPlaybook").select("id")
     .eq("brand", brand).eq("taxonomyVersion", taxonomyVersion).eq("engineVersion", PLAYBOOK_ENGINE_VERSION).eq("inputHash", inputHash).maybeSingle();

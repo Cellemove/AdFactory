@@ -119,7 +119,7 @@ export async function syncTeardowns(adIds: string[]): Promise<StepResult[]> {
   }));
 }
 
-export type BatchResult = { title: string; lines: string[] };
+export type BatchResult = { title: string; lines: string[]; incomplete?: boolean };
 
 export async function runWinners(input: { brand?: string | null; target?: number }): Promise<BatchResult> {
   const result = await collectWinners({ brand: input.brand, target: input.target });
@@ -153,6 +153,7 @@ export async function runMine(input: { brand?: string | null } = {}): Promise<Ba
   if (!report) {
     return {
       title: "Nothing to mine yet",
+      incomplete: true,
       lines: [input.brand
         ? `Break at least ${MINE_MIN_SUPPORT} of ${input.brand}'s ads into beats first.`
         : "Break at least a few ads into beats first."],
@@ -171,11 +172,12 @@ export async function runMine(input: { brand?: string | null } = {}): Promise<Ba
 export async function runPlaybook(input: { brand: string }): Promise<BatchResult> {
   const result = await buildAndSavePlaybook(input.brand);
   if (!result.playbook) {
-    return { title: "No playbook yet", lines: [`Break some of ${input.brand}'s ads into beats first.`] };
+    return { title: "No playbook yet", incomplete: true, lines: [`Break some of ${input.brand}'s ads into beats first.`] };
   }
   const playbook = result.playbook;
   return {
     title: `Playbook for ${input.brand}: ${playbook.adCount} ads`,
+    incomplete: playbook.coverage ? playbook.coverage.analyzedAds < playbook.coverage.totalAds : false,
     lines: [
       `${playbook.hooks.length} hook types · ${playbook.beats.length} beats · ${playbook.copy.rules.length} copywriting rules · ${playbook.formats.length} formats · ${playbook.concepts.length} concepts`,
       result.written ? "Saved a new snapshot." : "Unchanged since the last snapshot.",

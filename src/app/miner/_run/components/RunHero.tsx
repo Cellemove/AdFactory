@@ -69,7 +69,7 @@ export function RunHero({ brand, snapshot, run, canRun, busy, stopping, tabHidde
 
         {brand.inCorpus > 0 && !active && (
           <div className="mt-4">
-            <ProgressBar value={brand.extracted} max={brand.inCorpus} className="h-2" />
+            <ProgressBar value={brand.percent} max={1} className="h-2" />
             <p className="mt-1.5 text-xs text-ink-500">{Math.round(brand.percent * 100)}% done</p>
           </div>
         )}
@@ -99,6 +99,7 @@ function RunProgress({ run, now, tabHidden, onDismiss, brand, snapshot }: { run:
   let headline: string;
   if (run.phase === "error") headline = "The run stopped";
   else if (run.phase === "stopped") headline = "Stopped";
+  else if (run.phase === "partial") headline = "Finished with items needing attention";
   else if (run.phase === "finished") headline = `Finished ${brand.name}`;
   else if (current && current.total > 0) headline = `${stageDef(current.key).title} · ${Math.min(current.settled + 1, current.total)} of ${current.total}`;
   else if (run.current) headline = stageDef(run.current).title;
@@ -110,7 +111,7 @@ function RunProgress({ run, now, tabHidden, onDismiss, brand, snapshot }: { run:
         <div className="flex items-center gap-2 text-sm font-medium text-ink-900">
           {live ? <Spinner className="h-4 w-4 text-ink-700" />
             : run.phase === "error" ? <CrossIcon className="h-4 w-4 text-red-600" />
-              : run.phase === "stopped" ? <AlertIcon className="h-4 w-4 text-amber-600" />
+              : run.phase === "stopped" || run.phase === "partial" ? <AlertIcon className="h-4 w-4 text-amber-600" />
                 : <CheckIcon className="h-4 w-4 text-emerald-600" />}
           {headline}
         </div>
@@ -125,7 +126,7 @@ function RunProgress({ run, now, tabHidden, onDismiss, brand, snapshot }: { run:
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-500">
         <span className="tabular-nums">{percent}%</span>
         <span className="flex flex-wrap gap-x-3">
-          {sums.settled > 0 && <span>{sums.settled} ads done</span>}
+          {sums.settled > 0 && <span>{sums.settled} attempts processed</span>}
           {sums.review > 0 && <span className="text-amber-700">{sums.review} to review</span>}
           {sums.failed > 0 && <span className="text-red-700">{sums.failed} failed</span>}
         </span>
@@ -133,7 +134,7 @@ function RunProgress({ run, now, tabHidden, onDismiss, brand, snapshot }: { run:
 
       {run.error && <p className="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">{run.error}</p>}
 
-      {run.phase === "finished" && (
+      {(run.phase === "finished" || run.phase === "partial") && (
         <div className="flex flex-wrap items-center gap-2 rounded-xl bg-ink-50 px-3.5 py-3 text-sm">
           <span className="text-ink-700">
             {brand.name}: {brand.inCorpus} ads · {brand.transcribed} transcribed · {brand.extracted} in beats

@@ -7,6 +7,7 @@ import { CORPUS_TRANSCRIBE_PROMPT_VERSION, USAGE_FEATURES } from "./constants";
 import { runKey, segmentId, transcriptRunId } from "./ids";
 import { addUsage, generateStructured, parseJsonObject, type UsageSummary } from "./llm-seam.server";
 import { readAdMedia } from "./media.server";
+import { claimModelRun } from "./run-claim.server";
 import {
   TranscriptResponseSchema,
   buildTranscribePrompt,
@@ -79,12 +80,12 @@ export async function transcribeAd(ad: CompetitorAdRow, media: AdMediaRow, optio
   const key = options.force ? runKey([baseKey, Date.now(), Math.random()]) : baseKey;
   const runId = transcriptRunId(key);
   const startedAt = new Date().toISOString();
-  const opened = await supabase.from("CorpusTranscriptRun").upsert({
+  const claimed = await claimModelRun("CorpusTranscriptRun", runId, startedAt, () => supabase.from("CorpusTranscriptRun").insert({
     id: runId,
     runKey: key,
     competitorAdId: ad.id,
     mediaId: media.id,
-    mediaSha256: media.sha256,
+    mediaSha256: media.sha256!,
     model: TRANSCRIBE_MODEL,
     promptVersion: CORPUS_TRANSCRIBE_PROMPT_VERSION,
     status: "running",
@@ -92,13 +93,13 @@ export async function transcribeAd(ad: CompetitorAdRow, media: AdMediaRow, optio
     errorSummary: null,
     startedAt,
     completedAt: null,
-  }, { onConflict: "runKey" });
-  if (opened.error) throw new Error(opened.error.message);
-  const stale = await supabase.from("CorpusTranscriptSegment").delete().eq("runId", runId);
-  if (stale.error) throw new Error(stale.error.message);
+  }));
+  if (!claimed) return { run: (await loadTranscriptRun(runId))!, segments: await loadTranscriptSegments(runId), reused: true };
 
   let usage: UsageSummary | null = null;
   try {
+    const stale = await supabase.from("CorpusTranscriptSegment").delete().eq("runId", runId);
+    if (stale.error) throw new Error(stale.error.message);
     const { bytes, mime } = await readAdMedia(media);
     const [brandSearchTranscript, transcript] = await Promise.all([
       fetchBrandSearchTranscript(ad.transcriptUrl),
@@ -168,7 +169,7 @@ export async function transcribeAd(ad: CompetitorAdRow, media: AdMediaRow, optio
       usage: usage ? asJson(usage) : null,
       errorSummary: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
       completedAt: new Date().toISOString(),
-    }).eq("id", runId);
+    }).eq("id", runId).eq("status", "running").eq("startedAt", startedAt);
     throw error;
   }
 }

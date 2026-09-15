@@ -29,6 +29,14 @@ export const MINE_MIN_SCORED_FOR_LIFT = 8;
 /** A single brand contributing more than this share of a cohort is flagged (house-style trap). */
 export const MINE_MAX_BRAND_SHARE = 0.3;
 
+/**
+ * Media statuses the download stage has given up on: the ad has no usable video
+ * and nothing downstream can run on it. Excluded from the denominators that ask
+ * "how much of this brand have we analysed", so a brand whose every reachable ad
+ * is done reads as done rather than permanently preliminary.
+ */
+export const MEDIA_FAILED = new Set(["failed", "oversize", "unavailable", "expired", "not_video"]);
+
 /** Private Supabase Storage bucket holding the downloaded videos (migration 019). */
 export const CORPUS_MEDIA_BUCKET = "corpus-media";
 

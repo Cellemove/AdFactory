@@ -50,7 +50,7 @@ export function TeardownCard({ snapshot, brand, run, canRun, busy, stopping, onR
             </div>
           ) : (
             <button type="button" className="btn" disabled={busy || stats.ready === 0} onClick={() => setConfirming(true)}>
-              <PlayIcon className="h-3.5 w-3.5" />{stats.ready === 0 ? "Up to date" : `Deep-dive ${stats.ready} ads`}
+              <PlayIcon className="h-3.5 w-3.5" />{stats.ready === 0 ? "Up to date" : `Teardown ${stats.ready} ads`}
             </button>
           ))}
           <div className="flex flex-wrap justify-end gap-1.5">

@@ -31,6 +31,13 @@ const ads: PlaybookAd[] = [
   ad("c", 70, [["P", "P_HYPER_DATED", "Week fourteen"], ["M", "M_QUANTIFIED", "Twelve ridges press and release"]], { formatTag: "Founder", angleTag: "Tried everything", visuals: [] }),
 ];
 
+test("partial brand coverage is explicit and does not inflate evidence counts", () => {
+  const playbook = buildPlaybook({ brand: "acme", ads, taxonomy, report: null, totalAds: 100 }, { taxonomyVersion: "copy-taxonomy-v2" });
+  assert.deepEqual(playbook.coverage, { analyzedAds: 3, totalAds: 100 });
+  assert.equal(playbook.adCount, 3);
+  assert.ok(playbook.caveats.some(caveat => caveat.includes("3 of 100 ads analyzed")));
+});
+
 test("the beat library counts each code once per ad and attaches the on-screen text and the shot", () => {
   const library = beatLibrary(ads, taxonomy, { minSupport: 2, examplesPerBeat: 3 });
   const mechanism = library.find((beat) => beat.code === "M_QUANTIFIED")!;

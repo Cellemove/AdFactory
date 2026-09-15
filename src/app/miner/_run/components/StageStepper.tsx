@@ -1,16 +1,18 @@
 "use client";
 
 import { PIPELINE_STAGES } from "../stages";
-import type { BrandSummary, PipelineRun, RunSnapshot, StageKey, StageOptions } from "../types";
+import type { AdStageKey, BrandSummary, PipelineRun, RunSnapshot, StageKey, StageOptions } from "../types";
+import { AdDetailList } from "./AdDetailList";
 import { Segmented, StageBadge, Stat, Toggle } from "./controls";
 import { PlayIcon } from "./icons";
 
 function stageState(key: StageKey, snapshot: RunSnapshot, brand: BrandSummary, run: PipelineRun | null): "idle" | "active" | "complete" | "attention" {
   if (run?.phase === "running" && run.current === key) return "active";
   const stats = snapshot.stages[key];
-  if (key === "extract" && brand.needsReview > 0) return "attention";
+  if (stats.failed > 0 || (stats.review ?? 0) > 0) return "attention";
+  if ((key === "playbook" || key === "mine") && stats.done > 0 && stats.done < brand.reachable) return "attention";
   if (key === "ingest") return brand.inCorpus > 0 ? "complete" : "idle";
-  if (stats.total > 0 && stats.ready === 0 && stats.done > 0) return "complete";
+  if (stats.total > 0 && stats.done >= stats.total) return "complete";
   return "idle";
 }
 
@@ -20,15 +22,17 @@ function summaryFor(key: StageKey, snapshot: RunSnapshot, brand: BrandSummary): 
   if (key === "score") return `${brand.ranked} of ${brand.inCorpus} ranked`;
   if (key === "mine") {
     return snapshot.lastMined
-      ? `${snapshot.lastMined.adCount} ads · updated ${new Date(snapshot.lastMined.at).toLocaleDateString()}`
+      ? `${snapshot.lastMined.adCount} of ${brand.reachable} ads${snapshot.lastMined.adCount < brand.reachable ? " - partial" : ""} · updated ${new Date(snapshot.lastMined.at).toLocaleDateString()}`
       : "No pattern report yet";
   }
   if (key === "playbook") {
     return snapshot.lastPlaybook
-      ? `${snapshot.lastPlaybook.adCount} ads · updated ${new Date(snapshot.lastPlaybook.at).toLocaleDateString()}`
+      ? `${snapshot.lastPlaybook.adCount} of ${brand.reachable} ads${snapshot.lastPlaybook.adCount < brand.reachable ? " - preliminary" : ""} · updated ${new Date(snapshot.lastPlaybook.at).toLocaleDateString()}`
       : "No playbook yet";
   }
-  return `${stats.done} of ${brand.inCorpus} done${stats.ready > 0 ? ` · ${stats.ready} waiting` : ""}`;
+  const waiting = Math.max(0, stats.ready - stats.failed);
+  const blocked = Math.max(0, stats.total - stats.done - stats.ready - (stats.review ?? 0));
+  return `${stats.done} of ${brand.inCorpus} done${waiting > 0 ? ` · ${waiting} waiting` : ""}${blocked > 0 ? ` · ${blocked} awaiting earlier steps` : ""}`;
 }
 
 /**
@@ -81,6 +85,12 @@ export function StageStepper({ snapshot, brand, run, canRun, busy, advanced, opt
                       <span className="text-xs tabular-nums text-ink-500">{summaryFor(def.key, snapshot, brand)}</span>
                     </div>
                   </div>
+                  {!!snapshot.issues?.[def.key as AdStageKey]?.length && (
+                    <details className="mt-2 text-sm">
+                      <summary className="cursor-pointer text-ink-700">Failure and review details</summary>
+                      <div className="mt-2"><AdDetailList rows={snapshot.issues[def.key as AdStageKey]!} /></div>
+                    </details>
+                  )}
                   {advanced && (
                     <>
                       <p className="mt-1 max-w-2xl text-sm leading-relaxed text-ink-500">{def.blurb}</p>
