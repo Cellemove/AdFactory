@@ -74,10 +74,16 @@ export function redditSearchTerms(input: {
   angleName?: string | null;
   focus?: string | null;
 }): string[] {
+  const explicitFocus = input.focus?.trim();
   const topic = [input.angleSlug, input.angleName, input.focus].filter(Boolean).join(" ").toLocaleLowerCase();
-  if (/lipoedema|lipedema/.test(topic)) return ["lipedema", "lipoedema", "lipedema legs", "lipedema pain"];
-  if (/anti[- ]?cellulite|cellulite/.test(topic)) return ["cellulite", "my cellulite", "cellulite treatment", "cellulite legs"];
-  if (/heavy[- ]?legs?|tired legs?|swollen legs?/.test(topic)) return ["heavy legs", "legs feel heavy", "tired aching legs", "swollen legs"];
+  const terms = /lipoedema|lipedema/.test(topic)
+    ? ["lipedema", "lipoedema", "lipedema legs", "lipedema pain"]
+    : /anti[- ]?cellulite|cellulite/.test(topic)
+      ? ["cellulite", "my cellulite", "cellulite treatment", "cellulite legs"]
+      : /heavy[- ]?legs?|tired legs?|swollen legs?/.test(topic)
+        ? ["heavy legs", "legs feel heavy", "tired aching legs", "swollen legs"]
+        : [];
+  if (terms.length) return [...new Set([explicitFocus, ...terms].filter((value): value is string => Boolean(value)))];
   const fallback = [input.angleName, input.focus].filter((value): value is string => Boolean(value?.trim())).join(" ").trim();
   return fallback ? [fallback] : ["women leg symptoms"];
 }

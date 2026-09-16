@@ -26,6 +26,7 @@ import { retrieveScriptModuleEvidence } from "@/lib/cellumove/script-rag.server"
 import { loadScriptBrollMatchingContext, matchBrollToScript } from "@/lib/cellumove/script-broll.server";
 import { reportScriptGenerationProgress, type ScriptGenerationProgressSink } from "@/lib/cellumove/script-generation-progress";
 import { ensureScriptDurationPlan, type ScriptDocument } from "@/lib/cellumove/script-studio";
+import { embedTexts } from "@/lib/cellumove/embeddings";
 import { createTeardownBrief } from "@/lib/cellumove/teardown-brief";
 import { PIPELINE_STAGES } from "@/lib/cellumove/pipeline-stages";
 import type {
@@ -121,6 +122,46 @@ function safeJson(value: string | null | undefined): unknown {
 
 function uniqueById<T extends { id: string }>(rows: T[]): T[] {
   return [...new Map(rows.map((row) => [row.id, row])).values()];
+}
+
+const SEMANTIC_VERBATIM_FALLBACK_MIN_SIMILARITY = 0.45;
+
+async function loadSemanticVerbatimFallback(input: {
+  angle: AngleRow;
+  avatar: SubAvatarRow | null;
+  product: ProductRow;
+}): Promise<VerbatimRow[]> {
+  const query = [
+    `Customer language relevant to ${input.product.name}.`,
+    `Creative angle: ${input.angle.name}.`,
+    `Core theme: ${input.angle.requiredKeyword}.`,
+    `Mechanism and desired outcome: ${input.angle.mechanism}.`,
+    input.avatar ? `Audience: ${input.avatar.name}. ${input.avatar.shortDesc ?? ""}` : "",
+    "Prioritize first-person pains, desires, objections, daily impact, and words customers actually use.",
+  ].filter(Boolean).join(" ");
+  const embeddings = await embedTexts([query]);
+  const embedding = embeddings?.[0];
+  if (!embedding || embedding.length !== 768) return [];
+
+  const matchResult = await supabase.rpc("match_verbatims", {
+    query_embedding: `[${embedding.join(",")}]`,
+    match_count: 24,
+    filter_sub_avatar_id: null,
+    filter_angle_slug: null,
+    filter_market: null,
+  });
+  if (matchResult.error) {
+    console.warn(`Script generation skipped semantic verbatim fallback: ${matchResult.error.message}`);
+    return [];
+  }
+  const matches = (matchResult.data ?? []).filter((match) => match.similarity >= SEMANTIC_VERBATIM_FALLBACK_MIN_SIMILARITY);
+  if (!matches.length) return [];
+  const rows = await optionalRows<VerbatimRow>(
+    "semantic verbatim fallback rows",
+    supabase.from("Verbatim").select("*").in("id", matches.map((match) => match.id)),
+  );
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  return matches.map((match) => byId.get(match.id)).filter((row): row is VerbatimRow => Boolean(row));
 }
 
 function latestPipelineContext(rows: ResearchRow[], avatarId: string | null): {
@@ -377,7 +418,7 @@ export async function generateResourceGroundedScript(input: {
         .select("*")
         .eq("angleSlug", input.angle.slug)
         .like("researchId", "verified:%")
-        .ilike("market", scaffold.workflow.brief.marketCode)
+        .or(`market.is.null,market.ilike.${scaffold.workflow.brief.marketCode}`)
         .order("sourceWeight", { ascending: false })
         .order("engagementScore", { ascending: false })
         .limit(24),
@@ -452,7 +493,19 @@ export async function generateResourceGroundedScript(input: {
     const rightMatch = right.market?.toUpperCase() === marketCode ? 1 : 0;
     return rightMatch - leftMatch;
   });
-  const verbatims = uniqueById([...prioritizedAvatarVerbatims, ...angleVerbatims]).slice(0, 12);
+  const directlyScopedVerbatims = uniqueById([...prioritizedAvatarVerbatims, ...angleVerbatims]);
+  const semanticFallbackVerbatims = directlyScopedVerbatims.length < 8
+    ? await loadSemanticVerbatimFallback({ angle: input.angle, avatar: input.avatar, product: input.product })
+    : [];
+  const verbatims = uniqueById([...directlyScopedVerbatims, ...semanticFallbackVerbatims]).slice(0, 12);
+  if (semanticFallbackVerbatims.length > 0) {
+    await reportScriptGenerationProgress(input.onProgress, {
+      stage: "resources",
+      level: "info",
+      message: `Added ${Math.min(semanticFallbackVerbatims.length, Math.max(0, 12 - directlyScopedVerbatims.length))} semantically matched verbatims`,
+      detail: `Only ${directlyScopedVerbatims.length} verbatims were directly tagged to this avatar or angle, so the verified library was searched by audience and problem context.`,
+    });
+  }
   scaffold = {
     ...scaffold,
     workflow: {

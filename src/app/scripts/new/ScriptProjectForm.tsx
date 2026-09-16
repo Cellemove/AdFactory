@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { type ChangeEvent, type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ScriptGenerationProgressEvent } from "@/lib/cellumove/script-generation-progress";
 import { parseNdjsonChunk } from "@/lib/cellumove/ndjson";
 import { normalizeUnsignedIntegerInput } from "@/lib/numeric-input";
@@ -13,8 +13,15 @@ import { ProductCombobox, type ProductOption } from "./ProductCombobox";
 import { analyzeRawIdea, type StrategistIdeaResult } from "@/app/actions/strategist";
 
 type Option = { id: string; name: string };
+const WIZARD_STEPS = [
+  { title: "Audience", description: "Who and where" },
+  { title: "Idea", description: "Message and intent" },
+  { title: "Structure", description: "Format and pacing" },
+  { title: "Project", description: "Naming and assignment" },
+  { title: "Review", description: "Evidence and generation" },
+] as const;
 type ReadinessResult = {
-  verbatims: { count: number; targetMin: number; targetMax: number; ready: boolean };
+  verbatims: { count: number; fallbackPoolCount: number; targetMin: number; targetMax: number; ready: boolean };
   facts: { count: number; ready: boolean };
   offers: { count: number; selectedValid: boolean; required: boolean; ready: boolean };
   avatarResearch: { ready: boolean };
@@ -43,6 +50,11 @@ type Props = {
 
 export function ScriptProjectForm(props: Props) {
   const router = useRouter();
+  const [wizardOpen, setWizardOpen] = useState(true);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [furthestStep, setFurthestStep] = useState(0);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const stepHeadingRef = useRef<HTMLHeadingElement>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -101,6 +113,38 @@ export function ScriptProjectForm(props: Props) {
       && (!offer.validFrom || new Date(offer.validFrom).getTime() <= now)
       && (!offer.validUntil || new Date(offer.validUntil).getTime() >= now));
   }, [props.offers, form.productId, form.marketCode]);
+
+  useEffect(() => {
+    if (!wizardOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusTimer = consoleOpen ? null : window.setTimeout(() => stepHeadingRef.current?.focus(), 0);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (consoleOpen) return;
+      if (event.key === "Escape" && !pending) {
+        setWizardOpen(false);
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])") ?? [])];
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    if (!consoleOpen) window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      if (focusTimer !== null) window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", closeOnEscape);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [wizardOpen, currentStep, pending, consoleOpen]);
 
   useEffect(() => {
     if (!form.productId || !form.subAvatarId || !form.marketCode) {
@@ -229,6 +273,38 @@ export function ScriptProjectForm(props: Props) {
     !form.strategistUserId ? "a creative strategist" : null,
   ].filter((item): item is string => item !== null);
   const ready = missing.length === 0;
+  const stepMissing = [
+    [
+      !form.productId || !selectedProduct?.code ? "Choose a coded product" : null,
+      !form.subAvatarId ? "Choose an avatar" : null,
+      !form.marketCode ? "Choose a market" : null,
+    ],
+    [
+      form.idea.trim().length < 5 ? "Describe the core idea" : null,
+      !form.conceptLabel.trim() ? "Add a concept label" : null,
+      hookMode === "direct" && form.hookDirection.trim().length < 3 ? "Describe the hook direction" : null,
+    ],
+    [
+      !form.playbookVersionId ? "Install a published playbook" : null,
+      !(Number.isInteger(targetDuration) && targetDuration >= 5 && targetDuration <= 600) ? "Set a duration between 5 and 600 seconds" : null,
+      compareMode === "frameworks" && batchFrameworkIds.length < 2 ? "Choose at least two frameworks" : null,
+      compareMode === "heat" && batchHeatLevels.length < 2 ? "Choose at least two Heat levels" : null,
+    ],
+    [
+      form.title.trim().length < 2 ? "Add a project title" : null,
+      !form.creativeName.trim() ? "Add a creative name" : null,
+      !form.adNumber.trim() ? "Add an ad number" : null,
+      !form.strategistUserId ? "Choose a creative strategist" : null,
+    ],
+    [],
+  ].map((items) => items.filter((item): item is string => item !== null));
+  const currentStepMissing = stepMissing[currentStep] ?? [];
+  const goNext = () => {
+    if (currentStepMissing.length > 0 || currentStep >= WIZARD_STEPS.length - 1) return;
+    const next = currentStep + 1;
+    setCurrentStep(next);
+    setFurthestStep((value) => Math.max(value, next));
+  };
   const handleTargetDurationChange = (event: ChangeEvent<HTMLInputElement>) => {
     const targetDurationSec = normalizeUnsignedIntegerInput(event.currentTarget.value);
     setForm((current) => ({ ...current, targetDurationSec }));
@@ -268,7 +344,7 @@ export function ScriptProjectForm(props: Props) {
     const pipelineRunId = event.currentTarget.value;
     setForm((current) => ({ ...current, pipelineRunId }));
   };
-  const handleConsoleClose = () => setConsoleOpen(false);
+  const handleConsoleClose = useCallback(() => setConsoleOpen(false), []);
   const runStrategist = async () => {
     setError(null);
     setStrategistPending(true);
@@ -283,11 +359,51 @@ export function ScriptProjectForm(props: Props) {
   // Inputs follow the order decisions are made: who the ad is for → what it
   // says → how it's structured → project admin.
   return (
-    <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_19rem]">
-      <div className="card space-y-8">
-      {props.initialValues && <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">Prefilled from a Spy competitor ad. Review the product and avatar guesses before generating.</div>}
+    <>
+      <section aria-hidden={wizardOpen || undefined} className="rounded-2xl border border-ink-200 bg-white p-5 shadow-card sm:p-7">
+        <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-700">Guided setup</p>
+            <h2 className="mt-2 text-xl font-semibold tracking-tight text-ink-900">Build one decision at a time</h2>
+            <p className="mt-1 max-w-2xl text-sm leading-6 text-ink-500">Five short steps keep strategy, production choices, and project administration separate. Your inputs stay in place if you close and reopen the setup.</p>
+          </div>
+          <button type="button" className="btn btn-primary min-h-11 shrink-0" onClick={() => setWizardOpen(true)}>{furthestStep > 0 ? "Continue script setup" : "Start script setup"}</button>
+        </div>
+        <div className="mt-6 grid gap-2 sm:grid-cols-5" aria-label="Setup progress">
+          {WIZARD_STEPS.map((step, index) => (
+            <div key={step.title} className={`rounded-xl border px-3 py-2.5 ${index < currentStep || (currentStep === WIZARD_STEPS.length - 1 && index === currentStep) ? "border-emerald-200 bg-emerald-50" : index === currentStep ? "border-violet-300 bg-violet-50" : "border-ink-100 bg-ink-50"}`}>
+              <p className="text-xs font-semibold text-ink-800">{index + 1}. {step.title}</p>
+              <p className="mt-0.5 text-[11px] text-ink-500">{step.description}</p>
+            </div>
+          ))}
+        </div>
+      </section>
 
-      <FormSection step={1} title="Audience and market" hint="These choices decide which research, verbatims, facts, offers, and winners are eligible.">
+      {wizardOpen && <div ref={dialogRef} className="fixed inset-0 z-[80] flex items-stretch justify-center bg-ink-950/60 sm:items-center sm:p-6" role="dialog" aria-modal={!consoleOpen} aria-hidden={consoleOpen || undefined} aria-labelledby="script-wizard-title">
+        <div className="flex h-dvh w-full flex-col overflow-hidden bg-white shadow-2xl sm:h-[min(88dvh,880px)] sm:max-w-5xl sm:rounded-3xl">
+          <header className="shrink-0 border-b border-ink-200 bg-white px-4 py-4 sm:px-7">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.16em] text-violet-700">Create script · Step {currentStep + 1} of {WIZARD_STEPS.length}</p>
+                <h2 id="script-wizard-title" ref={stepHeadingRef} tabIndex={-1} className="mt-1 text-xl font-semibold tracking-tight text-ink-900 outline-none sm:text-2xl">{WIZARD_STEPS[currentStep]?.title}</h2>
+                <p className="mt-1 text-sm text-ink-500">{WIZARD_STEPS[currentStep]?.description}</p>
+              </div>
+              <button type="button" className="btn min-h-11 shrink-0" disabled={pending} onClick={() => setWizardOpen(false)} aria-label="Close script setup">Close</button>
+            </div>
+            <nav className="mt-4 grid grid-cols-5 gap-1.5" aria-label="Script setup steps">
+              {WIZARD_STEPS.map((step, index) => {
+                const available = index <= furthestStep;
+                const active = index === currentStep;
+                return <button key={step.title} type="button" disabled={!available || pending} aria-current={active ? "step" : undefined} onClick={() => available && setCurrentStep(index)} className={`min-h-11 rounded-xl border px-1.5 py-2 text-center text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 ${active ? "border-ink-900 bg-ink-900 text-white" : available ? "border-ink-200 bg-white text-ink-700 hover:border-violet-400" : "cursor-not-allowed border-ink-100 bg-ink-50 text-ink-300"}`}><span className="block sm:hidden">{index + 1}</span><span className="hidden sm:block">{index + 1}. {step.title}</span></button>;
+              })}
+            </nav>
+          </header>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-5 sm:px-7 sm:py-6">
+            <div className="mx-auto max-w-4xl space-y-6">
+              {props.initialValues && currentStep === 0 && <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-violet-900">Prefilled from a Spy competitor ad. Review the product and avatar guesses before generating.</div>}
+
+      {currentStep === 0 && <FormSection step={1} title="Audience and market" hint="These choices decide which research, verbatims, facts, offers, and winners are eligible.">
         <div className="grid-fields">
           <div><label className="label">Product</label><ProductCombobox products={props.products} value={form.productId} onChange={(productId) => setForm({ ...form, productId })} /></div>
           <div>
@@ -315,9 +431,9 @@ export function ScriptProjectForm(props: Props) {
         </div>
         {props.products.length === 0 && <p className="text-sm text-red-700">No coded products are available. Assign a naming code on the <Link href="/products" className="underline">Products page</Link> first.</p>}
         {selectedProduct && !selectedProduct.code && <p className="text-sm text-amber-800">Assign this product a naming code on the <Link href="/products" className="underline">Products page</Link> before creating its script.</p>}
-      </FormSection>
+      </FormSection>}
 
-      <FormSection step={2} title="Idea brief" hint="State what the ad proves, then set its pressure, funnel job, and delivery.">
+      {currentStep === 1 && <FormSection step={2} title="Idea brief" hint="State what the ad proves, then set its pressure, funnel job, and delivery.">
         <div className="grid-fields">
           <div><label className="label">Concept label</label><input className="input" value={form.conceptLabel} onChange={(event) => setForm({ ...form, conceptLabel: event.target.value })} placeholder="The 6 PM leg test" /></div>
           <div><label className="label">Funnel stage</label><select className="input" value={form.funnelStage} onChange={(event) => setForm((current) => ({ ...current, funnelStage: event.target.value, offerId: event.target.value === "BOFU" ? current.offerId : "" }))}><option value="TOFU">TOFU · challenge a category belief</option><option value="MOFU">MOFU · challenge a tried alternative</option><option value="BOFU">BOFU · resolve purchase hesitation</option></select></div>
@@ -348,9 +464,9 @@ export function ScriptProjectForm(props: Props) {
             <div className="mt-3 flex flex-wrap gap-2">{strategistResult.hookDirections.map((item) => <button key={item.hook} type="button" className="tag max-w-full text-left" title={item.direction} onClick={() => { setHookMode("direct"); setForm((current) => ({ ...current, hookDirection: `${item.hook} — ${item.direction}` })); }}>{item.hook}</button>)}</div>
           </div>
         )}
-      </FormSection>
+      </FormSection>}
 
-      <FormSection step={3} title="Script structure" hint="The framework shapes the beats; format and duration set how it's shot.">
+      {currentStep === 2 && <FormSection step={3} title="Script structure" hint="The framework shapes the beats; format and duration set how it's shot.">
         <div className="grid-fields">
           <div>
             <label className="label">Reference framework</label>
@@ -385,9 +501,9 @@ export function ScriptProjectForm(props: Props) {
           <div><label className="label">Target duration (seconds)</label><input className="input" type="number" min={5} max={600} step={1} value={form.targetDurationSec} onChange={handleTargetDurationChange} /><p className="mt-1 text-xs text-ink-500">Filled from the framework when it has a set length.</p></div>
           <div><label className="label">Teardown2 source <span className="font-normal normal-case text-ink-400">(optional)</span></label><select className="input" disabled={!props.teardownConfigured || props.teardowns.length === 0} value={form.teardownRecordId} onChange={(event) => setForm({ ...form, teardownRecordId: event.target.value })}><option value="">No teardown source</option>{props.teardowns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">{!props.teardownConfigured ? "Set TEARDOWN_API_BASE_URL to enable imports." : props.teardownWarning ? `Unavailable: ${props.teardownWarning}` : `${props.teardowns.length} completed records available.`}</p></div>
         </div>
-      </FormSection>
+      </FormSection>}
 
-      <FormSection step={4} title="Project details" hint="Naming and who's assigned — doesn't change the script itself.">
+      {currentStep === 3 && <FormSection step={4} title="Project details" hint="Naming and who's assigned — doesn't change the script itself.">
         <div className="grid-fields">
           <div className="sm:col-span-2"><label className="label">Project title</label><input className="input" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} placeholder="CelluMove viral V1" /></div>
           <div><label className="label">Creative name</label><input className="input" value={form.creativeName} onChange={(event) => setForm({ ...form, creativeName: event.target.value })} placeholder="CELLUMOVE VIRAL" /></div>
@@ -395,24 +511,54 @@ export function ScriptProjectForm(props: Props) {
           <div><label className="label">Creative strategist</label><select className="input" value={form.strategistUserId} onChange={(event) => setForm({ ...form, strategistUserId: event.target.value })}>{props.strategists.map((item) => <option key={item.id} value={item.id}>@{item.name}</option>)}</select></div>
           <div><label className="label">Video editor <span className="font-normal normal-case text-ink-400">(optional)</span></label><select className="input" value={form.editorUserId} onChange={(event) => setForm({ ...form, editorUserId: event.target.value })}><option value="">Assign later</option>{props.editors.map((item) => <option key={item.id} value={item.id}>@{item.name}</option>)}</select></div>
         </div>
-      </FormSection>
+      </FormSection>}
 
-      {error && <p className="text-sm text-red-700">{error}</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className="btn btn-primary" disabled={pending || !ready} onClick={submit}>{pending ? (batchMode ? "Generating comparison…" : "Generating complete draft…") : compareMode === "frameworks" ? `Generate ${batchFrameworkIds.length} framework drafts` : compareMode === "heat" ? `Generate ${batchHeatLevels.length} Heat drafts` : "Generate structured script"}</button>
-        <Link href="/scripts" className="btn">Cancel</Link>
-        {!ready && !pending && <p className="text-xs text-ink-500">Still needed: {missing.join(", ")}.</p>}
-      </div>
-      </div>
-      <ReadinessRail result={readiness} loading={readinessLoading} playbook={props.playbook} />
+      {currentStep === 4 && <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_19rem]">
+        <section className="space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold text-ink-900">Review your setup</h3>
+            <p className="mt-1 text-sm text-ink-500">Check the four decisions below. Evidence warnings are advisory and remain visible beside them.</p>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <ReviewCard title="Audience" onEdit={() => setCurrentStep(0)} lines={[selectedProduct?.name ?? "No product", selectedAvatar?.name ?? "No avatar", `${form.marketCode} market`]} />
+            <ReviewCard title="Idea" onEdit={() => setCurrentStep(1)} lines={[form.conceptLabel || "No concept label", `${form.funnelStage} · Heat ${form.heatLevel}`, hookMode === "direct" ? form.hookDirection : "AI proposes hook directions"]} />
+            <ReviewCard title="Structure" onEdit={() => setCurrentStep(2)} lines={[frameworkOptions.find((item) => item.id === form.referenceFormatId)?.name ?? "Standard Hook → CTA", `${form.format} · ${form.targetDurationSec}s`, compareMode === "none" ? "Single draft" : compareMode === "frameworks" ? `${batchFrameworkIds.length} framework drafts` : `${batchHeatLevels.length} Heat drafts`]} />
+            <ReviewCard title="Project" onEdit={() => setCurrentStep(3)} lines={[form.title || "No project title", `${form.adNumber || "No ad number"} · ${form.creativeName || "No creative name"}`, `Strategist: ${props.strategists.find((item) => item.id === form.strategistUserId)?.name ?? "Unassigned"}`]} />
+          </div>
+          {!ready && <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900"><p className="font-semibold">Finish these items before generation</p><ul className="mt-2 space-y-1 text-xs">{missing.map((item) => <li key={item}>• {item}</li>)}</ul></div>}
+        </section>
+        <ReadinessRail result={readiness} loading={readinessLoading} playbook={props.playbook} />
+      </div>}
+
+              {error && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+            </div>
+          </div>
+
+          <footer className="shrink-0 border-t border-ink-200 bg-white px-4 py-4 sm:px-7">
+            <div className="mx-auto flex max-w-4xl flex-col-reverse gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-2">
+                <button type="button" className="btn min-h-11" disabled={currentStep === 0 || pending} onClick={() => setCurrentStep((step) => Math.max(0, step - 1))}>Back</button>
+                <Link href="/scripts" className="btn btn-ghost min-h-11">Cancel setup</Link>
+              </div>
+              <div className="flex flex-col gap-2 sm:items-end">
+                {currentStepMissing.length > 0 && <p className="text-xs text-amber-800" aria-live="polite">Next: {currentStepMissing[0]}</p>}
+                {currentStep < WIZARD_STEPS.length - 1
+                  ? <button type="button" className="btn btn-primary min-h-11 min-w-36" disabled={currentStepMissing.length > 0 || pending} onClick={goNext}>Continue</button>
+                  : <button type="button" className="btn btn-primary min-h-11 min-w-48" disabled={pending || !ready} onClick={submit}>{pending ? (batchMode ? "Generating comparison…" : "Generating complete draft…") : compareMode === "frameworks" ? `Generate ${batchFrameworkIds.length} drafts` : compareMode === "heat" ? `Generate ${batchHeatLevels.length} drafts` : "Generate script"}</button>}
+              </div>
+            </div>
+          </footer>
+        </div>
+      </div>}
+
       <GenerationConsole open={consoleOpen} running={pending} events={generationEvents} error={error} onClose={handleConsoleClose} />
-    </div>
+    </>
   );
 }
 
 function ReadinessRail({ result, loading, playbook }: { result: ReadinessResult | null; loading: boolean; playbook: Props["playbook"] }) {
   const rows = result ? [
-    { label: "Verified verbatims", value: `${result.verbatims.count} / ${result.verbatims.targetMin}`, ready: result.verbatims.ready },
+    { label: "Verified verbatims", value: result.verbatims.count >= result.verbatims.targetMin ? `${result.verbatims.count} direct` : `${result.verbatims.count} direct · ${result.verbatims.fallbackPoolCount} library`, ready: result.verbatims.ready },
     { label: "Approved facts", value: String(result.facts.count), ready: result.facts.ready },
     { label: "Applicable offer", value: result.offers.required ? (result.offers.selectedValid ? "Selected" : "Missing") : "Optional", ready: result.offers.ready },
     { label: "Avatar research", value: result.avatarResearch.ready ? "Ready" : "Missing", ready: result.avatarResearch.ready },
@@ -444,5 +590,14 @@ function FormSection({ step, title, hint, children }: { step: number; title: str
       </div>
       {children}
     </section>
+  );
+}
+
+function ReviewCard({ title, lines, onEdit }: { title: string; lines: string[]; onEdit: () => void }) {
+  return (
+    <article className="rounded-2xl border border-ink-200 bg-white p-4">
+      <div className="flex items-center justify-between gap-3"><h4 className="text-sm font-semibold text-ink-900">{title}</h4><button type="button" className="text-xs font-semibold text-violet-700 underline-offset-2 hover:underline" onClick={onEdit}>Edit</button></div>
+      <ul className="mt-3 space-y-1 text-xs leading-5 text-ink-500">{lines.map((line, index) => <li key={`${index}-${line}`} className="line-clamp-2">{line}</li>)}</ul>
+    </article>
   );
 }

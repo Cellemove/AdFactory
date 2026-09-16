@@ -116,7 +116,7 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
     <div className="space-y-6">
       <header>
         <h1 className="text-2xl font-semibold tracking-tight">Create script project</h1>
-        <p className="mt-1 text-sm text-ink-500">Choose the strategy inputs first; AI uses your product, avatar research, verbatims, knowledge, winners, Teardown, and B-roll to deliver a complete editable first draft.</p>
+        <p className="mt-1 text-sm text-ink-500">Answer five short steps. Script Studio handles the evidence, structure, and production context behind the scenes.</p>
       </header>
       <ScriptProjectForm
         products={products

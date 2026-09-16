@@ -38,7 +38,7 @@ function AutoResizeTextarea({ className = "", onInput, value, ...props }: Textar
   );
 }
 
-export function ScriptStudioClient({ projectId, initialDocument, initialRevision, initialVersion, initialNamedVersionDocument, initialHandoffVersion, initialStatus, editorName, scorerMarkets, initialScore, scorerSetupError }: { projectId: string; initialDocument: ScriptDocument; initialRevision: number; initialVersion: number; initialNamedVersionDocument: ScriptDocument | null; initialHandoffVersion: number | null; initialStatus: ScriptWorkflowStatus; editorName: string | null; scorerMarkets: Array<{ code: string; name: string }>; initialScore: ScriptScoreWidgetResult | null; scorerSetupError: string | null }) {
+export function ScriptStudioClient({ projectId, initialDocument, initialRevision, initialVersion, initialNamedVersionDocument, initialHandoffVersion, initialStatus, editorName, scorerMarkets, initialScore, scorerSetupError, verbatimAvailability }: { projectId: string; initialDocument: ScriptDocument; initialRevision: number; initialVersion: number; initialNamedVersionDocument: ScriptDocument | null; initialHandoffVersion: number | null; initialStatus: ScriptWorkflowStatus; editorName: string | null; scorerMarkets: Array<{ code: string; name: string }>; initialScore: ScriptScoreWidgetResult | null; scorerSetupError: string | null; verbatimAvailability: { directCount: number; libraryCount: number } | null }) {
   const router = useRouter();
   const [document, setDocument] = useState(initialDocument);
   const [revision, setRevision] = useState(initialRevision);
@@ -336,7 +336,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
             <p className="text-xs text-ink-400">Working revision {revision} · named version {version}. Locked modules remain editable only after unlocking.</p>
       </div>
       <aside className="order-first space-y-3 xl:order-none xl:sticky xl:top-40 xl:max-h-[calc(100dvh-11rem)] xl:overflow-y-auto xl:pr-1">
-        <WorkflowStrategyPanel projectId={projectId} document={document} revision={revision} version={version} draftMatchesVersion={draftMatchesVersion} onApplyModules={applyWorkflowModules} />
+        <WorkflowStrategyPanel projectId={projectId} document={document} revision={revision} version={version} draftMatchesVersion={draftMatchesVersion} verbatimAvailability={verbatimAvailability} onApplyModules={applyWorkflowModules} />
         <ScriptScoreWidget
           projectId={projectId}
           version={version}

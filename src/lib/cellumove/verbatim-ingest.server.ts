@@ -267,7 +267,9 @@ async function scrapeReddit(
     actorId: APIFY_ACTORS.reddit(),
     input: {
       mode: "search",
-      searchQuery: queries.join(" OR "),
+      // Do not OR loose aliases such as "my cellulite" and "cellulite legs":
+      // Reddit tokenizes them and the generic words swamp the result set.
+      searchQuery: queries[0]!.includes(" ") ? `"${queries[0]}"` : queries[0],
       sortBy: "top",
       timeframe: "all",
       maxPosts: postCap,

@@ -55,6 +55,19 @@ test("records the conflicting guarantee language as review-only offers", () => {
   assert.equal(result.offers.find((row) => row.offerType === "statutory_withdrawal_window")?.status, "approved");
 });
 
+test("adds the approved Buy 1 Take 1 and 50% Off promotions to compression products", () => {
+  const result = buildCellumoveFactsAndOffers([product]);
+  const buyOneTakeOne = result.offers.find((row) => row.offerType === "buy_one_take_one");
+  const fiftyPercentOff = result.offers.find((row) => row.offerType === "fifty_percent_off");
+
+  assert.equal(buyOneTakeOne?.status, "approved");
+  assert.match(buyOneTakeOne?.statement ?? "", /^Buy 1 Take 1/);
+  assert.match(buyOneTakeOne?.sourceUrl ?? "", /lymphatic-drainage/);
+  assert.equal(fiftyPercentOff?.status, "approved");
+  assert.match(fiftyPercentOff?.statement ?? "", /^50% Off/);
+  assert.match(fiftyPercentOff?.sourceUrl ?? "", /mofu-period-bloating/);
+});
+
 test("uses stable IDs so repeated imports are idempotent", () => {
   const first = buildCellumoveFactsAndOffers([product]);
   const second = buildCellumoveFactsAndOffers([product]);

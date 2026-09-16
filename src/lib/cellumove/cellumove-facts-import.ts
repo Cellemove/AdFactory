@@ -37,6 +37,8 @@ export const CELLUMOVE_SHIPPING_URL = "https://cellumove.com/pages/shipping-poli
 export const CELLUMOVE_REFUND_URL = "https://cellumove.com/pages/refund-policy";
 export const CELLUMOVE_TERMS_URL = "https://cellumove.com/pages/terms-and-conditions-of-sale-cellumove";
 export const CELLUMOVE_CONTACT_URL = "https://cellumove.com/pages/contact";
+export const CELLUMOVE_BUY_ONE_TAKE_ONE_URL = "https://cellumove.com/pages/lymphatic-drainage";
+export const CELLUMOVE_FIFTY_PERCENT_OFF_URL = "https://cellumove.com/pages/mofu-period-bloating";
 
 function normalizeStatement(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
@@ -208,6 +210,20 @@ export function buildCellumoveFactsAndOffers(products: CellumoveImportProduct[],
         fact(product.id, "daily_outcome_claim_review", "Cellumove claims the first result a wearer feels is lighter legs by evening, with smoother-looking results building over time.", CELLUMOVE_HOMEPAGE_URL, "draft"),
         fact(product.id, "social_proof_claim_review", "The homepage claims the products are loved by more than 100,000 women.", CELLUMOVE_HOMEPAGE_URL, "draft"),
         fact(product.id, "squat_proof_claim_review", "The homepage describes the 3D™ knit as squat-proof.", CELLUMOVE_HOMEPAGE_URL, "draft"),
+      );
+      offers.push(
+        offer(
+          product.id,
+          "buy_one_take_one",
+          "Buy 1 Take 1 — buy one pair and receive a second pair free.",
+          CELLUMOVE_BUY_ONE_TAKE_ONE_URL,
+        ),
+        offer(
+          product.id,
+          "fifty_percent_off",
+          "50% Off — receive 50% off the advertised Cellumove product offer.",
+          CELLUMOVE_FIFTY_PERCENT_OFF_URL,
+        ),
       );
     }
 

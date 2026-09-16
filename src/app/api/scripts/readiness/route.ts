@@ -29,10 +29,11 @@ export async function GET(request: Request): Promise<Response> {
   if (!angle) return Response.json({ error: "The selected avatar has no valid angle." }, { status: 400 });
 
   const now = new Date().toISOString();
-  const [avatarMarket, avatarAllMarkets, angleMarket, factResult, offerResult, researchResult, playbookResult] = await Promise.all([
+  const [avatarMarket, avatarAllMarkets, angleMarket, globalVerbatims, factResult, offerResult, researchResult, playbookResult] = await Promise.all([
     supabase.from("Verbatim").select("id").eq("subAvatarId", avatar.id).like("researchId", "verified:%").ilike("market", marketCode),
     supabase.from("Verbatim").select("id").eq("subAvatarId", avatar.id).like("researchId", "verified:%"),
-    supabase.from("Verbatim").select("id").eq("angleSlug", angle.slug).like("researchId", "verified:%").ilike("market", marketCode),
+    supabase.from("Verbatim").select("id").eq("angleSlug", angle.slug).like("researchId", "verified:%").or(`market.is.null,market.ilike.${marketCode}`),
+    supabase.from("Verbatim").select("id", { count: "exact", head: true }).like("researchId", "verified:%").not("embedding", "is", null),
     supabase.from("BrandFact").select("id", { count: "exact", head: true }).eq("productId", productId).eq("status", "approved").or(`marketCode.is.null,marketCode.ilike.${marketCode}`),
     supabase.from("ProductOffer").select("*").eq("productId", productId).eq("status", "approved").or(`marketCode.is.null,marketCode.ilike.${marketCode}`).or(`validFrom.is.null,validFrom.lte.${now}`).or(`validUntil.is.null,validUntil.gte.${now}`),
     supabase.from("AvatarResearch").select("id", { count: "exact", head: true }).eq("subAvatarId", avatar.id),
@@ -45,17 +46,19 @@ export async function GET(request: Request): Promise<Response> {
     ...(angleMarket.data ?? []).map((row) => row.id),
   ]);
   const offers = (offerResult.data ?? []) as ProductOfferRow[];
+  const fallbackPoolCount = globalVerbatims.count ?? 0;
   const selectedOfferValid = offerId ? offers.some((offer) => offer.id === offerId) : false;
   const facts = factResult.count ?? 0;
   const warnings: string[] = [];
-  if (verbatimIds.size < 8) warnings.push(`Only ${verbatimIds.size} verified verbatims match; the playbook target is 8–12.`);
+  if (verbatimIds.size < 8 && fallbackPoolCount >= 8) warnings.push(`Only ${verbatimIds.size} verbatims are directly tagged to this avatar or angle. Generation will semantically select relevant language from the ${fallbackPoolCount} embedded verified verbatims.`);
+  else if (verbatimIds.size < 8) warnings.push(`Only ${verbatimIds.size} verified verbatims match and the semantic fallback library is too small; the playbook target is 8–12.`);
   if (facts === 0) warnings.push("No approved facts match this product and market; factual copy will stay non-specific.");
   if (funnelStage === "BOFU" && !selectedOfferValid) warnings.push("BOFU is selected without an applicable approved offer.");
   if (!referenceFormatId && !teardownRecordId) warnings.push("No reusable framework or teardown is selected; the standard structure will be used.");
   if ((researchResult.count ?? 0) === 0) warnings.push("This avatar has no structured research profile yet.");
 
   return Response.json({
-    verbatims: { count: verbatimIds.size, targetMin: 8, targetMax: 12, ready: verbatimIds.size >= 8 },
+    verbatims: { count: verbatimIds.size, fallbackPoolCount, targetMin: 8, targetMax: 12, ready: verbatimIds.size >= 8 || fallbackPoolCount >= 8 },
     facts: { count: facts, ready: facts > 0 },
     offers: { count: offers.length, selectedValid: selectedOfferValid, required: funnelStage === "BOFU", ready: funnelStage !== "BOFU" || selectedOfferValid },
     avatarResearch: { ready: (researchResult.count ?? 0) > 0 },

@@ -29,6 +29,7 @@ export function WorkflowStrategyPanel({
   revision,
   version,
   draftMatchesVersion,
+  verbatimAvailability,
   onApplyModules,
 }: {
   projectId: string;
@@ -36,6 +37,7 @@ export function WorkflowStrategyPanel({
   revision: number;
   version: number;
   draftMatchesVersion: boolean;
+  verbatimAvailability: { directCount: number; libraryCount: number } | null;
   onApplyModules: (modules: Array<Pick<ScriptModule, "id" | "spokenText" | "onScreenText" | "visualDirection">>) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -72,11 +74,11 @@ export function WorkflowStrategyPanel({
   const fixable = useMemo(() => result.findings.filter((finding) => finding.fixEligible), [result.findings]);
   const gate = GATE_META[result.run?.gateStatus ?? "pending"] ?? DEFAULT_GATE_META;
   const receipt = document.workflow.evidence;
-  const readiness = [
-    { label: "Verified verbatims", ...evidenceLabel(receipt.verbatimIds.length, 8) },
-    { label: "Approved facts", ...evidenceLabel(receipt.factIds.length) },
-    { label: "Approved offers", ...evidenceLabel(receipt.offerIds.length) },
-    { label: "References", ...evidenceLabel(receipt.referenceIds.length) },
+  const evidenceReceipt = [
+    { label: "Verbatims used in this draft", ...evidenceLabel(receipt.verbatimIds.length) },
+    { label: "Approved facts used", ...evidenceLabel(receipt.factIds.length) },
+    { label: "Approved offers used", ...evidenceLabel(receipt.offerIds.length) },
+    { label: "References used", ...evidenceLabel(receipt.referenceIds.length) },
   ];
 
   const rerunAudit = async () => {
@@ -161,8 +163,17 @@ export function WorkflowStrategyPanel({
 
         <section className="border-t border-ink-200 pt-4">
           <div className="flex items-center justify-between gap-3"><p className="label">Evidence readiness</p><span className="text-[10px] text-ink-400">Advisory</span></div>
-          <dl className="mt-2 space-y-1.5 text-xs">{readiness.map((item) => <div key={item.label} className="flex justify-between gap-3"><dt className="text-ink-500">{item.label}</dt><dd className={`font-semibold ${item.className}`}>{item.value}</dd></div>)}</dl>
-          {receipt.verbatimIds.length < 8 && <p className="mt-2 text-[11px] leading-4 text-amber-700">The playbook target is 8–12 verified verbatims. Generation stays available with a warning.</p>}
+          <div className="mt-2 flex items-center justify-between gap-3 text-xs">
+            <span className="text-ink-500">Verified verbatim library</span>
+            {verbatimAvailability == null
+              ? <span className="font-semibold text-ink-400">Unavailable</span>
+              : <span className="font-semibold text-emerald-700">{verbatimAvailability.libraryCount}</span>}
+          </div>
+          {verbatimAvailability && <div className="mt-1.5 flex items-center justify-between gap-3 text-xs"><span className="text-ink-500">Direct avatar/angle matches</span><span className={`font-semibold ${evidenceLabel(verbatimAvailability.directCount, 8).className}`}>{evidenceLabel(verbatimAvailability.directCount, 8).value}</span></div>}
+          <dl className="mt-3 space-y-1.5 border-t border-ink-100 pt-3 text-xs">{evidenceReceipt.map((item) => <div key={item.label} className="flex justify-between gap-3"><dt className="text-ink-500">{item.label}</dt><dd className={`font-semibold ${item.className}`}>{item.value}</dd></div>)}</dl>
+          {verbatimAvailability && verbatimAvailability.directCount < 8 && verbatimAvailability.libraryCount >= 8 && <p className="mt-2 text-[11px] leading-4 text-ink-500">When direct tags are sparse, generation now selects relevant quotes semantically from the verified library.</p>}
+          {verbatimAvailability && verbatimAvailability.directCount < 8 && verbatimAvailability.libraryCount < 8 && <p className="mt-2 text-[11px] leading-4 text-amber-700">The verified library is too small for the 8–12 verbatim target.</p>}
+          {verbatimAvailability && verbatimAvailability.libraryCount >= 8 && receipt.verbatimIds.length === 0 && <p className="mt-2 text-[11px] leading-4 text-amber-700">This older draft has no attached verbatim receipt. Regenerate it to use the current evidence selection.</p>}
         </section>
 
         {document.fiveD && <section className="border-t border-ink-200 pt-4">

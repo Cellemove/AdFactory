@@ -96,6 +96,7 @@ test("reddit searches use audience vocabulary instead of marketing labels", () =
   assert.deepEqual(redditSearchTerms({ angleSlug: "anti-cellulite", angleName: "Anti-Cellulite" }).slice(0, 2), ["cellulite", "my cellulite"]);
   assert.deepEqual(redditSearchTerms({ angleSlug: "lipoedema", angleName: "Lipoedema" }).slice(0, 2), ["lipedema", "lipoedema"]);
   assert.equal(redditSearchTerms({ angleSlug: "heavy-legs", angleName: "Heavy Legs" })[0], "heavy legs");
+  assert.equal(redditSearchTerms({ angleSlug: "heavy-legs", angleName: "Heavy Legs", focus: "legs feel heavy" })[0], "legs feel heavy");
 });
 
 test("rankTiktokVideos floors at 10 comments and sorts by plays+10*likes", () => {
