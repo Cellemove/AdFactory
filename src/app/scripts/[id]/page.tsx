@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { requireStrategist } from "@/lib/authorization";
 import { parseScriptDocument } from "@/lib/cellumove/script-studio";
 import { normalizeScriptWorkflowStatus, SCRIPT_STATUS_META } from "@/lib/cellumove/script-workflow";
-import type { MarketProfileRow, ScriptAssignmentRow, ScriptProjectRow, ScriptScoreModuleRow, ScriptScoreRunRow, ScriptVersionRow } from "@/lib/database.types";
+import type { AngleRow, MarketProfileRow, ScriptAssignmentRow, ScriptProjectRow, ScriptScoreModuleRow, ScriptScoreRunRow, ScriptVersionRow } from "@/lib/database.types";
 import { supabase, unwrapOpt } from "@/lib/db";
 import { ScriptStudioClient } from "./ScriptStudioClient";
 import { AssignEditorControl } from "../AssignEditorControl";
@@ -31,6 +31,26 @@ export default async function ScriptDetailPage({ params }: { params: Promise<{ i
   const editor = users.find((user) => user.id === project.editorUserId);
   const editors = users.filter((user) => user.role === "editor").map((user) => ({ id: user.id, username: user.username }));
   const document = parseScriptDocument(project.document);
+  const marketCode = document.workflow.brief.marketCode.toUpperCase();
+  const angleResult = project.angleId
+    ? await supabase.from("Angle").select("slug").eq("id", project.angleId).maybeSingle()
+    : { data: null, error: null };
+  const angle = angleResult.data as Pick<AngleRow, "slug"> | null;
+  const [avatarVerbatimsResult, angleVerbatimsResult, globalVerbatimsResult] = await Promise.all([
+    project.subAvatarId
+      ? supabase.from("Verbatim").select("id").eq("subAvatarId", project.subAvatarId).like("researchId", "verified:%")
+      : Promise.resolve({ data: [] as Array<{ id: string }>, error: null }),
+    angle
+      ? supabase.from("Verbatim").select("id").eq("angleSlug", angle.slug).like("researchId", "verified:%").or(`market.is.null,market.ilike.${marketCode}`)
+      : Promise.resolve({ data: [] as Array<{ id: string }>, error: null }),
+    supabase.from("Verbatim").select("id", { count: "exact", head: true }).like("researchId", "verified:%").not("embedding", "is", null),
+  ]);
+  const verbatimAvailability = avatarVerbatimsResult.error || angleVerbatimsResult.error || globalVerbatimsResult.error
+    ? null
+    : {
+      directCount: new Set([...(avatarVerbatimsResult.data ?? []), ...(angleVerbatimsResult.data ?? [])].map((row) => row.id)).size,
+      libraryCount: globalVerbatimsResult.count ?? 0,
+    };
   const assignment = editorRes.data as ScriptAssignmentRow | null;
   const workflowStatus = normalizeScriptWorkflowStatus(project.status, assignment?.status);
   const statusMeta = SCRIPT_STATUS_META[workflowStatus];
@@ -64,7 +84,7 @@ export default async function ScriptDetailPage({ params }: { params: Promise<{ i
         </div>
       </header>
 
-      <ScriptStudioClient projectId={project.id} initialDocument={document} initialRevision={project.revision} initialVersion={project.currentVersion} initialNamedVersionDocument={namedVersionDocument} initialHandoffVersion={handoffVersion} initialStatus={workflowStatus} editorName={editor?.username ?? null} scorerMarkets={scorerMarkets} initialScore={initialScore} scorerSetupError={scorerSetupError} />
+      <ScriptStudioClient projectId={project.id} initialDocument={document} initialRevision={project.revision} initialVersion={project.currentVersion} initialNamedVersionDocument={namedVersionDocument} initialHandoffVersion={handoffVersion} initialStatus={workflowStatus} editorName={editor?.username ?? null} scorerMarkets={scorerMarkets} initialScore={initialScore} scorerSetupError={scorerSetupError} verbatimAvailability={verbatimAvailability} />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="card"><h2 className="font-semibold">Sources</h2><div className="divider" />{(sourcesRes.data ?? []).length === 0 ? <p className="text-sm text-ink-500">No imported sources.</p> : <ul className="space-y-2 text-sm">{(sourcesRes.data ?? []).map((source) => <li key={source.id}><span className="tag mr-2">{source.sourceType}</span>{source.url ? <a className="hover:underline" href={source.url} target="_blank" rel="noreferrer">{source.title}</a> : source.title}</li>)}</ul>}</section>

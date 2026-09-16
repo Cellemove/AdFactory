@@ -10,6 +10,7 @@
 //   --max-usd=N      cumulative cap for this invocation (default 5)
 //   --max-posts=N    per platform-run (default 8)
 //   --max-comments=N per post (default 40)
+//   --focus=phrase   optional exact Reddit search phrase for this run
 //   --force          ignore the scrape ledger
 //   --dry-run        resolve targets and print the plan, scrape nothing
 
@@ -41,6 +42,7 @@ async function main() {
   const force = has("force");
   const dryRun = has("dry-run");
   const market = flag("market"); // e.g. PT — tags inserted rows for market-scoped retrieval
+  const focus = flag("focus");
 
   const anglesRes = await supabase.from("Angle").select("slug,name,mechanism").order("order");
   if (anglesRes.error) throw new Error(anglesRes.error.message);
@@ -71,6 +73,7 @@ async function main() {
           subAvatarId: null,
           angleName: angle.name,
           mechanism: angle.mechanism,
+          focus,
           market,
           maxPosts,
           maxCommentsPerPost: maxComments,

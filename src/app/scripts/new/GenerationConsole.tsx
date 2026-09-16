@@ -27,16 +27,48 @@ const LEVEL_CLASS: Record<ScriptGenerationProgressEvent["level"], string> = {
 
 export function GenerationConsole({ open, running, events, error, onClose }: Props) {
   const logEndRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     logEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [events, error]);
 
+  useEffect(() => {
+    if (!open) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const focusTimer = window.setTimeout(() => dialogRef.current?.focus(), 0);
+    const keepFocusInConsole = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !running) {
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])") ?? [])];
+      const first = focusable[0] ?? dialogRef.current;
+      const last = focusable.at(-1) ?? dialogRef.current;
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", keepFocusInConsole);
+    return () => {
+      window.clearTimeout(focusTimer);
+      window.removeEventListener("keydown", keepFocusInConsole);
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [open, running, onClose]);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink-900/55 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="generation-console-title">
-      <div className="flex max-h-[82vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#0b1020] shadow-2xl">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-ink-900/55 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="generation-console-title">
+      <div ref={dialogRef} tabIndex={-1} className="flex max-h-[82vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl border border-slate-700 bg-[#0b1020] shadow-2xl outline-none">
         <header className="flex items-center justify-between border-b border-slate-700 px-4 py-3 text-slate-100">
           <div className="flex items-center gap-3">
             <span className={`h-2.5 w-2.5 rounded-full ${running ? "animate-pulse bg-emerald-400" : error ? "bg-red-400" : "bg-sky-400"}`} />

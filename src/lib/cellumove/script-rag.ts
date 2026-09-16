@@ -10,7 +10,9 @@ export type ScriptEvidenceSource =
   | "principle"
   | "winning_ad"
   | "pipeline"
-  | "teardown";
+  | "teardown"
+  | "brand_fact"
+  | "product_offer";
 
 export interface ScriptRagCandidate {
   id: string;

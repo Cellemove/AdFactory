@@ -13,6 +13,7 @@
     "test:teardown-config": "tsx --test src/lib/teardown-config.test.ts",
     "test:framework-extraction": "tsx --test src/lib/cellumove/framework-extraction.test.ts",
     "test:script-generation": "tsx --test src/lib/cellumove/script-generation.test.ts",
+    "test:script-workflow": "tsx --test src/lib/cellumove/script-creative-workflow.test.ts",
     "test:script-rag": "tsx --test src/lib/cellumove/script-rag.test.ts",
     "test:script-broll": "tsx --test src/lib/cellumove/script-broll.test.ts",
     "test:module-assist": "tsx --test src/lib/cellumove/script-module-assist.test.ts",
@@ -49,6 +50,7 @@
     "baseline:e2e": "tsx --env-file=.env scripts/baseline-end-to-end.ts",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
     "seed:sop": "tsx --env-file=.env scripts/seed-sop-foundation.ts",
+    "seed:script-playbook-draft": "tsx --env-file=.env scripts/seed-script-playbook-first-draft.ts",
     "analyze:intel": "tsx --conditions=react-server --env-file=.env scripts/analyze-intel-drive.ts",
     "scorer:extract-milanote": "tsx scripts/extract-milanote-pdf.ts"
   },

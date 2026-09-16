@@ -48,7 +48,7 @@ export const SUBREDDIT_CLUSTERS: SubredditCluster[] = [
   {
     key: "body_weight",
     keywords: ["pcos", "weight", "cellulite", "menopause", "perimenopause", "hormone", "slim", "tone", "fat", "fasting", "cico", "bloat"],
-    subs: ["PCOS", "Menopause", "Perimenopause", "loseit", "CICO", "intermittentfasting", "xxfitness", "cellulite"],
+    subs: ["cellulite", "xxfitness", "loseit", "Menopause", "Perimenopause", "PCOS", "CICO", "intermittentfasting"],
   },
   {
     key: "fashion_shape",
