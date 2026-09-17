@@ -19,7 +19,7 @@ function apiToken(): string {
 
 // Actor ids are env-overridable — actors get renamed/repriced on the store.
 export const APIFY_ACTORS = {
-  reddit: () => process.env.APIFY_ACTOR_REDDIT?.trim() || "trudax/reddit-scraper-lite",
+  reddit: () => process.env.APIFY_ACTOR_REDDIT?.trim() || "themineworks/reddit-scraper",
   fbComments: () => process.env.APIFY_ACTOR_FB_COMMENTS?.trim() || "apify/facebook-comments-scraper",
   tiktokSearch: () => process.env.APIFY_ACTOR_TIKTOK_SEARCH?.trim() || "clockworks/tiktok-scraper",
   tiktokComments: () => process.env.APIFY_ACTOR_TIKTOK_COMMENTS?.trim() || "clockworks/tiktok-comments-scraper",

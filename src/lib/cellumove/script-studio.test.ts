@@ -3,7 +3,7 @@ import test from "node:test";
 import { normalizeUnsignedIntegerInput } from "../numeric-input";
 import { parsePipelineRunSelection } from "./pipeline-selection";
 import { REFERENCE_FORMATS } from "./reference-formats";
-import { buildScriptDisplayName, createInitialScriptDocument, ensureScriptDurationPlan, inspectScriptQuality, renderScriptDownload, scriptDownloadFilename } from "./script-studio";
+import { buildScriptDisplayName, createInitialScriptDocument, ensureScriptDurationPlan, inspectScriptQuality, parseScriptDocument, renderScriptDownload, scriptDownloadFilename } from "./script-studio";
 import { canClaimScript, canEditScript, canSendScript, normalizeScriptWorkflowStatus } from "./script-workflow";
 
 test("removes leading zeroes while preserving a single zero", () => {
@@ -48,9 +48,31 @@ test("seeds a structured script and always includes a CTA", () => {
     idea: "I stopped hiding my legs.",
     teardown: null,
   });
-  assert.equal(document.schemaVersion, 1);
+  assert.equal(document.schemaVersion, 2);
+  assert.equal(document.workflow.brief.conceptLabel, "Viral concept");
   assert.ok(document.modules.some((module) => module.kind === "cta"));
   assert.ok(inspectScriptQuality(document).length > 0);
+});
+
+test("normalizes legacy v1 documents without changing their script fields", () => {
+  const current = createInitialScriptDocument({
+    title: "Legacy copy",
+    product: { id: "p1", name: "CelluMove", code: "V1" },
+    avatar: null,
+    angle: { id: "a1", name: "Relief" },
+    framework: null,
+    format: "UGC",
+    targetDurationSec: 30,
+    idea: "Keep this exact line.",
+    teardown: null,
+  });
+  const { workflow: _workflow, ...legacyFields } = current;
+  const legacy = { ...legacyFields, schemaVersion: 1 as const };
+  const parsed = parseScriptDocument(legacy);
+  assert.equal(parsed.schemaVersion, 2);
+  assert.equal(parsed.modules[0]?.spokenText, current.modules[0]?.spokenText);
+  assert.equal(parsed.workflow.playbook.version, "legacy-unversioned");
+  assert.equal(parsed.workflow.brief.referenceMode, "structure_beats");
 });
 
 // Guards the seeded framework library against silent drift: every beat label has

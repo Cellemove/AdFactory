@@ -430,6 +430,15 @@ export type ScriptProjectRow = {
   creativeName: string;
   format: string;
   targetDurationSec: number;
+  conceptLabel: string | null;
+  hookDirection: string | null;
+  marketCode: string | null;
+  heatLevel: number;
+  funnelStage: string;
+  voicePlan: string;
+  offerId: string | null;
+  referenceMode: string;
+  playbookVersionId: string | null;
   teardownRecordId: string | null;
   teardownSnapshot: Json | null;
   document: Json;
@@ -438,6 +447,70 @@ export type ScriptProjectRow = {
   currentVersion: number;
   createdAt: string;
   updatedAt: string;
+};
+
+export type ScriptPlaybookVersionRow = {
+  id: string;
+  version: string;
+  title: string;
+  status: string;
+  promptInstructions: string;
+  config: Json;
+  sourceHash: string;
+  createdByUserId: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ScriptWorkflowAuditRunRow = {
+  id: string;
+  projectId: string;
+  scriptVersion: number | null;
+  documentHash: string;
+  revision: number;
+  playbookVersionId: string;
+  promptVersion: string;
+  model: string;
+  score: number | null;
+  gateStatus: string;
+  status: string;
+  contextSnapshot: Json;
+  createdByUserId: string;
+  startedAt: string | null;
+  completedAt: string | null;
+  errorSummary: string | null;
+  createdAt: string;
+};
+
+export type ScriptWorkflowFindingRow = {
+  id: string;
+  runId: string;
+  ruleId: string;
+  category: string;
+  severity: string;
+  scriptModuleId: string | null;
+  lineIndex: number | null;
+  scriptQuote: string;
+  message: string;
+  recommendation: string;
+  fixEligible: boolean;
+  pointsDeducted: number;
+  metadata: Json;
+  createdAt: string;
+};
+
+export type ScriptLineFingerprintRow = {
+  id: string;
+  projectId: string;
+  scriptVersion: number;
+  scriptModuleId: string;
+  lineKind: string;
+  text: string;
+  normalizedHash: string;
+  embedding: string | null;
+  embeddingModel: string | null;
+  createdAt: string;
 };
 
 export type ScriptVersionRow = {
@@ -1024,6 +1097,10 @@ export type Database = {
       EvidenceEnrichmentJob: { Row: EvidenceEnrichmentJobRow; Insert: Partial<EvidenceEnrichmentJobRow> & { id: string; provider: string; boardUrl: string }; Update: Partial<EvidenceEnrichmentJobRow>; Relationships: [] };
       BrollSuggestion: { Row: BrollSuggestionRow; Insert: Partial<BrollSuggestionRow> & { id: string; clipId: string; clipName: string; source: string }; Update: Partial<BrollSuggestionRow>; Relationships: [] };
       ScriptProject: { Row: ScriptProjectRow; Insert: Partial<ScriptProjectRow> & { id: string; title: string; strategistUserId: string; createdByUserId: string; productId: string; angleId: string; idea: string; adNumber: string; creativeName: string; format: string; document: Json; displayName: string }; Update: Partial<ScriptProjectRow>; Relationships: [] };
+      ScriptPlaybookVersion: { Row: ScriptPlaybookVersionRow; Insert: Partial<ScriptPlaybookVersionRow> & { id: string; version: string; title: string; promptInstructions: string; config: Json; sourceHash: string }; Update: Partial<ScriptPlaybookVersionRow>; Relationships: [] };
+      ScriptWorkflowAuditRun: { Row: ScriptWorkflowAuditRunRow; Insert: Partial<ScriptWorkflowAuditRunRow> & { id: string; projectId: string; documentHash: string; revision: number; playbookVersionId: string; promptVersion: string; model: string; contextSnapshot: Json; createdByUserId: string }; Update: Partial<ScriptWorkflowAuditRunRow>; Relationships: [] };
+      ScriptWorkflowFinding: { Row: ScriptWorkflowFindingRow; Insert: Partial<ScriptWorkflowFindingRow> & { id: string; runId: string; ruleId: string; category: string; severity: string; scriptQuote: string; message: string; recommendation: string; metadata: Json }; Update: Partial<ScriptWorkflowFindingRow>; Relationships: [] };
+      ScriptLineFingerprint: { Row: ScriptLineFingerprintRow; Insert: Partial<ScriptLineFingerprintRow> & { id: string; projectId: string; scriptVersion: number; scriptModuleId: string; lineKind: string; text: string; normalizedHash: string }; Update: Partial<ScriptLineFingerprintRow>; Relationships: [] };
       ScriptVersion: { Row: ScriptVersionRow; Insert: Partial<ScriptVersionRow> & { id: string; projectId: string; version: number; document: Json; origin: string; changeSummary: string; createdByUserId: string }; Update: Partial<ScriptVersionRow>; Relationships: [] };
       ScriptAssignment: { Row: ScriptAssignmentRow; Insert: Partial<ScriptAssignmentRow> & { id: string; projectId: string; status: string }; Update: Partial<ScriptAssignmentRow>; Relationships: [] };
       ScriptSource: { Row: ScriptSourceRow; Insert: Partial<ScriptSourceRow> & { id: string; projectId: string; sourceType: string; title: string }; Update: Partial<ScriptSourceRow>; Relationships: [] };
@@ -1057,6 +1134,10 @@ export type Database = {
       match_verbatims: {
         Args: { query_embedding: string; match_count?: number; filter_sub_avatar_id?: string | null; filter_angle_slug?: string | null; filter_market?: string | null };
         Returns: Array<Pick<VerbatimRow, "id" | "text" | "sourceUrl"> & { similarity: number }>;
+      };
+      match_script_lines: {
+        Args: { query_embedding: string; match_count?: number; exclude_project_id?: string | null };
+        Returns: Array<Pick<ScriptLineFingerprintRow, "id" | "projectId" | "scriptVersion" | "scriptModuleId" | "lineKind" | "text"> & { similarity: number }>;
       };
     };
     Enums: Record<string, never>;
