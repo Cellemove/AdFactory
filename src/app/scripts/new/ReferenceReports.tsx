@@ -25,6 +25,7 @@ export function ReferenceReports({ report, draft, setDraft, saved, busy, save, s
     <p className="whitespace-pre-wrap text-sm"><strong>Creative implication:</strong> {item.creative_implication}</p>
   </article>;
   return <>
+    {!saved && tab !== "framework" && <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-900" role="status">This analysis is not in your Reference Framework list yet. Review the reports, then <button type="button" className="font-semibold underline" onClick={() => setTab("framework")}>save it as a framework</button> to use it in Script Studio.</p>}
     <div className="flex flex-wrap gap-2" role="tablist" aria-label="Analysis reports">{["deconstruction", "script", "framework"].map(value => <button type="button" role="tab" aria-selected={tab === value} aria-controls={`reference-${value}`} key={value} className={`btn ${tab === value ? "btn-primary" : ""}`} onClick={() => setTab(value)}>{value === "deconstruction" ? "Deconstruction" : value === "script" ? "Frame-by-frame Script" : "Reusable Framework"}</button>)}</div>
     {tab === "deconstruction" && <div role="tabpanel" id="reference-deconstruction" className="space-y-5">
       <div className="flex flex-wrap gap-2"><button type="button" className="btn" onClick={() => void copy(reportMarkdown(report))}>Copy deconstruction</button><button type="button" className="btn" onClick={() => download(reportMarkdown(report), "ad-deconstruction.md", "text/markdown;charset=utf-8")}>Download Markdown</button></div>
