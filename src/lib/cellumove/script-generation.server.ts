@@ -1,4 +1,5 @@
 import "server-only";
+import { ReferenceStrategySchema, REFERENCE_ANALYSIS_VERSION } from "./reference-analysis";
 
 import {
   extractJsonObject,
@@ -625,6 +626,10 @@ export async function generateResourceGroundedScript(input: {
       description: input.framework.description,
       beats: safeJson(input.framework.beats),
       bestForAngle: input.framework.bestForAngle,
+      referenceAnalysisId: input.framework.referenceAnalysisId ?? null,
+      analysisVersion: input.framework.referenceAnalysisId ? REFERENCE_ANALYSIS_VERSION : null,
+      transferableStrategy: ReferenceStrategySchema.safeParse(input.framework.strategy).success
+        ? ReferenceStrategySchema.parse(input.framework.strategy) : null,
       exampleScripts: (safeJson(input.framework.exampleScripts) as unknown[] | null)?.slice?.(0, 3) ?? [],
     } : null,
     moduleEvidence: {

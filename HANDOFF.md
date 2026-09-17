@@ -1,3 +1,26 @@
+# Handoff — Reference ad deep-dive (branch `New-workflow-Codex`, 2026-09-17)
+
+**Script Studio → Analyze a reference ad**: upload / YouTube / ad URL → Teardown2 `reference_deep_dive_v1`
+→ review drawer (Deconstruction · Frame-by-frame Script · Reusable Framework) → *Save and use framework*.
+Code-complete and uncommitted in **two repos**: this one and `../Teardown2` (branch `Kamino`).
+
+- AdFactory: `src/app/api/reference-analyses/`, `src/lib/cellumove/reference-*.ts`,
+  `src/app/scripts/new/{InlineFrameworkExtractor,ReferenceReports}.tsx`, `migrations/024_reference_analysis.sql`.
+  Approved strategy reaches initial generation, regeneration and batch through `generateResourceGroundedScript`
+  and is snapshotted with the script sources.
+- Teardown2: `backend/app/{api,domain,services,prompts}/reference_analysis.py`,
+  `backend/app/integrations/reference_{media,repository}.py`, `supabase/migrations/005_reference_analyses.sql`.
+- Verified locally: typecheck, lint, `npm run test:reference-analysis`, `npm run build`; Teardown2 pytest 73 passed (91.7%).
+- **Not done — needs production access:** rollout steps in `../Teardown2/docs/deployment.md`
+  ("Reference deep-dive analysis"): both migrations, API image rebuild (ffprobe), bucket CORS + lifecycle,
+  token-creator role for keyless playback, `REFERENCE_ANALYSIS_ENABLED=true`. Then the credentialed end-to-end run
+  and the report-quality evaluation (testimonial, demo, rapid-cut, silent, non-English ads). The UI stays disabled
+  until `/api/reference-analyses/capabilities` succeeds, so shipping this repo first is safe.
+
+Everything below this line is the older research-pipeline handoff.
+
+---
+
 # Handoff — CelluMove Ad Factory
 
 **Branch:** `phase-2`
