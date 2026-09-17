@@ -3,11 +3,13 @@ import { KnowledgeClient } from "./KnowledgeClient";
 import { SopFoundationClient } from "./SopFoundationClient";
 import Link from "next/link";
 import { isBrandSearchConfigured } from "@/lib/brandsearch.server";
+import { ScriptPlaybookManager } from "./ScriptPlaybookManager";
+import type { ScriptPlaybookVersionRow } from "@/lib/database.types";
 
 export const dynamic = "force-dynamic";
 
 export default async function KnowledgePage() {
-  const [notesRes, principlesRes, sopsRes, formatsRes, marketsRes, competitorAdsRes] = await Promise.all([
+  const [notesRes, principlesRes, sopsRes, formatsRes, marketsRes, competitorAdsRes, playbooksRes] = await Promise.all([
     supabase
       .from("KnowledgeNote")
       .select("*")
@@ -24,6 +26,7 @@ export default async function KnowledgePage() {
     supabase.from("ReferenceFormat").select("*").order("order", { ascending: true }),
     supabase.from("MarketProfile").select("*").order("order", { ascending: true }),
     supabase.from("CompetitorAd").select("id, winnerEvidence, reviewStatus"),
+    supabase.from("ScriptPlaybookVersion").select("*").order("createdAt", { ascending: false }),
   ]);
   const notes = unwrap(notesRes);
   const principles = unwrap(principlesRes);
@@ -77,6 +80,14 @@ export default async function KnowledgePage() {
           <code>npm run seed:sop</code> to load the starter formats &amp; markets.
         </div>
       )}
+
+      <ScriptPlaybookManager
+        playbooks={(playbooksRes.error ? [] : playbooksRes.data ?? []).map((row) => {
+          const playbook = row as ScriptPlaybookVersionRow;
+          return { id: playbook.id, version: playbook.version, title: playbook.title, status: playbook.status, promptInstructions: playbook.promptInstructions, config: playbook.config, sourceHash: playbook.sourceHash, publishedAt: playbook.publishedAt, updatedAt: playbook.updatedAt };
+        })}
+        setupError={playbooksRes.error ? `Apply migrations/022_script_creative_workflow.sql to manage playbooks. ${playbooksRes.error.message}` : null}
+      />
 
       <SopFoundationClient
         sops={sops.map((s) => ({

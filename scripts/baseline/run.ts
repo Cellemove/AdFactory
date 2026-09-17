@@ -935,6 +935,10 @@ async function executePipeline(flags: Flags): Promise<{ projectId: string | null
       if (!product || !angle || !framework) throw new Error("Missing creative resources.");
       const actor = await requireStrategist();
       const targetDurationSec = flags.duration ?? framework.optimalDurationSec ?? 30;
+      const playbookResult = await supabase.from("ScriptPlaybookVersion").select("id").eq("status", "published").limit(1).maybeSingle();
+      if (playbookResult.error || !playbookResult.data) {
+        throw new Error(playbookResult.error?.message ?? "No published Script Studio playbook is configured.");
+      }
 
       const events: TimedProgressEvent[] = [];
       const started = performance.now();
@@ -955,6 +959,15 @@ async function executePipeline(flags: Flags): Promise<{ projectId: string | null
           editorUserId: null,
           format: flags.format,
           targetDurationSec,
+          conceptLabel: flags.idea,
+          hookDirection: null,
+          marketCode: "PH",
+          heatLevel: 3,
+          funnelStage: "MOFU",
+          voicePlan: "Standard UGC",
+          offerId: null,
+          referenceMode: "structure_beats",
+          playbookVersionId: playbookResult.data.id,
         },
         {
           actor,
