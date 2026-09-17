@@ -34,7 +34,7 @@ type Props = {
   angles: Array<Option & { slug: string }>;
   avatars: Array<Option & { angleId: string }>;
   pipelineRuns: Array<Option & { subAvatarId: string; angleId: string }>;
-  frameworks: Array<Option & { duration: number | null; extracted: boolean }>;
+  frameworks: Array<Option & { duration: number | null; extracted: boolean; referenceAnalysisId?: string | null }>;
   strategists: Option[];
   editors: Option[];
   teardowns: Option[];
@@ -479,7 +479,7 @@ export function ScriptProjectForm(props: Props) {
                 </optgroup>
               )}
             </select>
-            <InlineFrameworkExtractor onCreated={handleFrameworkCreated} />
+            <InlineFrameworkExtractor onCreated={handleFrameworkCreated} selectedAnalysisId={frameworkOptions.find(item => item.id === form.referenceFormatId)?.referenceAnalysisId} />
             <div className="mt-3"><label className="label">Reference use</label><select className="input" value={form.referenceMode} onChange={(event) => setForm({ ...form, referenceMode: event.target.value })}><option value="structure_beats">Structure and beats only</option><option value="full_style">Structure plus pacing and style</option></select><p className="mt-1 text-xs text-ink-500">Neither mode permits copied lines, figures, offers, or unsupported claims.</p></div>
           </div>
           <div><label className="label">Production format</label><select className="input" value={form.format} onChange={(event) => setForm({ ...form, format: event.target.value })}>{props.formats.map((item) => <option key={item}>{item}</option>)}</select></div>

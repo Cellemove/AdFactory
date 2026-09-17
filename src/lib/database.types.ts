@@ -7,6 +7,12 @@
 
 export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
 
+export type ReferenceAnalysisRow = {
+  id: string; createdByUserId: string; source: Json; nameOverride: string; teardownJobId: string;
+  status: string; stage: string; version: string; result: Json | null; error: string | null;
+  referenceFormatId: string | null; createdAt: string; updatedAt: string;
+};
+
 export type AngleRow = {
   id: string;
   slug: string;
@@ -291,6 +297,8 @@ export type SopRow = {
 // from the visual Big-Swing formats in formats.ts. `beats` is the timed skeleton
 // the Script Generator (Module 5) fills in.
 export type ReferenceFormatRow = {
+  referenceAnalysisId?: string | null;
+  strategy?: Json | null;
   id: string;
   slug: string;
   name: string;
@@ -1061,6 +1069,7 @@ export type UsageRow = {
 export type Database = {
   public: {
     Tables: {
+      ReferenceAnalysis: { Row: ReferenceAnalysisRow; Insert: Partial<ReferenceAnalysisRow> & { id: string; createdByUserId: string; source: Json; teardownJobId: string }; Update: Partial<ReferenceAnalysisRow>; Relationships: [] };
       Angle: { Row: AngleRow; Insert: Partial<AngleRow> & { slug: string; name: string; requiredKeyword: string; mechanism: string; bannedMechanism: string; silhouette: string; colorway: string }; Update: Partial<AngleRow>; Relationships: [] };
       SubAvatar: { Row: SubAvatarRow; Insert: Partial<SubAvatarRow> & { angleId: string; slug: string; name: string }; Update: Partial<SubAvatarRow>; Relationships: [{ foreignKeyName: "SubAvatar_angleId_fkey"; columns: ["angleId"]; isOneToOne: false; referencedRelation: "Angle"; referencedColumns: ["id"] }] };
       AvatarResearch: { Row: AvatarResearchRow; Insert: Partial<AvatarResearchRow> & { subAvatarId: string; painPoints: string; desires: string; objections: string; dailyLanguage: string; triggers: string; identity: string; socialProof: string; buyingContext: string }; Update: Partial<AvatarResearchRow>; Relationships: [{ foreignKeyName: "AvatarResearch_subAvatarId_fkey"; columns: ["subAvatarId"]; isOneToOne: true; referencedRelation: "SubAvatar"; referencedColumns: ["id"] }] };
@@ -1127,6 +1136,10 @@ export type Database = {
       CorpusAdState: { Row: CorpusAdStateRow; Relationships: [] };
     };
     Functions: {
+      save_reference_framework: {
+        Args: { analysis_id: string; actor_id: string; draft: Json };
+        Returns: Json;
+      };
       match_research_evidence: {
         Args: { query_embedding: string; match_count?: number; filter_angle_slug?: string | null; filter_category?: string | null };
         Returns: Array<Pick<ResearchEvidenceRow, "id" | "researchId" | "draftKey" | "category" | "text" | "sourceUrl" | "verificationStatus"> & { similarity: number }>;
