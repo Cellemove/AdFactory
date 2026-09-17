@@ -23,7 +23,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           {session && <Nav username={session.username} role={session.role} />}
           <main className={session ? "mx-auto w-full max-w-7xl flex-1 px-4 py-8 sm:px-6" : "flex-1"}>{children}</main>
           <footer className="border-t border-ink-200/60 py-4 text-center text-xs text-ink-400">
-            AdFactory · prompts-only · Image gen lands in Phase 5
+            AdFactory
           </footer>
         </div>
       </body>

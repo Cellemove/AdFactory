@@ -17,6 +17,7 @@ const PRIMARY: NavLink[] = [
   { href: "/products", label: "Products" },
   { href: "/spy", label: "Spy" },
   { href: "/bank", label: "Idea Bank" },
+  { href: "/image-ads", label: "AI Ads Image Bank" },
   { href: "/verbatims", label: "Verbatims" },
   { href: "/knowledge", label: "Knowledge" },
   { href: "/avatars", label: "Avatars" },
