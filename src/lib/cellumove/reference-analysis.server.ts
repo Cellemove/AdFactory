@@ -19,6 +19,8 @@ export async function referenceRequest(path: string, body?: unknown): Promise<un
   if (!response.ok) {
     const payload = await response.json().catch(() => ({})) as { detail?: unknown; message?: unknown };
     const message = typeof payload.detail === "string" ? payload.detail : typeof payload.message === "string" ? payload.message : "The analysis service is unavailable. Please try again.";
+    // FastAPI answers a missing route with exactly "Not Found": the backend predates this feature.
+    if (response.status === 404 && message === "Not Found") throw new ReferenceRequestError("The Teardown service has not been updated with reference analysis yet. Deploy the new Teardown2 backend and enable REFERENCE_ANALYSIS_ENABLED.", 503);
     throw new ReferenceRequestError(message, response.status === 404 ? 503 : response.status);
   }
   return response.json();
