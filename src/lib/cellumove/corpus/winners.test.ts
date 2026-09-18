@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { balancedTrim, brandsToExtend, fairShare, winnerCutoff } from "./winners";
+import { balancedTrim, brandsToExtend, fairShare, launchedWithin, pickNew, winnerCutoff } from "./winners";
 
 test("the cutoff is today minus the minimum run, as a UTC date", () => {
   assert.equal(winnerCutoff(Date.parse("2026-09-11T20:00:00Z"), 21), "2026-08-21");
@@ -34,4 +34,29 @@ test("trimming drops the lowest-spend ad from the biggest brand first", () => {
   assert.deepEqual(Object.fromEntries(trimmed), { a: [90, 80], b: [50, 40], c: [100, 5] });
   assert.deepEqual(pool.get("a"), [90, 80, 70, 60], "input is not mutated");
   assert.equal([...balancedTrim(pool, 100, (spend) => spend).values()].flat().length, 9);
+});
+
+test("recent launch window includes UTC dates 7 through 30 and rejects missing or invalid dates", () => {
+  const now = Date.parse("2026-09-18T12:30:00Z");
+  for (const [date, expected] of [["2026-09-12", false], ["2026-09-11T23:59:59Z", true], ["2026-08-19T00:00:00Z", true], ["2026-08-18", false], [null, false], ["invalid", false], ["2026-09-19", false]] as const) {
+    assert.equal(launchedWithin(date, now, 7, 30), expected, String(date));
+  }
+});
+
+test("new picks exclude all previous work, balance and interleave without mutating inputs", () => {
+  const pool = new Map([["a", [100, 90, 80, 70]], ["b", [60, 50, 40]], ["c", [30, 20]]]);
+  const before = structuredClone(pool);
+  const done = new Set(["100", "50"]);
+  const picked = pickNew(pool, done, 6, String, Number);
+  assert.deepEqual(picked, [90, 60, 30, 80, 40, 20]);
+  assert.deepEqual(pool, before);
+  assert.deepEqual([...done], ["100", "50"]);
+  assert.deepEqual(pickNew(pool, done, 0, String, Number), []);
+  assert.equal(pickNew(pool, done, 100, String, Number).length, 7);
+});
+
+test("new picks deduplicate across brands and prefer spend within a brand", () => {
+  const pool = new Map([["a", [2, 4, 4]], ["b", [4, 3]], ["empty", []]]);
+  assert.deepEqual(pickNew(pool, new Set(), 2, String, Number), [4, 3]);
+  assert.deepEqual(pickNew(pool, new Set(["2", "3", "4"]), 2, String, Number), []);
 });

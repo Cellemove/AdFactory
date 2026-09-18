@@ -111,6 +111,7 @@ export async function importBrandSearchMetaAds(input: {
     if (indexed.error.code === TABLE_MISSING) durableIndexUpdated = false;
     else throw new Error(`Could not index BrandSearch ads: ${indexed.error.message}`);
   }
+  if (durableIndexUpdated) ads.forEach((ad, index) => { ad.competitorAdId = rows[index]!.id; });
 
   const id = newId();
   const research = await supabase.from("Research").insert({

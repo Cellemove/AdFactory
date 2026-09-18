@@ -1,0 +1,3 @@
+{
+  "crons": [{ "path": "/api/cron/recent-winners", "schedule": "0 4 * * *" }]
+}

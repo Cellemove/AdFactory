@@ -8,6 +8,36 @@
 export const WINNER_RULE_VERSION = "winners-v1";
 export const WINNER_DEFAULT_TARGET = 100;
 export const WINNER_DEFAULT_MIN_DAYS = 21;
+export const RECENT_MIN_DAYS = 7;
+export const RECENT_MAX_DAYS = 30;
+export const RECENT_DAILY_CAP = 10;
+export const RECENT_POOL_FACTOR = 4;
+
+/** Inclusive UTC launch dates, matching BrandSearch's date filters. */
+export function launchedWithin(startedAt: string | null, now: number, minDays: number, maxDays: number): boolean {
+  if (!startedAt || !Number.isFinite(Date.parse(startedAt))) return false;
+  // Provider timestamps omit the zone; its launch-date filters use UTC.
+  const utc = /T/.test(startedAt) && !/(Z|[+-]\d{2}:?\d{2})$/i.test(startedAt) ? `${startedAt}Z` : startedAt;
+  const date = new Date(utc).toISOString().slice(0, 10);
+  return date >= winnerCutoff(now, maxDays) && date <= winnerCutoff(now, minDays);
+}
+
+/** Exclude previous work, balance by brand, then interleave so a time budget stays fair. */
+export function pickNew<T>(picked: Map<string, T[]>, done: Set<string>, cap: number, idOf: (item: T) => string, spend: (item: T) => number): T[] {
+  const seen = new Set(done);
+  const fresh = new Map([...picked].map(([brand, items]) => [brand, items.filter((item) => {
+    const id = idOf(item);
+    if (seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  }).sort((a, b) => spend(b) - spend(a))]));
+  const balanced = [...balancedTrim(fresh, Math.max(0, cap), spend).values()];
+  const out: T[] = [];
+  for (let index = 0; balanced.some((items) => index < items.length); index += 1) {
+    for (const items of balanced) if (index < items.length) out.push(items[index]!);
+  }
+  return out;
+}
 
 export function winnerRuleLabel(minDays: number): string {
   return `Video still running ${minDays}+ days after launch, highest EU spend first, spread evenly across competitors`;
