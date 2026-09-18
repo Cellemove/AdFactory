@@ -89,6 +89,10 @@ export function CandidateGallery({
   // Sequential on purpose: Next.js serializes server actions from one client, so
   // parallel calls would queue anyway, and one slot at a time keeps the progress
   // readout honest and the stop button responsive.
+  //
+  // A failed slot never stops the run. Failures get one automatic second pass at
+  // the end; only three failures in a row — the signature of an outage, not of a
+  // bad concept — halt it early so an outage cannot burn through the whole batch.
   const generate = async (slots: number[], force = false) => {
     if (!slots.length || busy) return;
     setError(null);
@@ -98,28 +102,67 @@ export function CandidateGallery({
     setQueueSize(slots.length);
     setQueueDone(0);
     setRunning(true);
-    let failures = 0;
-    for (const slot of slots) {
-      if (stopRef.current) break;
+
+    let consecutiveFailures = 0;
+    let halted = false;
+    const renderSlot = async (slot: number): Promise<boolean> => {
       setBusySlot(slot);
+      let failure: string | null = null;
       try {
         const result = await generateImageAdCandidate(batchId, slot, force ? { force: true } : undefined);
-        if (!result.ok) {
-          setError(result.error);
+        if (result.ok) {
+          onCandidatesChange((current) => current.map((item) => item.slot === slot ? result.candidate : item));
+          if (result.candidate.status === "ready" && !result.candidate.error) return true;
+          failure = result.candidate.error ?? "Rendering failed.";
+        } else {
+          failure = result.error;
+        }
+      } catch {
+        failure = "Lost connection to the server.";
+      }
+      // The server could not record this one itself, so reflect it locally.
+      onCandidatesChange((current) => current.map((item) =>
+        item.slot === slot && item.status !== "ready" ? { ...item, status: "failed", error: failure } : item));
+      return false;
+    };
+
+    const failed: number[] = [];
+    for (const slot of slots) {
+      if (stopRef.current) break;
+      if (await renderSlot(slot)) {
+        consecutiveFailures = 0;
+      } else {
+        failed.push(slot);
+        consecutiveFailures += 1;
+        if (consecutiveFailures >= 3) {
+          halted = true;
           break;
         }
-        if (result.candidate.status === "failed") failures += 1;
-        onCandidatesChange((current) => current.map((item) => item.slot === slot ? result.candidate : item));
-      } catch {
-        setError("Lost connection to the server. Finished images are saved — generate again to continue.");
-        break;
       }
       setQueueDone((done) => done + 1);
     }
+
+    let stillFailed = failed.length;
+    if (failed.length && !halted && !stopRef.current && slots.length > 1) {
+      setQueueSize(failed.length);
+      setQueueDone(0);
+      stillFailed = 0;
+      for (const slot of failed) {
+        if (stopRef.current) break;
+        if (!(await renderSlot(slot))) stillFailed += 1;
+        setQueueDone((done) => done + 1);
+      }
+    }
+
     setBusySlot(null);
     setRunning(false);
-    if (stopRef.current) setNotice("Stopped. Finished images are saved — generate again to pick up where you left off.");
-    else if (failures) setNotice(`${failures} image${failures === 1 ? "" : "s"} failed. The reason is on each card — retry them when ready.`);
+    if (halted) {
+      setError("Three images failed in a row, so the run was paused — the image service is probably having trouble. Finished images are saved. Wait a minute, then generate again to continue.");
+    } else if (stopRef.current) {
+      setNotice("Stopped. Finished images are saved — generate again to pick up where you left off.");
+    } else if (stillFailed) {
+      setNotice(`${stillFailed} image${stillFailed === 1 ? "" : "s"} still failed after a second try. Open the card to see why, then retry or skip it.`);
+    }
   };
 
   const remainingSeconds = Math.max((queueSize - queueDone) * (queueDone > 0 ? runElapsed / queueDone : secondsPerImage), 0);

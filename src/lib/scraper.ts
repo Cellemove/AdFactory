@@ -1,7 +1,7 @@
 // Proxy-capable web scraper — an "old-fashioned" fetch + readable-text extractor
 // for sources without a clean API (Quora, Mumsnet/Netmums, patient forums, TikTok
-// captions, brand communities). Uses undici's ProxyAgent (already a dependency of
-// Next) so requests can egress through a rotating proxy pool — no new package.
+// captions, brand communities). Uses undici's ProxyAgent so requests can egress
+// through a rotating proxy pool.
 //
 // Configure proxies in .env (http/https only — undici doesn't do SOCKS):
 //   SCRAPER_PROXIES="http://user:pass@host:port, http://user:pass@host2:port"

@@ -19,6 +19,17 @@ export const IMAGE_AD_FORMATS = [
 ] as const;
 export const DEFAULT_IMAGE_AD_FORMAT = "4:5";
 
+// Delivery size per format. Renders are fitted to exactly this before saving.
+const IMAGE_AD_EXPORT_SIZES: Record<string, { width: number; height: number }> = {
+  "4:5": { width: 1080, height: 1350 },
+  "1:1": { width: 1080, height: 1080 },
+  "9:16": { width: 1080, height: 1920 },
+};
+
+export function imageAdExportSize(format: string): { width: number; height: number } {
+  return IMAGE_AD_EXPORT_SIZES[format] ?? IMAGE_AD_EXPORT_SIZES[DEFAULT_IMAGE_AD_FORMAT]!;
+}
+
 export interface ImageAdBatchDoc {
   subAvatarId: string;
   angleSlug: string;

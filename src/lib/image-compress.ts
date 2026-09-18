@@ -37,7 +37,10 @@ export async function finalizeAdImage(
       .png({ palette: true, colours: 256, dither: 1, effort: 10, compressionLevel: 9 })
       .toBuffer();
     return { bytes, width, height };
-  } catch {
+  } catch (reason) {
+    // Never fail a paid render over file size — but say so, because a silent
+    // fallback ships 5MB truecolour PNGs that look fine until someone checks.
+    console.error("[image-compress] falling back to the uncompressed render:", reason);
     return null;
   }
 }

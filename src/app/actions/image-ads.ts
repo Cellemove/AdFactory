@@ -8,12 +8,14 @@ import { getLLM, DEFAULT_MODEL, FAST_MODEL } from "@/lib/llm";
 import { recordUsage } from "@/lib/usage";
 import { requireStrategist } from "@/lib/authorization";
 import { readStoredImage, saveImage, storedImageExists } from "@/lib/storage";
+import { finalizeAdImage } from "@/lib/image-compress";
 import { probeImage } from "@/lib/image-probe";
 import { extractJsonObject } from "@/lib/cellumove/agents";
 import { scanClaims } from "@/lib/cellumove/claim-check";
 import { ALLOWED_CTAS, BANNED_WORDS } from "@/lib/cellumove/constants";
 import {
   IMAGE_AD_BATCH_TYPE,
+  imageAdExportSize,
   imageAdModelProfile,
   normalizeFormat,
   normalizeTargetCount,
@@ -58,7 +60,7 @@ const isTransient = (message: string) => RATE_LIMITED.test(message) || PROVIDER_
 // Rate limits and brief outages are routine on a shared model endpoint. Retry a
 // few times with backoff before bothering the strategist about it.
 async function withRetry<T>(run: () => Promise<T>): Promise<T> {
-  const delays = [2000, 6000, 15000];
+  const delays = [4000, 12000, 30000];
   for (let attempt = 0; ; attempt += 1) {
     try {
       return await run();
@@ -666,7 +668,7 @@ async function patchCandidate(
 
 function renderPrompt(doc: ImageAdBatchDoc, concept: ImageAdConcept, ctx: BatchContext): string {
   return [
-    `Create a finished ${doc.format} static advertising image, ${doc.format === "4:5" ? "1080 x 1350" : doc.format === "1:1" ? "1080 x 1080" : "1080 x 1920"} pixels.`,
+    `Create a finished ${doc.format} static advertising image, ${imageAdExportSize(doc.format).width} x ${imageAdExportSize(doc.format).height} pixels. Keep the headline and CTA clear of the outer edges.`,
     ctx.product ? `Product: ${ctx.product.name}.${ctx.product.imagePath ? " The attached image is the exact product — match it faithfully." : ""}` : "",
     "",
     "VISUAL BRIEF:",
@@ -720,50 +722,78 @@ async function generateImageAdCandidateImpl(
     parts.push({ text: renderPrompt(doc, existing.concept, ctx) });
 
     const profile = imageAdModelProfile();
-    const response = await withRetry(() => getLLM().models.generateContent({
-      model: profile.model,
-      contents: [{ role: "user", parts }],
-      config: {
-        responseModalities: ["IMAGE"],
-        imageConfig: {
-          aspectRatio: doc.format,
-          ...(profile.imageSize ? { imageSize: profile.imageSize } : {}),
+    // The model occasionally answers with no image, or one that does not decode.
+    // That is a coin-flip, not a verdict on the concept, so ask once more before
+    // calling the slot failed. Provider errors have their own retry in withRetry.
+    let rendered: { bytes: Buffer; width: number; height: number; format: string } | null = null;
+    let lastProblem = "";
+    for (let attempt = 0; attempt < 2 && !rendered; attempt += 1) {
+      const response = await withRetry(() => getLLM().models.generateContent({
+        model: profile.model,
+        contents: [{ role: "user", parts }],
+        config: {
+          responseModalities: ["IMAGE"],
+          imageConfig: {
+            aspectRatio: doc.format,
+            ...(profile.imageSize ? { imageSize: profile.imageSize } : {}),
+          },
         },
-      },
-    }));
-    await recordUsage({
-      feature: "image_ad_generation",
-      model: profile.model,
-      usage: response.usageMetadata,
-      costUsdOverride: profile.costUsd,
-      metadata: { batchId, slot, imageSize: profile.imageSize ?? "default" },
-    });
+      }));
+      await recordUsage({
+        feature: "image_ad_generation",
+        model: profile.model,
+        usage: response.usageMetadata,
+        costUsdOverride: profile.costUsd,
+        metadata: { batchId, slot, attempt, imageSize: profile.imageSize ?? "default" },
+      });
 
-    const imagePart = response.candidates?.[0]?.content?.parts?.find((part) => part.inlineData?.data);
-    if (!imagePart?.inlineData?.data) {
-      const text = response.text?.trim();
-      throw new Error(`The image model returned no image${text ? `: ${trim(text, 200)}` : ". Check that this project can call the image model."}`);
+      const imagePart = response.candidates?.[0]?.content?.parts?.find((part) => part.inlineData?.data);
+      if (!imagePart?.inlineData?.data) {
+        const finish = response.candidates?.[0]?.finishReason;
+        const text = response.text?.trim();
+        lastProblem = `The image model returned no image${finish && finish !== "STOP" ? ` (${finish})` : ""}${text ? `: ${trim(text, 200)}` : "."}`;
+        continue;
+      }
+      const bytes = Buffer.from(imagePart.inlineData.data, "base64");
+      const probe = probeImage(bytes);
+      if (!probe) {
+        lastProblem = "The generated file did not decode as a usable image.";
+        continue;
+      }
+      if (Math.min(probe.width, probe.height) < MIN_GENERATED_SHORT_SIDE) {
+        lastProblem = `The generated image is only ${probe.width}×${probe.height} — below the ${MIN_GENERATED_SHORT_SIDE}px minimum.`;
+        continue;
+      }
+      rendered = { bytes, width: probe.width, height: probe.height, format: probe.format };
     }
-    const bytes = Buffer.from(imagePart.inlineData.data, "base64");
-    const probe = probeImage(bytes);
-    if (!probe) throw new Error("The generated file did not decode as a usable image.");
-    if (Math.min(probe.width, probe.height) < MIN_GENERATED_SHORT_SIDE) {
-      throw new Error(`The generated image is only ${probe.width}×${probe.height} — below the ${MIN_GENERATED_SHORT_SIDE}px minimum.`);
-    }
+    if (!rendered) throw new Error(lastProblem || "The image model returned no image.");
+
+    // Fit to the exact delivery size and apply the house PNG compression. If that
+    // step cannot run, keep the full render: a large file beats a failed slot.
+    const finalized = await finalizeAdImage(rendered.bytes, imageAdExportSize(doc.format));
+    const output = finalized
+      ? { bytes: finalized.bytes, width: finalized.width, height: finalized.height, extension: "png", contentType: "image/png" }
+      : {
+          bytes: rendered.bytes,
+          width: rendered.width,
+          height: rendered.height,
+          extension: rendered.format === "jpeg" ? "jpg" : rendered.format,
+          contentType: `image/${rendered.format}`,
+        };
 
     const saved = await saveImage({
       prefix: "image-ad-candidates",
-      filename: `${batchId}-${String(slot).padStart(2, "0")}-${randomUUID()}.${probe.format === "jpeg" ? "jpg" : probe.format}`,
-      bytes,
-      contentType: `image/${probe.format}`,
+      filename: `${batchId}-${String(slot).padStart(2, "0")}-${randomUUID()}.${output.extension}`,
+      bytes: output.bytes,
+      contentType: output.contentType,
     });
 
     const candidate = await patchCandidate(batchId, slot, (current) => ({
       ...current,
       status: "ready",
       imageUrl: saved.url,
-      width: probe.width,
-      height: probe.height,
+      width: output.width,
+      height: output.height,
       error: null,
       generatedAt: new Date().toISOString(),
     }));
@@ -772,9 +802,10 @@ async function generateImageAdCandidateImpl(
     // Persist the failure instead of throwing: one bad slot must not stop the
     // batch, and the saved message is what the retry button acts on.
     const message = friendlyError(reason);
+    // A failed *re*generate keeps the image the slot already had.
     const candidate = await patchCandidate(batchId, slot, (current) => ({
       ...current,
-      status: "failed",
+      status: current.imageUrl ? "ready" : "failed",
       error: trim(message, 300),
     }));
     return { candidate };

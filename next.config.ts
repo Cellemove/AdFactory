@@ -2,8 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
-  // pdf.js (Milanote PDF import) must be loaded at runtime rather than bundled.
-  serverExternalPackages: ["pdfjs-dist"],
+  // Native/runtime-loaded packages the server bundler must not touch: pdf.js
+  // (Milanote PDF import) and sharp, whose native binding breaks if bundled —
+  // which silently disables ad-image compression.
+  serverExternalPackages: ["pdfjs-dist", "sharp"],
   // Guarantee pdf.js's worker is packaged with the Milanote import function on
   // Vercel even though pdf.js itself only references it dynamically.
   outputFileTracingIncludes: {
