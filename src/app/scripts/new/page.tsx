@@ -125,7 +125,7 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
         angles={angles.map((item) => ({ id: item.id, slug: item.slug, name: item.name }))}
         avatars={avatars.map((item) => ({ id: item.id, angleId: item.angleId, name: item.name }))}
         pipelineRuns={pipelineRuns}
-        frameworks={frameworks.map((item) => ({ id: item.id, name: item.name, duration: item.optimalDurationSec, extracted: Boolean(item.sourceKind) }))}
+        frameworks={frameworks.map((item) => ({ id: item.id, name: item.name, duration: item.optimalDurationSec, extracted: Boolean(item.sourceKind), referenceAnalysisId: item.referenceAnalysisId }))}
         strategists={users.filter((item) => item.role === "creative_strategist").map((item) => ({ id: item.id, name: item.username }))}
         editors={users.filter((item) => item.role === "editor").map((item) => ({ id: item.id, name: item.username }))}
         teardowns={teardowns.map((item) => ({
