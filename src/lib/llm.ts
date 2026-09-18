@@ -52,7 +52,9 @@ export function getLLM(): GoogleGenAI {
       vertexai: true,
       project,
       location,
-      ...(inline ? { googleAuthOptions: { credentials: inline } } : {}),
+      // Pro returns 429 in bursts; batch comparison now runs variants concurrently.
+      httpOptions: { retryOptions: { attempts: 4 } },
+      ...(inline ?{ googleAuthOptions: { credentials: inline } } : {}),
     });
   }
   return client;

@@ -18,7 +18,9 @@ import {
   mergeScriptDraftCorrection,
   planScriptDraftCorrection,
   SCRIPT_DRAFT_CORRECTION_INSTRUCTION,
+  SCRIPT_DRAFT_CORRECTION_RESPONSE_JSON_SCHEMA,
   SCRIPT_DRAFT_PROMPT_VERSION,
+  SCRIPT_DRAFT_RESPONSE_JSON_SCHEMA,
   SCRIPT_DRAFT_SYSTEM_INSTRUCTION,
   type ScriptGenerationSourceRef,
 } from "@/lib/cellumove/script-generation";
@@ -777,8 +779,13 @@ export async function generateResourceGroundedScript(input: {
           ? buildScriptCorrectionContext({ scaffold, idea: input.idea, resources, allowedBrollClipIds: [], plan: correctionPlan! })
           : buildScriptGenerationContext({ scaffold, idea: input.idea, resources, allowedBrollClipIds: [] }),
         json: true,
+        responseJsonSchema: isTargetedCorrection ? SCRIPT_DRAFT_CORRECTION_RESPONSE_JSON_SCHEMA : SCRIPT_DRAFT_RESPONSE_JSON_SCHEMA,
         feature: "script_studio_draft",
-        metadata: { promptVersion: SCRIPT_DRAFT_PROMPT_VERSION, attempt, resourceCounts, correctionModuleIds: correctionPlan?.moduleIds },
+        metadata: {
+          promptVersion: SCRIPT_DRAFT_PROMPT_VERSION, attempt, resourceCounts, correctionModuleIds: correctionPlan?.moduleIds,
+          // Why the previous attempt was rejected — so retries are diagnosable from Usage.
+          retryReason: lastError ? truncate(lastError instanceof Error ? lastError.message : String(lastError), 300) : undefined,
+        },
         maxOutputTokens: 16384,
         thinkingBudget: 3072,
       });

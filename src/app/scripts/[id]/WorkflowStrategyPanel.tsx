@@ -50,18 +50,23 @@ export function WorkflowStrategyPanel({
 
   useEffect(() => {
     let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     setPending("load");
-    fetch(`/api/scripts/${encodeURIComponent(projectId)}/workflow-audits/latest`)
+    // The first audit runs in the background after generation, so a fresh script
+    // can open before its run exists or finishes — poll briefly (≤ 90s) until it lands.
+    const load = (triesLeft: number) => fetch(`/api/scripts/${encodeURIComponent(projectId)}/workflow-audits/latest`)
       .then(async (response) => {
         const body = await response.json() as AuditResult & { error?: string };
         if (!response.ok) throw new Error(body.error || "The Workflow audit could not be loaded.");
         if (!active) return;
         setResult(body);
         if (body.run?.revision === revision) auditedDocumentRef.current = JSON.stringify(document);
+        if ((!body.run || body.run.status === "running") && triesLeft > 0) timer = setTimeout(() => void load(triesLeft - 1), 5000);
       })
       .catch((caught) => active && setError(caught instanceof Error ? caught.message : String(caught)))
       .finally(() => active && setPending(null));
-    return () => { active = false; };
+    void load(18);
+    return () => { active = false; clearTimeout(timer); };
     // The latest audit is project-scoped; local edits intentionally do not refetch it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);

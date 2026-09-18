@@ -11,6 +11,8 @@ import { AssignEditorControl } from "../AssignEditorControl";
 
 export const metadata: Metadata = { title: "Script Editor · AdFactory" };
 export const dynamic = "force-dynamic";
+// "AI fill all" is a server action on this page: one Pro draft call runs 45-90s.
+export const maxDuration = 300;
 
 export default async function ScriptDetailPage({ params }: { params: Promise<{ id: string }> }) {
   await requireStrategist();

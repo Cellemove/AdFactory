@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { AD_STAGES } from "@/lib/cellumove/corpus/queue";
-import { runAdStep, runMine, runPlaybook, runScore, runWinners, stageQueue, syncTeardowns } from "@/lib/cellumove/corpus/runner.server";
+import { deconstructAd, runAdStep, runMine, runPlaybook, runScore, runWinners, stageQueue, syncTeardowns } from "@/lib/cellumove/corpus/runner.server";
 
 export const dynamic = "force-dynamic";
 // One ad per call keeps each request far below this; collecting winners is the long one.
@@ -12,6 +12,7 @@ const adId = z.string().regex(/^[a-zA-Z0-9_-]+$/).max(80);
 const brand = z.string().trim().min(1).max(120);
 
 const RunRequestSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("deconstruct"), adId }).strict(),
   z.object({
     action: z.literal("queue"),
     stage: z.enum(AD_STAGES),
@@ -51,6 +52,8 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     switch (input.action) {
+      case "deconstruct":
+        return Response.json(await deconstructAd(input.adId));
       case "queue":
         return Response.json({ items: await stageQueue(input.stage, { brand: input.brand, limit: input.limit, force: input.force, retryReview: input.retryReview }) });
       case "step":

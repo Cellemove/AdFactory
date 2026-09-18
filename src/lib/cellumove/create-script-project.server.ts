@@ -1,6 +1,7 @@
 import "server-only";
 
 import { revalidatePath } from "next/cache";
+import { after } from "next/server";
 import { z } from "zod";
 import type { SessionUser } from "@/lib/auth";
 import {
@@ -84,7 +85,9 @@ function parseBeats(value: string): ReferenceFormatBeat[] {
 
 export async function createScriptProjectCore(
   input: CreateScriptProjectInput,
-  options: { actor: SessionUser; onProgress?: ScriptGenerationProgressSink },
+  // deferAudit: run the first Workflow audit after the response is sent (request
+  // scope only — headless callers leave it off and get the audit inline).
+  options: { actor: SessionUser; onProgress?: ScriptGenerationProgressSink; deferAudit?: boolean },
 ): Promise<{ id: string }> {
   const progress = options.onProgress;
   await reportScriptGenerationProgress(progress, {
@@ -100,14 +103,14 @@ export async function createScriptProjectCore(
     message: "Loading the selected product, angle, avatar, framework, and source records",
   });
   const [productRaw, strategistRaw, editorRaw, avatarRaw, frameworkRaw, pipelineRunRaw, spySweepRaw, offerRaw, playbook] = await Promise.all([
-    unwrapOpt(await supabase.from("Product").select("*").eq("id", parsed.productId).maybeSingle()),
-    unwrapOpt(await supabase.from("AppUser").select("*").eq("id", parsed.strategistUserId).maybeSingle()),
-    parsed.editorUserId ? unwrapOpt(await supabase.from("AppUser").select("*").eq("id", parsed.editorUserId).maybeSingle()) : null,
-    parsed.subAvatarId ? unwrapOpt(await supabase.from("SubAvatar").select("*").eq("id", parsed.subAvatarId).maybeSingle()) : null,
-    parsed.referenceFormatId ? unwrapOpt(await supabase.from("ReferenceFormat").select("*").eq("id", parsed.referenceFormatId).maybeSingle()) : null,
-    parsed.pipelineRunId ? unwrapOpt(await supabase.from("Research").select("*").eq("id", parsed.pipelineRunId).eq("type", "pipeline").maybeSingle()) : null,
-    parsed.spySweepId ? unwrapOpt(await supabase.from("Research").select("*").eq("id", parsed.spySweepId).eq("type", "competitor_spy").maybeSingle()) : null,
-    parsed.offerId ? unwrapOpt(await supabase.from("ProductOffer").select("*").eq("id", parsed.offerId).maybeSingle()) : null,
+    supabase.from("Product").select("*").eq("id", parsed.productId).maybeSingle().then(unwrapOpt),
+    supabase.from("AppUser").select("*").eq("id", parsed.strategistUserId).maybeSingle().then(unwrapOpt),
+    parsed.editorUserId ? supabase.from("AppUser").select("*").eq("id", parsed.editorUserId).maybeSingle().then(unwrapOpt) : null,
+    parsed.subAvatarId ? supabase.from("SubAvatar").select("*").eq("id", parsed.subAvatarId).maybeSingle().then(unwrapOpt) : null,
+    parsed.referenceFormatId ? supabase.from("ReferenceFormat").select("*").eq("id", parsed.referenceFormatId).maybeSingle().then(unwrapOpt) : null,
+    parsed.pipelineRunId ? supabase.from("Research").select("*").eq("id", parsed.pipelineRunId).eq("type", "pipeline").maybeSingle().then(unwrapOpt) : null,
+    parsed.spySweepId ? supabase.from("Research").select("*").eq("id", parsed.spySweepId).eq("type", "competitor_spy").maybeSingle().then(unwrapOpt) : null,
+    parsed.offerId ? supabase.from("ProductOffer").select("*").eq("id", parsed.offerId).maybeSingle().then(unwrapOpt) : null,
     loadPublishedScriptPlaybook(parsed.playbookVersionId),
   ]);
   const product = productRaw as ProductRow | null;
@@ -330,11 +333,15 @@ export async function createScriptProjectCore(
       createdAt,
     }).select("id").single());
 
-    await reportScriptGenerationProgress(progress, { stage: "validation", level: "info", message: "Running the first Creative Workflow audit" });
     try {
       const savedProject = unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()) as import("@/lib/database.types").ScriptProjectRow | null;
-      if (savedProject) {
-        const audit = await runScriptWorkflowAudit({ project: savedProject, document, revision: 0, scriptVersion: 1, actorUserId: options.actor.id });
+      const runAudit = () => runScriptWorkflowAudit({ project: savedProject!, document, revision: 0, scriptVersion: 1, actorUserId: options.actor.id });
+      if (savedProject && options.deferAudit) {
+        after(() => runAudit().catch((auditError) => console.warn("[scripts] deferred workflow audit failed:", auditError instanceof Error ? auditError.message : String(auditError))));
+        await reportScriptGenerationProgress(progress, { stage: "validation", level: "info", message: "First Creative Workflow audit is running in the background", detail: "The score appears in the Workflow panel shortly after the script opens." });
+      } else if (savedProject) {
+        await reportScriptGenerationProgress(progress, { stage: "validation", level: "info", message: "Running the first Creative Workflow audit" });
+        const audit = await runAudit();
         await reportScriptGenerationProgress(progress, { stage: "validation", level: "success", message: `Workflow audit complete · ${Math.round(audit.run.score ?? 0)}/100`, detail: "This playbook score is separate from the evidence scorer." });
       }
     } catch (auditError) {

@@ -5,6 +5,19 @@ import { updateSpyAds, type SpyAd } from "../actions/spy";
 import { saveToBank } from "../actions/bank";
 import { importBrandSearchMetaAds } from "../actions/brandsearch";
 import { isFeedStale, matchCompetitor, type SpectreCompetitor } from "@/lib/brandsearch";
+import type { StepResult } from "@/lib/cellumove/corpus/runner.server";
+import type { TeardownStatus } from "@/lib/cellumove/corpus/teardown";
+
+const MAX_BATCH = 10;
+type RecentTeardown = { adId: string; brand: string; submittedAt: string };
+const pending = (status?: TeardownStatus) => status === "queued" || status === "processing";
+
+async function minerRequest<T>(body: object, signal?: AbortSignal): Promise<T> {
+  const response = await fetch("/api/miner/run", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body), signal });
+  const data = await response.json();
+  if (!response.ok) throw new Error(data.error ?? "Deconstruction request failed");
+  return data as T;
+}
 
 interface CachedFeed {
   id: string;
@@ -26,6 +39,9 @@ export function SpyClient({
   brandSearchConfigured,
   canRefresh,
   competitors,
+  teardownStatus,
+  costPerAd,
+  recentTeardowns,
 }: {
   /** Newest cached BrandSearch Spectre feed, or null if none has been fetched yet. */
   cached: CachedFeed | null;
@@ -36,6 +52,9 @@ export function SpyClient({
   canRefresh: boolean;
   /** BrandSearch Spectre competitors; null when the list couldn't be loaded. */
   competitors: SpectreCompetitor[] | null;
+  teardownStatus: Record<string, TeardownStatus>;
+  costPerAd: number;
+  recentTeardowns: RecentTeardown[];
 }) {
   const [ads, setAds] = useState<SpyAd[] | null>(cached?.ads ?? null);
   const [sweepId, setSweepId] = useState<string | null>(cached?.id ?? null);
@@ -52,6 +71,124 @@ export function SpyClient({
   // as its dedupe key (sourceUrl, falling back to imageUrl).
   const [banked, setBanked] = useState<Set<string>>(() => new Set(bankedUrls));
   const [saving, setSaving] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set());
+  const [teardowns, setTeardowns] = useState(teardownStatus);
+  const [results, setResults] = useState<Record<string, StepResult>>({});
+  const [recent, setRecent] = useState(recentTeardowns);
+  const [submitting, setSubmitting] = useState(false);
+  const stopped = useRef(false);
+  const batchRunning = useRef(false);
+  const statuses = useRef(teardowns);
+  statuses.current = teardowns;
+
+  const applyResults = (rows: StepResult[]) => {
+    setResults((prev) => ({ ...prev, ...Object.fromEntries(rows.map((row) => [row.adId, row])) }));
+    setTeardowns((prev) => {
+      const next = { ...prev };
+      for (const row of rows) {
+        if (row.outcome === "done") next[row.adId] = "completed";
+        else if (row.outcome === "queued" || row.outcome === "processing" || row.outcome === "failed") next[row.adId] = row.outcome;
+      }
+      return next;
+    });
+    setSelected((prev) => new Set([...prev].filter((id) => !rows.some((row) => row.adId === id && (row.outcome === "done" || pending(row.outcome as TeardownStatus))))));
+  };
+
+  useEffect(() => {
+    stopped.current = false;
+    let cancelled = false;
+    const controller = new AbortController();
+    const poll = async () => {
+      const ids = Object.entries(statuses.current).filter(([, value]) => pending(value)).map(([id]) => id);
+      if (!canRefresh || !ids.length || cancelled) return;
+      try {
+        const response = await minerRequest<{ results: StepResult[] }>({ action: "sync-teardowns", adIds: ids }, controller.signal);
+        if (!cancelled) applyResults(response.results);
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    };
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      await poll();
+      if (!cancelled) timer = setTimeout(tick, 15_000);
+    };
+    void tick();
+    return () => { cancelled = true; stopped.current = true; clearTimeout(timer); controller.abort(); };
+  }, [canRefresh]);
+
+  const toggleSelection = (id: string) => setSelected((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id);
+    else if (next.size < MAX_BATCH) next.add(id);
+    return next;
+  });
+
+  // A refreshed feed may contain completed ads that were absent at page load.
+  useEffect(() => {
+    const ids = (ads ?? []).flatMap((ad) => ad.competitorAdId ? [ad.competitorAdId] : []);
+    if (!canRefresh || !ids.length) return;
+    let cancelled = false;
+    const controller = new AbortController();
+    void (async () => {
+      try {
+        for (let offset = 0; offset < ids.length && !cancelled; offset += 200) {
+          const response = await minerRequest<{ results: StepResult[] }>({ action: "sync-teardowns", adIds: ids.slice(offset, offset + 200) }, controller.signal);
+          if (!cancelled) applyResults(response.results);
+        }
+      } catch (e) {
+        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+      }
+    })();
+    return () => { cancelled = true; controller.abort(); };
+  }, [ads, canRefresh]);
+
+  const deconstructSelected = async () => {
+    if (batchRunning.current || !selected.size) return;
+    const ids = [...selected].filter((id) => !pending(teardowns[id]) && teardowns[id] !== "completed").slice(0, MAX_BATCH);
+    if (!ids.length || !window.confirm(`Deconstruct ${ids.length} selected videos? Estimated cost: $${(ids.length * costPerAd).toFixed(2)}. Each takes about 2–4 minutes.`)) return;
+    batchRunning.current = true;
+    setSubmitting(true);
+    setError(null);
+    let cursor = 0;
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, ids.length) }, async () => {
+        while (!stopped.current && cursor < ids.length) {
+          const adId = ids[cursor++]!;
+          let result: StepResult;
+          try {
+            result = await minerRequest<StepResult>({ action: "deconstruct", adId });
+          } catch (e) {
+            result = { adId, outcome: "failed", detail: e instanceof Error ? e.message : String(e), costUsd: null };
+          }
+          if (stopped.current) return;
+          applyResults([result]);
+          setSelected((prev) => { const next = new Set(prev); next.delete(adId); return next; });
+          if (result.outcome !== "skipped" && result.outcome !== "failed") {
+            setRecent((prev) => [{ adId, brand: ads?.find((ad) => ad.competitorAdId === adId)?.brand ?? "Unknown brand", submittedAt: new Date().toISOString() }, ...prev.filter((item) => item.adId !== adId)].slice(0, 20));
+          }
+        }
+      }));
+    } finally {
+      batchRunning.current = false;
+      if (!stopped.current) setSubmitting(false);
+    }
+  };
+
+  const teardownControls = (ad: SpyAd) => {
+    const id = ad.competitorAdId;
+    if (!id || ad.mediaType !== "video") return null;
+    const state = teardowns[id];
+    return <div className="space-y-2 px-2.5 pb-2.5 text-xs">
+      {state === "completed" ? <a className="font-medium text-emerald-700" href={`/miner/${id}`}>✓ deconstructed →</a>
+        : pending(state) ? <span className="text-sky-700">deconstructing…</span>
+        : canRefresh ? <label className="flex cursor-pointer items-center gap-2">
+          <input type="checkbox" checked={selected.has(id)} disabled={submitting || (!selected.has(id) && selected.size >= MAX_BATCH)} onChange={() => toggleSelection(id)} aria-label={`Select ${ad.brand} video for deconstruction`} />
+          {state === "failed" ? "failed — retry" : "Select to deconstruct"}
+        </label> : state === "failed" ? <span className="text-red-700">deconstruction failed</span> : null}
+      {results[id] && <p role="status" className={results[id].outcome === "failed" ? "text-red-700" : "text-ink-500"}>{results[id].detail}</p>}
+    </div>;
+  };
 
   const bankKey = (ad: SpyAd) => (ad.sourceUrl || ad.imageUrl || "").trim();
 
@@ -84,6 +221,7 @@ export function SpyClient({
       try {
         const result = await importBrandSearchMetaAds({ ifStale: auto });
         setAds(result.ads);
+        setSelected(new Set());
         setSweepId(result.id);
         setFetchedAt(result.createdAt);
         if (!result.reused) {
@@ -117,6 +255,8 @@ export function SpyClient({
   const removeAd = (index: number) => {
     if (!ads) return;
     const next = ads.filter((_, i) => i !== index);
+    const removedId = ads[index]?.competitorAdId;
+    if (removedId) setSelected((prev) => { const ids = new Set(prev); ids.delete(removedId); return ids; });
     setAds(next);
     if (sweepId) {
       const id = sweepId;
@@ -141,7 +281,7 @@ export function SpyClient({
   const mediaExpired = now !== null && fetchedAt !== null && isFeedStale(fetchedAt, now);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-24">
       <header className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Spy</h1>
@@ -157,7 +297,7 @@ export function SpyClient({
             type="button"
             className="btn btn-primary"
             onClick={() => refresh()}
-            disabled={refreshing || !brandSearchConfigured || !canRefresh}
+            disabled={refreshing || submitting || !brandSearchConfigured || !canRefresh}
             title={canRefresh
               ? "Re-fetch from BrandSearch (about 1 credit per ad)"
               : "Only creative strategists can refresh the feed"}
@@ -211,6 +351,7 @@ export function SpyClient({
           isBanked={(ad) => banked.has(bankKey(ad))}
           savingKey={saving}
           bankKey={bankKey}
+          teardownControls={teardownControls}
         />
       ) : (
         <section className="card text-sm text-ink-500">
@@ -224,6 +365,16 @@ export function SpyClient({
           )}
         </section>
       )}
+      {recent.length > 0 && <section className="card space-y-3">
+        <h2 className="font-semibold">Recently deconstructed</h2>
+        <ul className="space-y-2 text-sm">{recent.map((item) => <li key={item.adId}>
+          <a className="text-sky-800 hover:underline" href={`/miner/${item.adId}`}>{item.brand} · {item.submittedAt.slice(0, 10)} · {teardowns[item.adId] ?? "queued"} →</a>
+        </li>)}</ul>
+      </section>}
+      {(selected.size > 0 || submitting) && <div className="fixed inset-x-4 bottom-4 z-20 mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-200 bg-white p-4 shadow-lg">
+        <p className="text-sm">{selected.size} selected · est. ${(selected.size * costPerAd).toFixed(2)} · 2–4 min each · max {MAX_BATCH}</p>
+        <button type="button" className="btn btn-primary" disabled={submitting} onClick={() => void deconstructSelected()}>{submitting ? "Submitting…" : `Deconstruct ${selected.size} selected`}</button>
+      </div>}
     </div>
   );
 }
@@ -237,6 +388,7 @@ function AdGallery({
   isBanked,
   savingKey,
   bankKey,
+  teardownControls,
 }: {
   items: { ad: SpyAd; index: number }[];
   sweepId: string | null;
@@ -245,18 +397,20 @@ function AdGallery({
   isBanked: (ad: SpyAd) => boolean;
   savingKey: string | null;
   bankKey: (ad: SpyAd) => string;
+  teardownControls: (ad: SpyAd) => React.ReactNode;
 }) {
   return (
     <div className="gap-3 columns-2 sm:columns-3 lg:columns-4 [column-fill:_balance]">
       {items.map(({ ad, index }) => (
         <AdTile
-          key={`${ad.sourceUrl}-${index}`}
+          key={ad.competitorAdId || ad.providerId || ad.sourceUrl || ad.imageUrl}
           ad={ad}
           useIdeaHref={sweepId ? `/scripts/new?spySweepId=${encodeURIComponent(sweepId)}&spyAdIndex=${index}` : null}
           onRemove={() => onRemove(index)}
           onKeep={() => onKeep(ad)}
           banked={isBanked(ad)}
           saving={savingKey !== null && savingKey === bankKey(ad)}
+          teardownControls={teardownControls(ad)}
         />
       ))}
     </div>
@@ -291,6 +445,7 @@ function AdTile({
   onKeep,
   banked,
   saving,
+  teardownControls,
 }: {
   ad: SpyAd;
   useIdeaHref: string | null;
@@ -298,6 +453,7 @@ function AdTile({
   onKeep: () => void;
   banked: boolean;
   saving: boolean;
+  teardownControls: React.ReactNode;
 }) {
   const [broken, setBroken] = useState(false);
   const href = ad.sourceUrl || ad.imageUrl;
@@ -388,6 +544,7 @@ function AdTile({
           {ad.transcriptUrl && <p className="mt-1 text-[10px] font-medium text-sky-700">transcript available</p>}
         </div>
       </a>
+      {teardownControls}
       {useIdeaHref && (
         <div className="px-2.5 pb-2.5">
           <a href={useIdeaHref} className="btn btn-primary w-full text-xs">Use this idea →</a>

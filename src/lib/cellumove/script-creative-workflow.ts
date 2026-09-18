@@ -112,7 +112,63 @@ export function parseWorkflowAuditExtraction(value: unknown): WorkflowAuditExtra
   return WorkflowAuditExtractionSchema.parse(Array.isArray(value) ? { findings: value } : value);
 }
 
-export type SpeakingRateBand = "fast_direct_response" | "standard_ugc" | "calm_testimonial" | "sung";
+// Shape-only schema sent to Gemini (keys + types, no size limits — Vertex rejects
+// those). It stops typo'd keys and null IDs at the source; Zod still owns limits.
+export const WORKFLOW_AUDIT_RESPONSE_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    findings: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          ruleId: { type: "string" },
+          category: { type: "string", enum: WorkflowFindingCategorySchema.options },
+          severity: { type: "string", enum: WorkflowFindingSeveritySchema.options },
+          scriptModuleId: { type: "string" },
+          lineIndex: { type: "integer" },
+          scriptQuote: { type: "string" },
+          message: { type: "string" },
+          recommendation: { type: "string" },
+          fixEligible: { type: "boolean" },
+          pointsDeducted: { type: "number" },
+        },
+        required: ["ruleId", "category", "severity", "scriptModuleId", "lineIndex", "scriptQuote", "message", "recommendation", "fixEligible", "pointsDeducted"],
+      },
+    },
+  },
+  required: ["findings"],
+} as const;
+
+// Keep every finding that is individually valid AND cites an exact quote; drop the
+// rest. One malformed finding used to discard the whole audit (and cost a second
+// model call). Throws only when the model returned findings and none survived.
+export function salvageWorkflowFindings(
+  value: unknown,
+  modules: Array<{ id: string; spokenText: string; onScreenText: string; visualDirection: string }>,
+): WorkflowAuditFinding[] {
+  const raw = Array.isArray(value) ? value : (value as { findings?: unknown } | null)?.findings;
+  if (!Array.isArray(raw)) throw new Error("Workflow audit response had no findings array.");
+  const kept: WorkflowAuditFinding[] = [];
+  let firstProblem = "";
+  for (const item of raw.slice(0, 80)) {
+    const parsed = WorkflowAuditFindingSchema.safeParse(item);
+    if (!parsed.success) {
+      firstProblem ||= parsed.error.issues[0]?.message ?? "invalid finding";
+      continue;
+    }
+    try {
+      validateWorkflowFindingQuotes([parsed.data], modules);
+      kept.push(parsed.data);
+    } catch (error) {
+      firstProblem ||= error instanceof Error ? error.message : String(error);
+    }
+  }
+  if (raw.length > 0 && kept.length === 0) throw new Error(`No workflow finding survived validation: ${firstProblem}`);
+  return kept;
+}
+
+export type SpeakingRateBand ="fast_direct_response" | "standard_ugc" | "calm_testimonial" | "sung";
 
 export function selectSpeakingRateBand(input: { format: string; voicePlan: string; avatarName?: string | null }): {
   key: SpeakingRateBand;

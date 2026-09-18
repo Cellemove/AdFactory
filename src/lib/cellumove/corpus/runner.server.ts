@@ -1,6 +1,11 @@
 import "server-only";
 
-// The /miner run page drives the pipeline one ad per request so no single call
+import { supabase } from "@/lib/db";
+import { BRANDSEARCH_MEDIA_TTL_MS, type NormalizedBrandSearchAd } from "@/lib/brandsearch";
+import { competitorAdId, toCompetitorAdRow } from "./ingest";
+import { pickNew, RECENT_DAILY_CAP, RECENT_MAX_DAYS, RECENT_MIN_DAYS, RECENT_POOL_FACTOR } from "./winners";
+
+// The /miner/run page drives the pipeline one ad per request so no single call
 // can outlive a serverless time limit, and closing the tab simply stops after
 // the ads in flight. Every step calls exactly what the CLI runner for that
 // stage calls; stages are idempotent, so "Run" again resumes where it stopped.
@@ -13,11 +18,11 @@ import { mineAndSaveReports } from "./mine.server";
 import { buildAndSavePlaybook } from "./playbook.server";
 import { planTeardown, selectStageRows, type AdStage, type QueueOptions } from "./queue";
 import { loadCompetitorAds, loadCorpusState } from "./state.server";
-import { teardownCostUsd } from "./teardown";
+import { teardownCostUsd, teardownSourceFor } from "./teardown";
 import { loadAdTeardown, loadAdTeardowns, submitAdTeardown, syncAdTeardown } from "./teardown.server";
 import { latestCompleteTranscriptRun, transcribeAd } from "./transcribe.server";
 import { refreshWinnerScores } from "./winner-score.server";
-import { collectWinners } from "./winners.server";
+import { collectWinners, fetchWinnerPool } from "./winners.server";
 
 export type QueueItem = { id: string; brandName: string; winnerScore: number | null };
 
@@ -193,4 +198,76 @@ export async function pendingTeardownIds(brand?: string | null): Promise<string[
   const state = await loadCorpusState();
   const ofBrand = new Set(state.rows.filter((row) => row.brandName.toLowerCase() === brand.toLowerCase()).map((row) => row.id));
   return pending.map((row) => row.competitorAdId).filter((id) => ofBrand.has(id));
+}
+
+/** Shared guard for Spy and the daily job. Failed jobs are retried only by hand. */
+export async function deconstructAd(adId: string): Promise<StepResult> {
+  const result = (outcome: StepOutcome, detail: string): StepResult => ({ adId, outcome, detail, costUsd: null });
+  try {
+    const ad = await loadAd(adId);
+    if (ad.mediaType !== "video") return result("skipped", "Not a video");
+    const existing = await loadAdTeardown(adId);
+    if (existing?.status === "completed") return result("done", "Already deconstructed");
+    if (existing?.status === "queued" || existing?.status === "processing") return result(existing.status, "Already deconstructing");
+    if (!teardownSourceFor(ad, await loadAdMedia(adId))) return result("skipped", "Video link expired — refresh the feed");
+    const saved = await submitAdTeardown(ad, existing);
+    return result(saved.status === "completed" ? "done" : saved.status, "Submitted to Teardown");
+  } catch (error) {
+    return result("failed", error instanceof Error ? error.message : String(error));
+  }
+}
+
+export async function runRecentWinners(input: { cap?: number; dryRun?: boolean; budgetMs?: number } = {}) {
+  const started = Date.now();
+  const rawCap = input.cap ?? Number(process.env.RECENT_WINNERS_DAILY_CAP?.trim() || RECENT_DAILY_CAP);
+  if (!Number.isFinite(rawCap)) throw new Error("RECENT_WINNERS_DAILY_CAP must be a number.");
+  const cap = Math.max(0, Math.min(RECENT_DAILY_CAP, Math.floor(rawCap)));
+  const budgetMs = input.budgetMs ?? 450_000;
+  if (!Number.isFinite(budgetMs) || budgetMs < 0) throw new Error("budgetMs must be a non-negative number.");
+  const synced = await syncTeardowns(await pendingTeardownIds());
+  const midnight = new Date(started).toISOString().slice(0, 10) + "T00:00:00.000Z";
+  const count = await supabase.from("AdTeardown").select("id", { count: "exact", head: true }).gte("submittedAt", midnight);
+  if (count.error) throw new Error(count.error.message);
+  const remaining = Math.max(0, cap - (count.count ?? 0));
+  const summary = {
+    cap, submittedToday: count.count ?? 0, remaining, dryRun: Boolean(input.dryRun),
+    reason: "", creditsUsed: 0, dailyRemaining: null as number | null, monthlyRemaining: null as number | null,
+    synced: synced.length, results: [] as StepResult[],
+    candidates: [] as Array<{ adId: string; brand: string; startedAt: string | null }>,
+  };
+  const finish = (reason: string) => {
+    summary.reason = reason;
+    console.log("[recent-winners]", JSON.stringify(summary));
+    return summary;
+  };
+  if (!remaining) return finish(cap === 0 ? "Disabled (sync complete)" : "Day cap reached");
+  if (Date.now() - started >= budgetMs) return finish("Time budget reached");
+  // ponytail: pool = 4×cap; raise the factor if days return 0 new while brands still qualify.
+  const pool = await fetchWinnerPool({ target: cap * RECENT_POOL_FACTOR, minDays: RECENT_MIN_DAYS, maxDays: RECENT_MAX_DAYS, videoOnly: true });
+  summary.creditsUsed = pool.creditsUsed;
+  summary.dailyRemaining = pool.dailyRemaining;
+  summary.monthlyRemaining = pool.monthlyRemaining;
+  const idOf = (ad: NormalizedBrandSearchAd) => competitorAdId(ad.provider, ad.platform.toLowerCase(), ad.externalId);
+  const ids = [...pool.picked.values()].flat().map(idOf);
+  const done = new Set((await loadAdTeardowns({ ids })).map((row) => row.competitorAdId));
+  const todo = pickNew(pool.picked, done, remaining, idOf, (ad) => typeof ad.metrics.euTotalSpend === "number" ? ad.metrics.euTotalSpend : 0);
+  summary.candidates = todo.map((ad) => ({ adId: idOf(ad), brand: ad.brandDomain || ad.brandName, startedAt: ad.startedAt }));
+  if (input.dryRun) return finish("Dry run — no ads submitted");
+  let cursor = 0;
+  await Promise.all(Array.from({ length: Math.min(3, todo.length) }, async () => {
+    while (cursor < todo.length && Date.now() - started < budgetMs) {
+      const ad = todo[cursor++]!;
+      const now = new Date();
+      try {
+        // Write only ads that will start. This mapper never changes corpus membership.
+        const row = toCompetitorAdRow(ad, now.toISOString(), new Date(now.getTime() + BRANDSEARCH_MEDIA_TTL_MS).toISOString());
+        const write = await supabase.from("CompetitorAd").upsert(row, { onConflict: "provider,platform,externalId", ignoreDuplicates: false });
+        if (write.error) throw new Error(write.error.message);
+        summary.results.push(await deconstructAd(row.id));
+      } catch (error) {
+        summary.results.push({ adId: idOf(ad), outcome: "failed", detail: error instanceof Error ? error.message : String(error), costUsd: null });
+      }
+    }
+  }));
+  return finish(cursor < todo.length ? "Time budget reached" : "Complete");
 }

@@ -6,11 +6,12 @@ import { EMBED_MODEL, embedTexts } from "@/lib/cellumove/embeddings";
 import {
   calculateWorkflowScore,
   lexicalLineSimilarity,
-  parseWorkflowAuditExtraction,
+  salvageWorkflowFindings,
   SCRIPT_WORKFLOW_AUDIT_PROMPT_VERSION,
   SCRIPT_WORKFLOW_FIX_PROMPT_VERSION,
   selectSpeakingRateBand,
   validateWorkflowFindingQuotes,
+  WORKFLOW_AUDIT_RESPONSE_JSON_SCHEMA,
   workflowRubricFromConfig,
   workflowGateStatus,
   type WorkflowAuditFinding,
@@ -122,7 +123,7 @@ function auditPrompt(document: ScriptDocument, previousError?: string): string {
     "Use deductions only for the seven scored categories. Cadence and originality findings must deduct 0 points.",
     "Do not evaluate factual truth here; the separate evidence scorer owns claim support.",
     "Do not penalize a reference for not using one universal beat spine; judge whether its selected structure is coherent.",
-    "Finding shape: {ruleId,category,severity,scriptModuleId,lineIndex,scriptQuote,message,recommendation,fixEligible,pointsDeducted,metadata}.",
+    "Finding shape: {ruleId,category,severity,scriptModuleId,lineIndex,scriptQuote,message,recommendation,fixEligible,pointsDeducted}. scriptModuleId must be one of the MODULES ids and lineIndex a non-negative integer — never null.",
     previousError ? `Previous output failed validation: ${previousError}` : "",
     `WORKFLOW: ${JSON.stringify(document.workflow)}`,
     `MODULES: ${JSON.stringify(document.modules.map((module) => ({ id: module.id, kind: module.kind, label: module.label, seconds: module.durationSec, spokenText: module.spokenText, onScreenText: module.onScreenText, visualDirection: module.visualDirection })))}`,
@@ -138,15 +139,14 @@ async function extractSemanticFindings(document: ScriptDocument): Promise<Workfl
         instruction: "You are AdFactory's Creative Workflow auditor. Identify playbook adherence problems with exact script citations. Never rewrite the script and never decide factual support.",
         context: auditPrompt(document, previousError),
         json: true,
+        responseJsonSchema: WORKFLOW_AUDIT_RESPONSE_JSON_SCHEMA,
         feature: "script_workflow_audit",
-        metadata: { promptVersion: SCRIPT_WORKFLOW_AUDIT_PROMPT_VERSION, attempt },
+        metadata: { promptVersion: SCRIPT_WORKFLOW_AUDIT_PROMPT_VERSION, attempt, retryReason: previousError?.slice(0, 300) },
         maxOutputTokens: 12288,
         thinkingBudget: 2048,
         temperature: 0,
       });
-      const parsed = parseWorkflowAuditExtraction(extractJsonObject<unknown>(text));
-      validateWorkflowFindingQuotes(parsed.findings, document.modules);
-      return parsed.findings;
+      return salvageWorkflowFindings(extractJsonObject<unknown>(text), document.modules);
     } catch (error) {
       previousError = error instanceof Error ? error.message : String(error);
     }

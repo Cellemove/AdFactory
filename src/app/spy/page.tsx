@@ -4,6 +4,8 @@ import { bankedSourceUrls } from "../actions/bank";
 import { SpyClient } from "./SpyClient";
 import { isBrandSearchConfigured, listSpectreCompetitors } from "@/lib/brandsearch.server";
 import { getSessionUser } from "@/lib/auth";
+import { loadAdTeardowns } from "@/lib/cellumove/corpus/teardown.server";
+import { TEARDOWN_TYPICAL_COST_USD } from "@/lib/cellumove/corpus/teardown";
 
 export const dynamic = "force-dynamic";
 
@@ -41,10 +43,23 @@ export default async function SpyPage() {
     getSessionUser(),
   ]);
   const row = res.error ? null : res.data;
+  const ads = row ? parseAds(row.drafts) : [];
+  const [teardowns, recentResult] = await Promise.all([
+    loadAdTeardowns({ ids: ads.flatMap((ad) => ad.competitorAdId ? [ad.competitorAdId] : []) }),
+    supabase.from("AdTeardown").select("competitorAdId, submittedAt, status").order("submittedAt", { ascending: false }).limit(20),
+  ]);
+  if (recentResult.error) throw new Error(recentResult.error.message);
+  const recentRows = recentResult.data ?? [];
+  const brands = recentRows.length ? await supabase.from("CompetitorAd").select("id, brandName").in("id", recentRows.map((item) => item.competitorAdId)) : null;
+  if (brands?.error) throw new Error(brands.error.message);
+  const brandNames = new Map((brands?.data ?? []).map((ad) => [ad.id, ad.brandName]));
 
   return (
     <SpyClient
-      cached={row ? { id: row.id, ads: parseAds(row.drafts), createdAt: row.createdAt } : null}
+      cached={row ? { id: row.id, ads, createdAt: row.createdAt } : null}
+      teardownStatus={Object.fromEntries([...recentRows, ...teardowns].map((item) => [item.competitorAdId, item.status]))}
+      costPerAd={TEARDOWN_TYPICAL_COST_USD}
+      recentTeardowns={recentRows.map((item) => ({ adId: item.competitorAdId, brand: brandNames.get(item.competitorAdId) ?? "Unknown brand", submittedAt: item.submittedAt }))}
       bankedUrls={banked}
       brandSearchConfigured={isBrandSearchConfigured()}
       // Fetching spends BrandSearch credits, so only strategists (who can run
