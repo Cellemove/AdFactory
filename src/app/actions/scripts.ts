@@ -37,7 +37,7 @@ function isStatusConstraintError(message: string): boolean {
 
 export async function createScriptProject(input: CreateScriptProjectInput): Promise<{ id: string }> {
   const actor = await requireStrategist();
-  const result = await createScriptProjectCore(input, { actor });
+  const result = await createScriptProjectCore(input, { actor, deferAudit: true });
   revalidatePath("/scripts");
   return result;
 }
@@ -61,15 +61,15 @@ export async function generateScriptProjectDraft(input: {
   }
 
   const [productRaw, angleRaw, avatarRaw, frameworkRaw, pipelineSourceRaw] = await Promise.all([
-    unwrapOpt(await supabase.from("Product").select("*").eq("id", project.productId).maybeSingle()),
-    unwrapOpt(await supabase.from("Angle").select("*").eq("id", project.angleId).maybeSingle()),
+    supabase.from("Product").select("*").eq("id", project.productId).maybeSingle().then(unwrapOpt),
+    supabase.from("Angle").select("*").eq("id", project.angleId).maybeSingle().then(unwrapOpt),
     project.subAvatarId
-      ? unwrapOpt(await supabase.from("SubAvatar").select("*").eq("id", project.subAvatarId).maybeSingle())
+      ? supabase.from("SubAvatar").select("*").eq("id", project.subAvatarId).maybeSingle().then(unwrapOpt)
       : null,
     project.referenceFormatId
-      ? unwrapOpt(await supabase.from("ReferenceFormat").select("*").eq("id", project.referenceFormatId).maybeSingle())
+      ? supabase.from("ReferenceFormat").select("*").eq("id", project.referenceFormatId).maybeSingle().then(unwrapOpt)
       : null,
-    unwrapOpt(await supabase
+    supabase
       .from("ScriptSource")
       .select("sourceId")
       .eq("projectId", projectId)
@@ -77,7 +77,8 @@ export async function generateScriptProjectDraft(input: {
       .like("title", "Pipeline run · %")
       .order("createdAt", { ascending: false })
       .limit(1)
-      .maybeSingle()),
+      .maybeSingle()
+      .then(unwrapOpt),
   ]);
   const product = productRaw as ProductRow | null;
   const angle = angleRaw as AngleRow | null;
@@ -317,8 +318,8 @@ export async function sendScriptProjectToEditor(input: {
   const expectedRevision = z.number().int().nonnegative().parse(input.expectedRevision);
   const document = parseScriptDocument(input.document);
   const [projectRaw, assignmentRaw] = await Promise.all([
-    unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()),
-    unwrapOpt(await supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle()),
+    supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle().then(unwrapOpt),
+    supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle().then(unwrapOpt),
   ]);
   const project = projectRaw as ScriptProjectRow | null;
   const assignment = assignmentRaw as ScriptAssignmentRow | null;
@@ -419,9 +420,9 @@ export async function assignScriptProjectToEditor(input: {
   }).parse(input);
 
   const [projectRaw, assignmentRaw, editorRaw] = await Promise.all([
-    unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()),
-    unwrapOpt(await supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle()),
-    unwrapOpt(await supabase.from("AppUser").select("*").eq("id", editorUserId).maybeSingle()),
+    supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle().then(unwrapOpt),
+    supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle().then(unwrapOpt),
+    supabase.from("AppUser").select("*").eq("id", editorUserId).maybeSingle().then(unwrapOpt),
   ]);
   const project = projectRaw as ScriptProjectRow | null;
   const assignment = assignmentRaw as ScriptAssignmentRow | null;
@@ -432,9 +433,9 @@ export async function assignScriptProjectToEditor(input: {
   if (!["available", "ready"].includes(assignment.status)) throw new Error("This script is not available for assignment in its current state.");
 
   const [productRaw, angleRaw, strategistRaw] = await Promise.all([
-    unwrapOpt(await supabase.from("Product").select("*").eq("id", project.productId).maybeSingle()),
-    unwrapOpt(await supabase.from("Angle").select("*").eq("id", project.angleId).maybeSingle()),
-    unwrapOpt(await supabase.from("AppUser").select("*").eq("id", project.strategistUserId).maybeSingle()),
+    supabase.from("Product").select("*").eq("id", project.productId).maybeSingle().then(unwrapOpt),
+    supabase.from("Angle").select("*").eq("id", project.angleId).maybeSingle().then(unwrapOpt),
+    supabase.from("AppUser").select("*").eq("id", project.strategistUserId).maybeSingle().then(unwrapOpt),
   ]);
   const product = productRaw as ProductRow | null;
   const angle = angleRaw as AngleRow | null;
@@ -494,8 +495,8 @@ export async function claimScriptProject(projectIdInput: string): Promise<void> 
   const editor = await requireEditor();
   const projectId = z.string().min(1).parse(projectIdInput);
   const [projectRaw, assignmentRaw] = await Promise.all([
-    unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()),
-    unwrapOpt(await supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle()),
+    supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle().then(unwrapOpt),
+    supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle().then(unwrapOpt),
   ]);
   const project = projectRaw as ScriptProjectRow | null;
   const assignment = assignmentRaw as ScriptAssignmentRow | null;
@@ -507,9 +508,9 @@ export async function claimScriptProject(projectIdInput: string): Promise<void> 
   }
 
   const [productRaw, angleRaw, strategistRaw] = await Promise.all([
-    unwrapOpt(await supabase.from("Product").select("*").eq("id", project.productId).maybeSingle()),
-    unwrapOpt(await supabase.from("Angle").select("*").eq("id", project.angleId).maybeSingle()),
-    unwrapOpt(await supabase.from("AppUser").select("*").eq("id", project.strategistUserId).maybeSingle()),
+    supabase.from("Product").select("*").eq("id", project.productId).maybeSingle().then(unwrapOpt),
+    supabase.from("Angle").select("*").eq("id", project.angleId).maybeSingle().then(unwrapOpt),
+    supabase.from("AppUser").select("*").eq("id", project.strategistUserId).maybeSingle().then(unwrapOpt),
   ]);
   const product = productRaw as ProductRow | null;
   const angle = angleRaw as AngleRow | null;
@@ -546,8 +547,8 @@ export async function confirmScriptBrollUsed(input: { projectId: string; clipId:
   const editor = await requireEditor();
   const parsed = z.object({ projectId: z.string().min(1), clipId: z.string().min(1) }).parse(input);
   const [assignmentRaw, handoffRaw] = await Promise.all([
-    unwrapOpt(await supabase.from("ScriptAssignment").select("*").eq("projectId", parsed.projectId).maybeSingle()),
-    unwrapOpt(await supabase.from("ScriptVersion").select("*").eq("projectId", parsed.projectId).eq("origin", "assigned").order("version", { ascending: false }).limit(1).maybeSingle()),
+    supabase.from("ScriptAssignment").select("*").eq("projectId", parsed.projectId).maybeSingle().then(unwrapOpt),
+    supabase.from("ScriptVersion").select("*").eq("projectId", parsed.projectId).eq("origin", "assigned").order("version", { ascending: false }).limit(1).maybeSingle().then(unwrapOpt),
   ]);
   const assignment = assignmentRaw as ScriptAssignmentRow | null;
   const handoff = handoffRaw as ScriptVersionRow | null;
@@ -570,8 +571,8 @@ export async function submitScriptDelivery(projectIdInput: string, deliveryUrlIn
   const projectId = z.string().min(1).parse(projectIdInput);
   const deliveryUrl = z.string().trim().url("Enter a complete delivery URL.").max(2000).parse(deliveryUrlInput);
   const [projectRaw, assignmentRaw] = await Promise.all([
-    unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()),
-    unwrapOpt(await supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle()),
+    supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle().then(unwrapOpt),
+    supabase.from("ScriptAssignment").select("*").eq("projectId", projectId).maybeSingle().then(unwrapOpt),
   ]);
   const project = projectRaw as ScriptProjectRow | null;
   const assignment = assignmentRaw as ScriptAssignmentRow | null;

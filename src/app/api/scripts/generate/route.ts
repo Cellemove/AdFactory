@@ -46,6 +46,7 @@ export async function POST(request: Request): Promise<Response> {
         try {
           const result = await createScriptProjectCore(input, {
             actor,
+            deferAudit: true,
             onProgress: (event) => write({
               type: "event",
               event: { ...event, timestamp: new Date().toISOString() },

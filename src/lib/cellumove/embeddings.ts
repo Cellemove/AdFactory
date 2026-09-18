@@ -25,12 +25,16 @@ export async function embedTexts(texts: string[]): Promise<number[][] | null> {
   });
   try {
     const ai = getLLM();
+    const batches: string[][] = [];
+    for (let i = 0; i < inputs.length; i += 100) batches.push(inputs.slice(i, i + 100));
+    // Batches are independent — run them concurrently; Promise.all keeps order.
+    // ponytail: unbounded fan-out, fine at today's hundreds of texts (≤ ~5 calls);
+    // run in waves if a caller ever embeds thousands at once.
+    const results = await Promise.all(batches.map((batch) => ai.models.embedContent({ model: EMBED_MODEL, contents: batch })));
     const out: number[][] = [];
-    for (let i = 0; i < inputs.length; i += 100) {
-      const batch = inputs.slice(i, i + 100);
-      const res = await ai.models.embedContent({ model: EMBED_MODEL, contents: batch });
-      const embs = res.embeddings;
-      if (!Array.isArray(embs) || embs.length !== batch.length) return null;
+    for (let b = 0; b < batches.length; b += 1) {
+      const embs = results[b]!.embeddings;
+      if (!Array.isArray(embs) || embs.length !== batches[b]!.length) return null;
       for (const e of embs) out.push(e.values ?? []);
     }
     return out;

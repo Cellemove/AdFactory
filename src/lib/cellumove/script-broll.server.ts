@@ -15,17 +15,22 @@ import { supabase } from "@/lib/db";
 
 const PAGE_SIZE = 1000;
 
-async function listMatchingBrollClips(): Promise<BrollClipRow[]> {
-  const rows: BrollClipRow[] = [];
+// Only the columns matching reads, and only rows with some indexed text: the
+// library is ~7k rows and this runs on every generation.
+type MatchingBrollClipRow = Pick<BrollClipRow, "id" | "name" | "webViewLink" | "folderPath" | "description" | "aiDescription" | "tags">;
+
+async function listMatchingBrollClips(): Promise<MatchingBrollClipRow[]> {
+  const rows: MatchingBrollClipRow[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
     const result = await supabase
       .from("BrollClip")
-      .select("*")
+      .select("id,name,webViewLink,folderPath,description,aiDescription,tags")
       .like("mimeType", "video/%")
+      .or("aiDescription.not.is.null,description.not.is.null,tags.not.is.null")
       .order("id", { ascending: true })
       .range(from, from + PAGE_SIZE - 1);
     if (result.error) throw new Error(`Could not load the B-roll library: ${result.error.message}`);
-    const page = (result.data ?? []) as BrollClipRow[];
+    const page = (result.data ?? []) as MatchingBrollClipRow[];
     rows.push(...page);
     if (page.length < PAGE_SIZE) break;
   }
@@ -35,7 +40,7 @@ async function listMatchingBrollClips(): Promise<BrollClipRow[]> {
   });
 }
 
-function recentSuggestionCounts(projects: ScriptProjectRow[]): Map<string, number> {
+function recentSuggestionCounts(projects: Array<Pick<ScriptProjectRow, "document">>): Map<string, number> {
   const counts = new Map<string, number>();
   for (const project of projects) {
     const parsed = ScriptDocumentSchema.safeParse(project.document);
@@ -54,7 +59,7 @@ export interface ScriptBrollMatchingContext {
 export async function loadScriptBrollMatchingContext(): Promise<ScriptBrollMatchingContext> {
   const [rows, projectsResult] = await Promise.all([
     listMatchingBrollClips(),
-    supabase.from("ScriptProject").select("*").order("createdAt", { ascending: false }).limit(SCRIPT_BROLL_RECENT_PROJECT_WINDOW),
+    supabase.from("ScriptProject").select("document").order("createdAt", { ascending: false }).limit(SCRIPT_BROLL_RECENT_PROJECT_WINDOW),
   ]);
   if (projectsResult.error) throw new Error(`Could not load recent B-roll history: ${projectsResult.error.message}`);
   return {
@@ -66,7 +71,7 @@ export async function loadScriptBrollMatchingContext(): Promise<ScriptBrollMatch
       description: (clip.aiDescription || clip.description || "").trim(),
       tags: (clip.tags || "").trim(),
     })),
-    recentSuggestionCounts: recentSuggestionCounts((projectsResult.data ?? []) as ScriptProjectRow[]),
+    recentSuggestionCounts: recentSuggestionCounts((projectsResult.data ?? []) as Array<Pick<ScriptProjectRow, "document">>),
   };
 }
 

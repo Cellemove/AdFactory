@@ -50,20 +50,21 @@ export async function POST(request: Request): Promise<Response> {
       request.signal.addEventListener("abort", onAbort, { once: true });
       void (async () => {
         try {
-          const results: Array<{ variantId: string; variantName: string; projectId: string | null; error: string | null }> = [];
-          for (let index = 0; index < variants.length; index += 1) {
-            const variant = variants[index]!;
+          // Variants are independent, so they generate concurrently (max 5); every
+          // progress line is already prefixed with its variant label.
+          const results: Array<{ variantId: string; variantName: string; projectId: string | null; error: string | null }> = await Promise.all(variants.map(async (variant, index) => {
             write({ type: "event", event: { stage: "setup", level: "info", message: `Draft ${index + 1}/${variants.length} · ${variant.label}`, detail: "Starting comparison generation", timestamp: new Date().toISOString() } });
             try {
               const result = await createScriptProjectCore(variant.input, {
                 actor,
+                deferAudit: true,
                 onProgress: (event) => write({ type: "event", event: { ...event, message: `${variant.label} · ${event.message}`, timestamp: new Date().toISOString() } }),
               });
-              results.push({ variantId: variant.key, variantName: variant.label, projectId: result.id, error: null });
+              return { variantId: variant.key, variantName: variant.label, projectId: result.id, error: null };
             } catch (error) {
-              results.push({ variantId: variant.key, variantName: variant.label, projectId: null, error: error instanceof Error ? error.message : String(error) });
+              return { variantId: variant.key, variantName: variant.label, projectId: null, error: error instanceof Error ? error.message : String(error) };
             }
-          }
+          }));
           const batchId = newId();
           const succeeded = results.filter((result) => result.projectId).length;
           const insert = await supabase.from("Research").insert({
