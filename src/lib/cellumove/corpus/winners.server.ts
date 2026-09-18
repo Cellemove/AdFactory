@@ -6,7 +6,7 @@ import type { Json } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
 import { toCompetitorAdRow, type CompetitorAdUpsertRow } from "./ingest";
 import {
-  balancedTrim, brandsToExtend, fairShare, launchedWithin, WINNER_DEFAULT_MIN_DAYS, WINNER_DEFAULT_TARGET, WINNER_RULE_VERSION,
+  balancedTrim, brandsToExtend, launchedWithin, pageSizeFor, resolveCompetitors, WINNER_DEFAULT_MIN_DAYS, WINNER_DEFAULT_TARGET, WINNER_RULE_VERSION,
   winnerCutoff, winnerRuleLabel, type BrandProgress,
 } from "./winners";
 
@@ -63,7 +63,7 @@ export type WinnerPool = {
  * balance them. Writes nothing — the corpus (collectWinners) and the /spy feed
  * both build on this. `videoOnly: false` also takes image ads.
  */
-export async function fetchWinnerPool(input: { target?: number; minDays?: number; maxDays?: number; videoOnly?: boolean } = {}): Promise<WinnerPool> {
+export async function fetchWinnerPool(input: { brand?: string | null; target?: number; minDays?: number; maxDays?: number; videoOnly?: boolean } = {}): Promise<WinnerPool> {
   const target = Math.max(1, Math.min(500, input.target ?? WINNER_DEFAULT_TARGET));
   const minDays = Math.max(1, input.minDays ?? WINNER_DEFAULT_MIN_DAYS);
   const videoOnly = input.videoOnly ?? true;
@@ -76,7 +76,7 @@ export async function fetchWinnerPool(input: { target?: number; minDays?: number
 
   const now = Date.now();
   const cutoff = winnerCutoff(now, minDays);
-  const share = fairShare(target, competitors.length);
+  const share = pageSizeFor(target, competitors.length);
   const pool = new Map<string, NormalizedBrandSearchAd[]>(competitors.map((brand) => [brand.domain, []]));
   const progress = new Map<string, BrandProgress & { page: number }>(competitors.map((brand) => [brand.domain, { domain: brand.domain, fetched: 0, total: null, exhausted: false, page: 0 }]));
   const seen = new Set<string>();

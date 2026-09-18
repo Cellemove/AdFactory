@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { AD_STAGES } from "@/lib/cellumove/corpus/queue";
-import { deconstructAd, runAdStep, runMine, runScore, runWinners, stageQueue, syncTeardowns } from "@/lib/cellumove/corpus/runner.server";
+import { deconstructAd, runAdStep, runMine, runPlaybook, runScore, runWinners, stageQueue, syncTeardowns } from "@/lib/cellumove/corpus/runner.server";
 
 export const dynamic = "force-dynamic";
 // One ad per call keeps each request far below this; collecting winners is the long one.
