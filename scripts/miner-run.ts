@@ -10,15 +10,17 @@
 import { CORPUS_TAXONOMY_VERSION } from "../src/lib/cellumove/corpus/constants";
 import { extractAdBeats } from "../src/lib/cellumove/corpus/extract.server";
 import { ingestSpectreCorpus } from "../src/lib/cellumove/corpus/ingest.server";
+import { collectWinners } from "../src/lib/cellumove/corpus/winners.server";
 import { downloadAdMedia, loadAdMedia } from "../src/lib/cellumove/corpus/media.server";
 import { mineAndSaveReports } from "../src/lib/cellumove/corpus/mine.server";
+import { buildAndSavePlaybook } from "../src/lib/cellumove/corpus/playbook.server";
 import { renderReportText } from "../src/lib/cellumove/corpus/report";
 import { latestCompleteTranscriptRun, transcribeAd } from "../src/lib/cellumove/corpus/transcribe.server";
 import { refreshWinnerScores } from "../src/lib/cellumove/corpus/winner-score.server";
 import { fail, parseMinerArgs, printSummary, runLanes, selectAdsForStage } from "./lib/miner-cli";
 import { assertGate1 } from "./miner-extract";
 
-const STAGES = ["ingest", "media", "transcribe", "extract", "score", "mine"] as const;
+const STAGES = ["ingest", "media", "transcribe", "extract", "score", "mine", "playbook"] as const;
 
 async function main() {
   const args = parseMinerArgs();
@@ -29,8 +31,15 @@ async function main() {
 
   if (!skipIngest) {
     console.log("\n▶ ingest");
-    const ingest = await ingestSpectreCorpus({ perBrand: args.perBrand ?? undefined, status: args.status ?? undefined, maxPages: args.maxPages ?? undefined, dryRun: args.dryRun });
-    console.log(`${ingest.rows.length} ads · ${ingest.newIds.length} new · credits used ${ingest.creditsUsed ?? "?"}`);
+    // With --brand this is the headless twin of the app's one-click run.
+    const ingest = args.brand
+      ? null
+      : await ingestSpectreCorpus({ perBrand: args.perBrand ?? undefined, status: args.status ?? undefined, maxPages: args.maxPages ?? undefined, dryRun: args.dryRun });
+    if (args.brand) {
+      const winners = await collectWinners({ brand: args.brand, target: args.limit ?? undefined, dryRun: args.dryRun });
+      console.log(`${winners.rows.length} winners for ${winners.brand} (${winners.newIds.length} new, ${winners.creditsUsed} credits)`);
+    }
+    if (ingest) console.log(`${ingest.rows.length} ads · ${ingest.newIds.length} new · credits used ${ingest.creditsUsed ?? "?"}`);
   }
   if (stopAfter < 1 || args.dryRun) return;
 
@@ -64,14 +73,23 @@ async function main() {
   if (stopAfter < 4) return;
 
   console.log("\n▶ score");
-  const scored = await refreshWinnerScores();
+  const scored = await refreshWinnerScores({ brand: args.brand ?? undefined });
   console.log(`Scored ${scored.scored} ads · ${scored.updated} updated.`);
   if (stopAfter < 5) return;
 
   console.log("\n▶ mine");
-  const mined = await mineAndSaveReports({ taxonomyVersion, minSupport: args.minSupport ?? undefined });
+  const mined = await mineAndSaveReports({ brand: args.brand, taxonomyVersion, minSupport: args.minSupport ?? undefined });
   if (mined.all) console.log(renderReportText(mined.all));
   console.log(`${mined.written} snapshot(s) written · ${mined.unchanged} unchanged.`);
+
+  if (stopAfter < 6) return;
+  if (args.brand) {
+    console.log(`\n> playbook`);
+    const built = await buildAndSavePlaybook(args.brand);
+    console.log(built.playbook
+      ? `${args.brand}: ${built.playbook.copy.rules.length} copy rules, ${built.playbook.hooks.length} hook types, ${built.playbook.beats.length} beats (${built.written ? "new snapshot" : "unchanged"})`
+      : `No extracted ads for ${args.brand} yet.`);
+  }
 }
 
 main().catch(fail);

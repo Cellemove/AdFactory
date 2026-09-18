@@ -60,10 +60,50 @@ export function addUsage(a: UsageSummary | null, b: UsageSummary): UsageSummary 
   };
 }
 
+/**
+ * Vertex answers a burst of video calls with 429 "resource exhausted" or a
+ * transient 503. Over a hundred ads that would fail whole batches, so the seam
+ * waits and tries again; anything else (a bad request, a refusal) fails at once.
+ */
+const RETRY_DELAYS_MS = [5_000, 20_000, 60_000];
+
+function isTransient(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\b(429|503)\b|RESOURCE_EXHAUSTED|resource exhausted|UNAVAILABLE|overloaded|deadline exceeded/i.test(message);
+}
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /** One JSON-mode model call. Throws on transport/model errors; returns raw text otherwise. */
 export async function generateStructured(request: StructuredRequest): Promise<StructuredResponse> {
   const model = request.model ?? DEFAULT_MODEL;
-  const response = await getLLM().models.generateContent({
+  const response = await callWithRetry(model, request);
+  await recordUsage({ feature: request.feature, model, usage: response.usageMetadata, metadata: request.metadata });
+  const text = response.text ?? "";
+  if (!text.trim()) throw new Error("The model returned no text.");
+  return { text, usage: summarizeUsage(model, response.usageMetadata) };
+}
+
+async function callWithRetry(model: string, request: StructuredRequest) {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await rawCall(model, request);
+    } catch (error) {
+      lastError = error;
+      const delay = RETRY_DELAYS_MS[attempt];
+      if (!isTransient(error) || delay === undefined) throw error;
+      // Jitter so parallel lanes do not all come back at the same moment.
+      const wait = delay + Math.floor(Math.random() * 2_000);
+      console.warn(`[corpus] ${model} is rate-limited; retrying in ${Math.round(wait / 1000)}s (attempt ${attempt + 1}/${RETRY_DELAYS_MS.length}).`);
+      await sleep(wait);
+    }
+  }
+  throw lastError;
+}
+
+async function rawCall(model: string, request: StructuredRequest) {
+  return getLLM().models.generateContent({
     model,
     contents: [{ role: "user", parts: request.parts }],
     config: {
@@ -73,10 +113,6 @@ export async function generateStructured(request: StructuredRequest): Promise<St
       ...(request.thinkingBudget != null ? { thinkingConfig: { thinkingBudget: request.thinkingBudget } } : {}),
     },
   });
-  await recordUsage({ feature: request.feature, model, usage: response.usageMetadata, metadata: request.metadata });
-  const text = response.text ?? "";
-  if (!text.trim()) throw new Error("The model returned no text.");
-  return { text, usage: summarizeUsage(model, response.usageMetadata) };
 }
 
 /** Pull the first balanced JSON object out of a response, tolerating code fences. */

@@ -769,6 +769,19 @@ export type AdTeardownRow = {
   updatedAt: string;
 };
 
+// One competitor's mined playbook (migration 023): spine, hooks, beats,
+// formats, concepts and copywriting rules, each with real quotes.
+export type CorpusBrandPlaybookRow = {
+  id: string;
+  brand: string;
+  taxonomyVersion: string;
+  engineVersion: string;
+  adCount: number;
+  inputHash: string;
+  playbook: Json;
+  createdAt: string;
+};
+
 // Computed per-ad pipeline stage (view "CorpusAdState").
 export type CorpusAdStateRow = {
   id: string;
@@ -796,6 +809,8 @@ export type CorpusAdStateRow = {
   extractError: string | null;
   beatCount: number;
   stage: "skipped" | "ingested" | "media" | "transcribed" | "extracted" | "needs_review" | "failed";
+  // Why the ad is in the corpus (migration 022 added it to the view).
+  winnerPick?: Json | null;
 };
 
 export type EvidenceImportRunRow = {
@@ -1113,6 +1128,7 @@ export type Database = {
       CorpusExtractRun: { Row: CorpusExtractRunRow; Insert: Partial<CorpusExtractRunRow> & { id: string; runKey: string; competitorAdId: string; transcriptRunId: string; taxonomyVersion: string; extractorPromptVersion: string; engineVersion: string; model: string }; Update: Partial<CorpusExtractRunRow>; Relationships: [] };
       AdBeat: { Row: AdBeatRow; Insert: Partial<AdBeatRow> & { id: string; runId: string; competitorAdId: string; taxonomyVersion: string; orderIndex: number; layer: string; code: string; evidenceQuote: string; channel: string; extractorPromptVersion: string; model: string }; Update: Partial<AdBeatRow>; Relationships: [] };
       CorpusPatternReport: { Row: CorpusPatternReportRow; Insert: Partial<CorpusPatternReportRow> & { id: string; taxonomyVersion: string; engineVersion: string; cohort: string; cohortKey: string; adCount: number; inputHash: string; report: Json }; Update: Partial<CorpusPatternReportRow>; Relationships: [] };
+      CorpusBrandPlaybook: { Row: CorpusBrandPlaybookRow; Insert: Partial<CorpusBrandPlaybookRow> & { id: string; brand: string; taxonomyVersion: string; engineVersion: string; adCount: number; inputHash: string; playbook: Json }; Update: Partial<CorpusBrandPlaybookRow>; Relationships: [] };
       CorpusEvalRun: { Row: CorpusEvalRunRow; Insert: Partial<CorpusEvalRunRow> & { id: string; baselineVersion: string; taxonomyVersion: string; extractorPromptVersion: string; engineVersion: string; model: string; goldAdCount: number; perAd: Json }; Update: Partial<CorpusEvalRunRow>; Relationships: [] };
       AdTeardown: { Row: AdTeardownRow; Insert: Partial<AdTeardownRow> & { id: string; competitorAdId: string; teardownId: string; sourceKind: AdTeardownRow["sourceKind"] }; Update: Partial<AdTeardownRow>; Relationships: [] };
     };

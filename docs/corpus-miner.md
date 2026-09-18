@@ -6,7 +6,7 @@ Architecture rule: **structure comes from the data, the model only fills fixed s
 
 ## Setup
 
-1. Apply `migrations/017_corpus_miner.sql` through `021_corpus_opt_in.sql` in order (Supabase SQL editor or MCP `apply_migration`).
+1. Apply `migrations/017_corpus_miner.sql` through `023_corpus_visuals_and_playbook.sql` in order (Supabase SQL editor or MCP `apply_migration`).
 2. `.env` needs `BRANDSEARCH_API_KEY`, the Supabase service-role values, and Vertex credentials (`GOOGLE_CLOUD_PROJECT` + ADC or `GOOGLE_APPLICATION_CREDENTIALS_JSON`). Optional: `CORPUS_TAXONOMY_VERSION`, `CORPUS_TRANSCRIBE_MODEL`, `CORPUS_EXTRACT_MODEL`. `miner:teardown` needs `TEARDOWN_API_BASE_URL` pointing at the live Teardown API (`https://teardown-api-67886675912.us-central1.run.app/api/v1`); it only uses Teardown's public endpoints, so no token.
 3. Downloaded videos live in the private Supabase Storage bucket `corpus-media` at `<adId>/<sha256>.<ext>` (`AdMedia.storagePath`; the hash is re-verified on every read). One copy is shared by the CLI, local dev and the deployed app.
 
@@ -21,6 +21,7 @@ Architecture rule: **structure comes from the data, the model only fills fixed s
 | `npm run miner:extract` | EXTRACT | Beats from the closed taxonomy. Refuses until Gate 1 has passed; `--skip-gate` overrides loudly. `--with-video` attaches the video too. `--retry-review` re-runs quarantined ads. |
 | `npm run miner:score` | — | winnerScore, a longevity ranking. Pure arithmetic. |
 | `npm run miner:mine` | MINE | Frequency, positional laws, PrefixSpan spines, quartile lift, layer durations. One snapshot per cohort; unchanged corpus = no write. |
+| `npm run miner:playbook -- --brand X` | PLAYBOOK | One competitor's playbook from its extracted ads: the spine with typical windows, hooks, the beat library with real lines + on-screen text + the shot, formats and concepts, and the copywriting rules it follows (each with the share of ads and proofs). Free, statistics only. Snapshot in `CorpusBrandPlaybook`; unchanged corpus = no write. Shown at `/miner/playbook`. |
 | `npm run miner:teardown` | TEARDOWN | Top-quartile winners (by winnerScore, recomputed first) → Teardown's 14-part workbook → `AdTeardown`. Skips completed, retries failed, waits for results. `--dry-run` (list + est. cost), `--limit N`, `--ad id --force`, `--no-wait`. **~$0.15–0.20 per video** (Gemini 2.5 Pro via Teardown). Not part of `miner:run`. |
 | `npm run miner:run` | all | In order, with `--until <stage>`. |
 | `npm run miner:eval` | Gate 1 | Production extractor, blind, over the gold set. Logged to `CorpusEvalRun`. |
@@ -28,7 +29,7 @@ Architecture rule: **structure comes from the data, the model only fills fixed s
 | `npm run miner:seed-taxonomy -- --version copy-taxonomy-v2 [--commit]` | — | Seeds a taxonomy version; never mutates an existing one. |
 | `npm run test:corpus` | — | Unit tests for the pure modules. |
 
-**In the app:** `/miner/run` runs every stage from the browser (creative strategists only) — one request per ad, a few in parallel, with live per-ad results. It calls the same code as the CLI and uses the same "what's ready" rule (`corpus/queue.ts`), so the two are interchangeable; closing the tab stops after the ads in flight and Run resumes. `/miner` shows stage counts, the review queue, failures, the pattern report and the corpus table; a strategist can mark a quarantined ad as reviewed. Each ad page has **Download JSON** (the first deliverable).
+**In the app:** `/miner` is the Run pipeline page - pick a competitor from the brand rail, then **Run everything** chains collect, download, transcribe, beats, rank and patterns for that brand (creative strategists only). One request per ad, a few in parallel, with live per-ad results; it calls the same code as the CLI and shares the "what's ready" rule (`corpus/queue.ts`), so `npm run miner:run -- --brand X --skip-gate` is its headless twin. Closing the tab stops after the ads in flight, and Run picks up where it left off. Teardown stays a separate, paid button. `/miner/results` shows the pattern report, the review queue, failures and the corpus table; each ad page has **Download JSON** (the first deliverable).
 
 ## First deliverable
 
@@ -40,24 +41,20 @@ Compare `beats[]` (each with `evidenceQuote`, `matchScore`, `startSec`/`endSec`,
 
 ## Taxonomy and Gate 1
 
-- Today the extractor runs against `copy-taxonomy-v1` (nine generic codes from migration 015) as a placeholder.
-- The hand-built list (H1–H17 plus the Q/P/B/M/PR/O codes) goes into `src/lib/cellumove/corpus/taxonomy-seeds.ts` under `copy-taxonomy-v2`; the seed script appends `H_OTHER … O_OTHER` and the global `OTHER`. Then set `CORPUS_TAXONOMY_VERSION=copy-taxonomy-v2`.
-- The 35 hand decompositions use the existing gold contract (`docs/script-scorer.md`) and import with `npm run scorer:import-gold -- gold.json --taxonomy copy-taxonomy-v2 --baseline gold-35-v2 --commit`.
-- `npm run miner:eval --baseline gold-35-v2 --taxonomy copy-taxonomy-v2` must report ≥0.80 layer agreement and ≥0.70 code agreement before `miner:extract` runs on the corpus. Every eval run is logged with its prompt version; changing a prompt means bumping `CORPUS_EXTRACT_PROMPT_VERSION` in `constants.ts` and re-running.
+- The extractor runs against `copy-taxonomy-v2` (48 codes): the named beats from the strategist's own script board (hyper-dated pain, reattribution, category execution, quantified mechanism, skepticism inoculation, time ladder, witness, guarantee in the story's words, offer with a reason-why) plus the hook types the Teardown workbook classifies by, one OTHER per layer, and a global OTHER. Seeds live in `src/lib/cellumove/corpus/taxonomy-seeds.ts`; `copy-taxonomy-v1` (nine placeholders) is kept only so older beats stay interpretable.
+- The extractor also tags each ad's **format** (`CompetitorAd.formatTag`, from the Script Studio list) and **concept** (`angleTag`, a closed list of eleven big ideas such as "Hidden cause" or "Tried everything"). MINE groups by both; a manual tag always beats the model's.
+- Transcripts carry three channels: `vo` (spoken), `ost` (on-screen text) and `vis` (what is on screen shot by shot, with the editing cue). Beats may only quote `vo`/`ost`; `vis` is context for the extractor and the visual line in the playbook.
+- Gate 1 still needs the 35 hand-labelled ads: import them with `npm run scorer:import-gold -- gold.json --taxonomy copy-taxonomy-v2 --baseline gold-35-v2 --commit`, then `npm run miner:eval --baseline gold-35-v2 --taxonomy copy-taxonomy-v2` must report >=0.80 layer and >=0.70 code agreement before beats are trusted. Until then the Run page asks you to tick "the beat labels are provisional". Every eval run is logged with its prompt version; a prompt change means bumping `CORPUS_EXTRACT_PROMPT_VERSION` (now v2) or `CORPUS_TRANSCRIBE_PROMPT_VERSION` (now v2) in `constants.ts` and re-running.
 
-## Winners corpus
+## The playbook
 
-The client brief: about 100 winning ads, spread across competitors, are enough to learn tone and voice. BrandSearch's "Winning Batch / Winning creative" badge is not in its API, so `miner:winners` rebuilds the signal behind it: brands switch losing creatives off within days, so a video still live three weeks after launch, with spend behind it, is a winner. Each ad's `winnerPick` records the rule version, its rank within its brand and when it was picked. Re-running replaces the pick; set-aside ads keep their media, transcripts and beats. `miner:ingest` (25 per brand, including stopped ads) remains for a larger, unfiltered pull.
+The end product per competitor, in the shape of the strategist's script board. Built by `buildPlaybook` (`corpus/playbook.ts`, pure) from the brand's beats, transcript lines and visual notes plus its mined pattern report:
 
-The `/spy` feed uses the same rule and the same fetch (`fetchWinnerPool`), with image ads included: ~100 winners spread across competitors per refresh (~1 credit per ad; the feed refreshes itself when its media links expire, about every 3 days). Only the two corpus pulls opt ads into the corpus — a Spy refresh saves its ads to `CompetitorAd` but never changes the corpus (migration 021 made `corpusIncluded` default to false).
-
-## Teardown workbooks (winners only)
-
-`miner:teardown` sends the top-ranked ads to the Teardown service, which runs its "winning ad deconstruction" workbook (avatar psychology, hook, pain, mechanism, proof, offer, triggers, visual/audio, learnings — 14 parts) over the video and returns it as labelled fields. The result is mirrored into `AdTeardown` and shown on `/miner/<adId>`; Teardown keeps its own record and appends its Google Sheet row as usual.
-
-It is a **reading layer for strategists, not a data source for MINE.** The workbook is open vocabulary, assumes the ad is a winner, and its ratings are the model's opinion with no evidence gate — the exact traps the spec rules out for the mined statistics. Structure and patterns come from `AdBeat`; Teardown explains the psychology behind a winner in words a writer can use.
-
-The provider video link is sent when still live (Teardown fetches it itself); after it expires, the verified local copy from `miner:media` is uploaded through Teardown's signed-upload route instead.
+- **Spine** - the brand's most common beat sequence, each step with its typical window in seconds.
+- **Hooks** and the **beat library** - every code the brand uses with share of ads, median start and length, and up to three real examples: the quoted line, the on-screen text at that moment, and the shot.
+- **Copywriting rules** (`corpus/copy-rules.ts`) - tone stats (sentence length, "you" vs "I", question openers, caption style) and rules the brand follows in >=50% of ads (opens on pain, dated pain, failed alternatives before the product, a number in the proof, time ladder, skepticism inoculation, clean guarantee, soft vs hard CTA, captions echoing the voiceover, ALL-CAPS captions, swearing, witness), each with the share and three proofs. Counted, never written by a model.
+- **Formats & concepts** - shares from the extractor's tags.
+- **Laws** - the mined order rules in plain words.
 
 ## Provenance
 

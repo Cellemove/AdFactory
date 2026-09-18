@@ -3,7 +3,7 @@ import "server-only";
 import type { AdMediaRow, AdTeardownRow, CompetitorAdRow } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
 import { loadAdMedia, readAdMedia } from "./media.server";
-import { jobToRowPatch, TeardownJobSchema, teardownAdName, teardownRowId, teardownSourceFor, type TeardownJob } from "./teardown";
+import { jobToRowPatch, TeardownJobSchema, teardownAdName, teardownRowId, teardownSourceFor, workbookScenes, type TeardownJob } from "./teardown";
 
 // Only Teardown's public endpoints are used (submit, poll, retry, signed
 // upload). They need no token; TEARDOWN_INTERNAL_TOKEN stays reserved for the
@@ -111,6 +111,29 @@ export async function submitAdTeardown(ad: CompetitorAdRow, existing: AdTeardown
     winnerScoreVersion: ad.winnerScoreVersion ?? null,
     submittedAt: new Date().toISOString(),
   });
+}
+
+/**
+ * Re-pull finished teardowns. Teardown keeps the full result, so this backfills
+ * anything the mirror used to drop (the scene-by-scene script) without spending
+ * a penny: these are plain reads, no model work.
+ */
+export async function resyncAdTeardowns(filters: { ids?: string[] } = {}): Promise<{ synced: number; withScenes: number; failed: number }> {
+  const rows = (await loadAdTeardowns(filters)).filter((row) => row.status === "completed");
+  let synced = 0;
+  let withScenes = 0;
+  let failed = 0;
+  for (const row of rows) {
+    try {
+      const job = await fetchTeardownJob(row.teardownId);
+      const saved = await upsertTeardown({ ...row, ...jobToRowPatch(job) });
+      synced += 1;
+      if (workbookScenes(saved.workbook).length) withScenes += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { synced, withScenes, failed };
 }
 
 /** Pull the current state of a queued/processing job into the mirror. */

@@ -29,7 +29,7 @@ test("normalisation sorts, clamps, dedupes repeated captions and derives the dur
 
 test("normalisation rejects a segment far beyond the video and an empty transcript", () => {
   assert.throws(() => normalizeTranscript({ duration_sec: 10, segments: [{ channel: "vo", t_start: 40, t_end: 41, text: "late" }, { channel: "vo", t_start: 0, t_end: 10, text: "x" }] }), /after the/);
-  assert.throws(() => normalizeTranscript({ duration_sec: 10, segments: [] }), /no segments/);
+  assert.throws(() => normalizeTranscript({ duration_sec: 10, segments: [] }), /no spoken or on-screen words/);
 });
 
 test("renderTranscript emits one timecoded line per segment", () => {
@@ -52,4 +52,19 @@ test("cross-check verdicts follow token overlap", () => {
   assert.equal(crossCheckTranscript(vo, "stop scrolling if your legs feel heavy by 3pm").verdict, "agree");
   assert.equal(crossCheckTranscript(vo, "legs heavy tired swollen ankles evening pain relief").verdict, "diverge");
   assert.equal(crossCheckTranscript(vo, null).verdict, "unavailable");
+});
+
+test("the visual channel is kept, rendered last at each moment, and cannot stand alone", () => {
+  const transcript = normalizeTranscript({
+    duration_sec: 10,
+    segments: [
+      { channel: "vis", t_start: 0, t_end: 3, text: "Split screen: woman on scale left, in leggings right." },
+      { channel: "vo", t_start: 0, t_end: 2, text: "Same weight." },
+      { channel: "ost", t_start: 0, t_end: 2, text: "SAME WEIGHT" },
+    ],
+  });
+  assert.deepEqual(transcript.segments.map((segment) => segment.channel), ["vo", "ost", "vis"]);
+  const rendered = renderTranscript(transcript.segments);
+  assert.deepEqual(rendered.split("\n").map((line) => line.slice(1, 4).trim()), ["vo", "ost", "vis"]);
+  assert.throws(() => normalizeTranscript({ duration_sec: 10, segments: [{ channel: "vis", t_start: 0, t_end: 3, text: "Only pictures." }] }), /no spoken or on-screen words/);
 });

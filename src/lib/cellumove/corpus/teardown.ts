@@ -7,6 +7,11 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { ParsedTeardownWorkbookSchema } from "@/lib/cellumove/teardown-brief";
+import { MirroredWorkbookSchema } from "./teardown-scenes";
+
+// Scene helpers live in teardown-scenes.ts so browser components can import them
+// without dragging node:crypto (used below for ids) into the client bundle.
+export { MirroredWorkbookSchema, scenesToTsv, TeardownSceneSchema, workbookScenes, type TeardownScene } from "./teardown-scenes";
 import type { AdMediaRow, AdTeardownRow, CorpusAdStateRow } from "@/lib/database.types";
 import { isMediaLinkExpired, pickMediaSource, type AdLike } from "./media";
 
@@ -69,7 +74,7 @@ export const TeardownJobSchema = z.object({
   id: z.string(),
   status: z.enum(TEARDOWN_STATUSES),
   sha256: z.string().nullable().optional(),
-  parsed_output: ParsedTeardownWorkbookSchema.nullable().optional(),
+  parsed_output: MirroredWorkbookSchema.nullable().optional(),
   raw_output: z.string().nullable().optional(),
   error_code: z.string().nullable().optional(),
   error_message: z.string().nullable().optional(),

@@ -107,3 +107,16 @@ test("a brand over the share cap is flagged; cohorts respect min support", () =>
   const cohorts = cohortsOf(corpus, 5);
   assert.deepEqual(cohorts.map((cohort) => `${cohort.cohort}:${cohort.cohortKey}`), ["all:all", "format:UGC", "brand:other", "brand:acme"]);
 });
+
+test("a brand cohort names the house style instead of warning about it", () => {
+  const brandReport = mineCorpus(corpus, { ...options, cohort: "brand", cohortKey: "acme" });
+  const single = brandReport.caveats.filter((caveat) => caveat.startsWith("Single-brand cohort"));
+  assert.equal(single.length, 1, "the brand report says whose house style it describes");
+  assert.ok(single[0]!.includes("acme"));
+  assert.equal(brandReport.caveats.some((caveat) => caveat.includes("contributes")), false, "the >30% warning is meaningless when one brand IS the cohort");
+
+  // The cross-brand report keeps the warning: there, one brand dominating is a confound.
+  const allReport = mineCorpus(corpus, options);
+  assert.ok(allReport.caveats.some((caveat) => caveat.includes("contributes")));
+  assert.equal(allReport.caveats.some((caveat) => caveat.startsWith("Single-brand cohort")), false);
+});

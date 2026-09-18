@@ -1,5 +1,5 @@
 // Which ads a per-ad stage should process next. One rule shared by the CLI
-// runners and the /miner/run page, so both always agree on "ready".
+// runners and the /miner run page, so both always agree on "ready".
 //
 // A stage takes ads that finished the previous stage and not this one, or
 // everything eligible with `force`. Explicit ids bypass the stage check (the

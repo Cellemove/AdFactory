@@ -6,11 +6,12 @@ import { getSessionUser } from "@/lib/auth";
 import { requireUser } from "@/lib/authorization";
 import { loadAdDetail } from "@/lib/cellumove/corpus/state.server";
 import type { BeatGateResult } from "@/lib/cellumove/corpus/evidence-gate";
-import { teardownCostUsd, workbookHeadlines } from "@/lib/cellumove/corpus/teardown";
+import { teardownCostUsd, workbookHeadlines, workbookScenes } from "@/lib/cellumove/corpus/teardown";
+import { TeardownScript } from "./TeardownScript";
 import { createTeardownBrief, ParsedTeardownWorkbookSchema, type TeardownBrief } from "@/lib/cellumove/teardown-brief";
 import type { AdTeardownRow } from "@/lib/database.types";
 
-export const metadata: Metadata = { title: "Corpus ad · AdFactory" };
+export const metadata: Metadata = { title: "Competitor ad · AdFactory" };
 export const dynamic = "force-dynamic";
 
 type RawBeat = { order_index?: number; layer?: string; code?: string; t_start?: number; t_end?: number; evidence_quote?: string; channel?: string; other_explanation?: string | null };
@@ -34,9 +35,9 @@ const BRIEF_LABEL: Record<Exclude<keyof TeardownBrief, "schemaVersion">, string>
   proof: "Proof", offer: "Offer", cta: "CTA", visual: "Visual & audio", learnings: "Learnings",
 };
 
-function TeardownSection({ teardown, adId }: { teardown: AdTeardownRow | null; adId: string }) {
+function TeardownSection({ teardown, brandName }: { teardown: AdTeardownRow | null; brandName: string }) {
   if (!teardown) {
-    return <p className="text-sm text-ink-500">Not torn down. Winners are sent by <code>npm run miner:teardown</code>; this ad alone: <code>npm run miner:teardown -- --ad {adId}</code>.</p>;
+    return <p className="text-sm text-ink-500">No deep-dive for this ad. Deep-dives are sent from <Link href={`/miner?brand=${encodeURIComponent(brandName)}`} className="font-medium text-ink-800 underline-offset-2 hover:underline">Run pipeline</Link>, for the brand&apos;s strongest ads.</p>;
   }
   if (teardown.status !== "completed") {
     return (
@@ -60,6 +61,7 @@ function TeardownSection({ teardown, adId }: { teardown: AdTeardownRow | null; a
         {teardown.sheetRowLink && <> · <a href={teardown.sheetRowLink} target="_blank" rel="noreferrer" className="hover:underline">Sheet row ↗</a></>}
         {cost != null && <> · ~${cost.toFixed(2)}</>}
       </p>
+      <TeardownScript scenes={workbookScenes(teardown.workbook)} rawOutput={teardown.rawOutput} />
       {headlines.length > 0 && (
         <dl className="grid gap-3 md:grid-cols-2">
           {headlines.map((item) => <div key={item.label} className="card"><dt className="text-xs uppercase tracking-wide text-ink-400">{item.label}</dt><dd className="mt-1 text-sm">{item.value}</dd></div>)}
@@ -106,7 +108,7 @@ export default async function CorpusAdPage({ params }: { params: Promise<{ adId:
   return (
     <div className="space-y-6">
       <header>
-        <Link href="/miner" className="text-xs text-ink-500 hover:underline">← Corpus Miner</Link>
+        <Link href="/miner/results" className="text-xs text-ink-500 hover:underline">← Corpus Miner</Link>
         <div className="mt-1 flex flex-wrap items-center justify-between gap-3">
           <div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-semibold tracking-tight">{ad.brandName}</h1>{state && <span className="tag">{state.stage}</span>}{ad.formatTag && <span className="tag">{ad.formatTag}</span>}</div>
           {/* The spec's first deliverable: this ad, end to end, as one JSON file. */}
@@ -118,20 +120,20 @@ export default async function CorpusAdPage({ params }: { params: Promise<{ adId:
 
       <section className="grid gap-3 md:grid-cols-3 text-sm">
         <div className="card"><div className="text-xs uppercase tracking-wide text-ink-400">Media</div><div className="mt-1">{media ? `${media.status}${media.statusReason ? ` — ${media.statusReason}` : ""}` : "not downloaded"}</div>{media?.bytes != null && <div className="text-xs text-ink-500">{(media.bytes / 1024 / 1024).toFixed(1)}MB · {media.mime} · {sec(media.durationSec)}</div>}</div>
-        <div className="card"><div className="text-xs uppercase tracking-wide text-ink-400">Transcript</div><div className="mt-1">{transcriptRun ? `${transcriptRun.status} · ${transcriptRun.segmentCount} segments · ${transcriptRun.language ?? "?"}` : "none"}</div>{crossCheck?.verdict && crossCheck.verdict !== "unavailable" && <div className="text-xs text-ink-500">Provider cross-check: {crossCheck.verdict} ({Math.round((crossCheck.tokenOverlap ?? 0) * 100)}% overlap)</div>}{transcriptRun?.errorSummary && <div className="text-xs text-red-700">{transcriptRun.errorSummary}</div>}</div>
-        <div className="card"><div className="text-xs uppercase tracking-wide text-ink-400">Extraction</div><div className="mt-1">{extractRun ? `${extractRun.status} · ${extractRun.attempts} attempt(s) · ${extractRun.taxonomyVersion}` : "none"}</div>{extractRun?.errorSummary && <div className="text-xs text-red-700">{extractRun.errorCode}: {extractRun.errorSummary}</div>}{extractRun?.reviewNote && <div className="text-xs text-ink-500">Review note: {extractRun.reviewNote}</div>}</div>
+        <div className="card"><div className="text-xs uppercase tracking-wide text-ink-400">Words</div><div className="mt-1">{transcriptRun ? `${transcriptRun.status} · ${transcriptRun.segmentCount} segments · ${transcriptRun.language ?? "?"}` : "none"}</div>{crossCheck?.verdict && crossCheck.verdict !== "unavailable" && <div className="text-xs text-ink-500">Provider cross-check: {crossCheck.verdict} ({Math.round((crossCheck.tokenOverlap ?? 0) * 100)}% overlap)</div>}{transcriptRun?.errorSummary && <div className="text-xs text-red-700">{transcriptRun.errorSummary}</div>}</div>
+        <div className="card"><div className="text-xs uppercase tracking-wide text-ink-400">Parts</div><div className="mt-1">{extractRun ? `${extractRun.status} · ${extractRun.attempts} attempt(s) · ${extractRun.taxonomyVersion}` : "none"}</div>{extractRun?.errorSummary && <div className="text-xs text-red-700">{extractRun.errorCode}: {extractRun.errorSummary}</div>}{extractRun?.reviewNote && <div className="text-xs text-ink-500">Review note: {extractRun.reviewNote}</div>}</div>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold">Teardown</h2>
-        <TeardownSection teardown={teardown} adId={ad.id} />
+        <TeardownSection teardown={teardown} brandName={ad.brandName} />
       </section>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">Transcript</h2>
+          <h2 className="text-lg font-semibold">What the ad says and shows</h2>
           <div className="card">
-            <h3 className="text-xs uppercase tracking-wide text-ink-400">Voiceover · {vo.length}</h3>
+            <h3 className="text-xs uppercase tracking-wide text-ink-400">Spoken · {vo.length}</h3>
             {vo.length ? <ol className="mt-2 space-y-1 text-sm">{vo.map((segment) => <li key={segment.id} id={segment.id}><span className="mr-2 tabular-nums text-xs text-ink-400">{segment.tStart.toFixed(1)}–{segment.tEnd.toFixed(1)}</span>{segment.text}</li>)}</ol> : <p className="mt-2 text-sm text-ink-500">No speech.</p>}
           </div>
           <div className="card">
@@ -141,12 +143,12 @@ export default async function CorpusAdPage({ params }: { params: Promise<{ adId:
         </section>
 
         <section className="space-y-3">
-          <h2 className="text-lg font-semibold">{quarantined ? "Model output (rejected by the evidence gate)" : "Beats"}</h2>
+          <h2 className="text-lg font-semibold">{quarantined ? "Rejected: these quotes were not in the ad" : "The parts of this ad"}</h2>
           {beats.length > 0 && (
             <ol className="space-y-2">
               {beats.map((beat) => (
                 <li key={beat.id} className="card">
-                  <div className="flex flex-wrap items-center gap-2 text-xs"><span className="tag tag-ok">{beat.code}</span><span className="text-ink-500">{beat.layer} · #{beat.orderIndex} · {sec(beat.startSec)}–{sec(beat.endSec)} · {beat.channel}</span>{beat.matchScore != null && beat.matchScore < 100 && <span className="tag tag-warn">fuzzy {beat.matchScore}</span>}</div>
+                  <div className="flex flex-wrap items-center gap-2 text-xs"><span className="tag tag-ok">{beat.code}</span><span className="text-ink-500">{beat.layer} · #{beat.orderIndex} · {sec(beat.startSec)}–{sec(beat.endSec)} · {beat.channel}</span>{beat.matchScore != null && beat.matchScore < 100 && <span className="tag tag-warn" title="The quote is close to the ad's words but not identical">near match</span>}</div>
                   <blockquote className="mt-2 border-l-2 border-ink-300 pl-3 text-sm">“{beat.evidenceQuote}”</blockquote>
                   {beat.otherExplanation && <p className="mt-1 text-xs text-ink-600">{beat.otherExplanation}</p>}
                   {beat.matchedSegmentId && <a href={`#${beat.matchedSegmentId}`} className="mt-1 inline-block text-xs text-ink-500 hover:underline">Show segment ↑</a>}
@@ -175,14 +177,14 @@ export default async function CorpusAdPage({ params }: { params: Promise<{ adId:
                   <input type="hidden" name="runId" value={extractRun.id} />
                   <input type="hidden" name="adId" value={ad.id} />
                   <label className="block text-sm font-medium">Mark as reviewed</label>
-                  <p className="text-xs text-ink-500">Closes this item without writing beats. Re-run <code>npm run miner:extract -- --ad {ad.id} --retry-review</code> after a prompt or taxonomy change.</p>
+                  <p className="text-xs text-ink-500">Closes this item without saving any parts for this ad. You can try it again from Run pipeline, under Advanced.</p>
                   <textarea name="note" rows={2} className="w-full rounded-lg border border-ink-200 p-2 text-sm" placeholder="What went wrong / what the human decomposition is" />
                   <button type="submit" className="btn btn-primary">Mark reviewed</button>
                 </form>
               ) : <p className="text-xs text-ink-500">A creative strategist can mark this reviewed.</p>}
             </>
           )}
-          {!beats.length && !quarantined && <p className="text-sm text-ink-500">{extractRun ? extractRun.errorSummary ?? "No beats." : "Not extracted yet."}</p>}
+          {!beats.length && !quarantined && <p className="text-sm text-ink-500">{extractRun ? extractRun.errorSummary ?? "No parts saved." : "This ad has not been split into its parts yet."}</p>}
         </section>
       </div>
     </div>

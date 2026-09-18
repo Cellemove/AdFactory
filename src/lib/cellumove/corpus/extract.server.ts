@@ -3,7 +3,7 @@ import "server-only";
 import { DEFAULT_MODEL } from "@/lib/llm";
 import type { AdBeatRow, AdMediaRow, CompetitorAdRow, CorpusExtractRunRow, CorpusTranscriptRunRow, Json } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
-import { CORPUS_ENGINE_VERSION, CORPUS_EXTRACT_PROMPT_VERSION, CORPUS_TAXONOMY_VERSION, USAGE_FEATURES, type TranscriptChannel } from "./constants";
+import { CORPUS_ENGINE_VERSION, CORPUS_EXTRACT_PROMPT_VERSION, CORPUS_TAXONOMY_VERSION, USAGE_FEATURES, type SegmentChannel } from "./constants";
 import { ExtractValidationError, buildExtractPrompt, validateExtractedBeats, type ValidatedExtraction } from "./extract";
 import { beatId, extractRunId, runKey } from "./ids";
 import { addUsage, generateStructured, parseJsonObject, type StructuredPart, type UsageSummary } from "./llm-seam.server";
@@ -11,6 +11,7 @@ import { readAdMedia } from "./media.server";
 import { loadTaxonomy } from "./taxonomy.server";
 import { renderTranscript } from "./transcribe";
 import { loadTranscriptSegments } from "./transcribe.server";
+import { claimModelRun } from "./run-claim.server";
 
 export const EXTRACT_MODEL = process.env.CORPUS_EXTRACT_MODEL?.trim() || DEFAULT_MODEL;
 
@@ -73,7 +74,7 @@ export async function extractAdBeats(
   if (!segmentRows.length) throw new Error(`Transcript run ${transcriptRun.id} has no segments.`);
   const segments = segmentRows.map((row) => ({
     id: row.id,
-    channel: row.channel as TranscriptChannel,
+    channel: row.channel as SegmentChannel,
     orderIndex: row.orderIndex,
     tStart: row.tStart,
     tEnd: row.tEnd,
@@ -86,7 +87,7 @@ export async function extractAdBeats(
   const key = options.force ? runKey([baseKey, Date.now(), Math.random()]) : baseKey;
   const runId = extractRunId(key);
   const startedAt = new Date().toISOString();
-  const opened = await supabase.from("CorpusExtractRun").upsert({
+  const claimed = await claimModelRun("CorpusExtractRun", runId, startedAt, () => supabase.from("CorpusExtractRun").insert({
     id: runId,
     runKey: key,
     competitorAdId: ad.id,
@@ -107,17 +108,10 @@ export async function extractAdBeats(
     reviewNote: null,
     startedAt,
     completedAt: null,
-  }, { onConflict: "runKey" });
-  if (opened.error) throw new Error(opened.error.message);
-  const stale = await supabase.from("AdBeat").delete().eq("runId", runId);
-  if (stale.error) throw new Error(stale.error.message);
+  }), Boolean(options.retryReview));
+  if (!claimed) return { run: (await loadExtractRun(runId))!, beats: await loadAdBeats(runId), reused: true };
 
   let videoPart: StructuredPart | null = null;
-  if (withVideo) {
-    if (!options.media) throw new Error("withVideo requires the ad's AdMedia row.");
-    const { bytes, mime } = await readAdMedia(options.media);
-    videoPart = { inlineData: { mimeType: mime, data: bytes.toString("base64") } };
-  }
 
   let usage: UsageSummary | null = null;
   let attempts = 0;
@@ -127,6 +121,13 @@ export async function extractAdBeats(
   let validated: ValidatedExtraction | null = null;
 
   try {
+    const stale = await supabase.from("AdBeat").delete().eq("runId", runId);
+    if (stale.error) throw new Error(stale.error.message);
+    if (withVideo) {
+      if (!options.media) throw new Error("withVideo requires the ad's AdMedia row.");
+      const { bytes, mime } = await readAdMedia(options.media);
+      videoPart = { inlineData: { mimeType: mime, data: bytes.toString("base64") } };
+    }
     for (attempts = 1; attempts <= 2 && !validated; attempts += 1) {
       const prompt = buildExtractPrompt({
         taxonomyVersion,
@@ -209,8 +210,15 @@ export async function extractAdBeats(
     }).eq("id", runId).select("*").single();
     if (completed.error) throw new Error(completed.error.message);
 
-    if (validated.format && (!ad.formatTag || ad.tagSource === "llm")) {
-      await supabase.from("CompetitorAd").update({ formatTag: validated.format, tagSource: "llm", updatedAt: new Date().toISOString() }).eq("id", ad.id);
+    // Format and concept tags feed the format/angle cohorts in MINE. A manual
+    // tag always wins over the model's.
+    if ((validated.format || validated.concept) && (!ad.tagSource || ad.tagSource === "llm")) {
+      await supabase.from("CompetitorAd").update({
+        ...(validated.format ? { formatTag: validated.format } : {}),
+        ...(validated.concept ? { angleTag: validated.concept } : {}),
+        tagSource: "llm",
+        updatedAt: new Date().toISOString(),
+      }).eq("id", ad.id);
     }
     return { run: completed.data as CorpusExtractRunRow, beats: beatRows, reused: false };
   } catch (error) {
@@ -221,7 +229,7 @@ export async function extractAdBeats(
       errorCode: "MODEL",
       errorSummary: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
       completedAt: new Date().toISOString(),
-    }).eq("id", runId);
+    }).eq("id", runId).eq("status", "running").eq("startedAt", startedAt);
     throw error;
   }
 }

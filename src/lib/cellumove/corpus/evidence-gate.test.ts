@@ -10,6 +10,18 @@ const segments: GateSegment[] = [
   { id: "ost1", channel: "ost", orderIndex: 1, tStart: 7.0, tEnd: 9.5, text: "30-day money back", confidence: 0.4 },
 ];
 
+test("repeated quotes match the occurrence at the beat time", () => {
+  const repeated: GateSegment[] = [
+    { id: "early", channel: "vo", orderIndex: 0, tStart: 1, tEnd: 3, text: "Try it risk free today" },
+    { id: "late", channel: "vo", orderIndex: 1, tStart: 19, tEnd: 21, text: "Try it risk free today" },
+  ];
+  const result = gateBeats([{ orderIndex: 0, evidenceQuote: "Try it risk free today", channel: "vo", tStart: 19, tEnd: 21 }], repeated, { transcriptEnd: 22 });
+  assert.equal(result.ok, true, result.errors.join(" "));
+  assert.equal(result.perBeat[0]?.matchedSegmentId, "late");
+  const wrongTime = gateBeats([{ orderIndex: 0, evidenceQuote: "Try it risk free today", channel: "vo", tStart: 10, tEnd: 12 }], repeated, { transcriptEnd: 22 });
+  assert.equal(wrongTime.ok, false);
+});
+
 test("normalisation ignores case, punctuation, curly quotes and spacing", () => {
   assert.equal(normalizeForMatch("It’s  “HEAVY”, legs!"), normalizeForMatch("it's \"heavy\" legs"));
 });

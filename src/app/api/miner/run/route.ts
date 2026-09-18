@@ -8,12 +8,15 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 600;
 
 const adId = z.string().regex(/^[a-zA-Z0-9_-]+$/).max(80);
+/** Spectre competitor domain. The app always works one brand at a time. */
+const brand = z.string().trim().min(1).max(120);
 
 const RunRequestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("deconstruct"), adId }).strict(),
   z.object({
     action: z.literal("queue"),
     stage: z.enum(AD_STAGES),
+    brand: brand.nullable().optional(),
     limit: z.number().int().positive().max(1000).nullable().optional(),
     force: z.boolean().optional(),
     retryReview: z.boolean().optional(),
@@ -27,9 +30,10 @@ const RunRequestSchema = z.discriminatedUnion("action", [
     skipGate: z.boolean().optional(),
   }).strict(),
   z.object({ action: z.literal("sync-teardowns"), adIds: z.array(adId).min(1).max(200) }).strict(),
-  z.object({ action: z.literal("winners"), target: z.number().int().min(10).max(500) }).strict(),
-  z.object({ action: z.literal("score") }).strict(),
-  z.object({ action: z.literal("mine") }).strict(),
+  z.object({ action: z.literal("winners"), brand, target: z.number().int().min(10).max(500) }).strict(),
+  z.object({ action: z.literal("score"), brand: brand.nullable().optional() }).strict(),
+  z.object({ action: z.literal("mine"), brand: brand.nullable().optional() }).strict(),
+  z.object({ action: z.literal("playbook"), brand }).strict(),
 ]);
 
 export async function POST(request: Request): Promise<Response> {
@@ -51,23 +55,25 @@ export async function POST(request: Request): Promise<Response> {
       case "deconstruct":
         return Response.json(await deconstructAd(input.adId));
       case "queue":
-        return Response.json({ items: await stageQueue(input.stage, { limit: input.limit, force: input.force, retryReview: input.retryReview }) });
+        return Response.json({ items: await stageQueue(input.stage, { brand: input.brand, limit: input.limit, force: input.force, retryReview: input.retryReview }) });
       case "step":
         return Response.json(await runAdStep(input.stage, input.adId, input));
       case "sync-teardowns":
         return Response.json({ results: await syncTeardowns(input.adIds) });
       case "winners":
-        return Response.json(await runWinners(input.target));
+        return Response.json(await runWinners({ brand: input.brand, target: input.target }));
       case "score":
-        return Response.json(await runScore());
+        return Response.json(await runScore({ brand: input.brand }));
       case "mine":
-        return Response.json(await runMine());
+        return Response.json(await runMine({ brand: input.brand }));
+      case "playbook":
+        return Response.json(await runPlaybook({ brand: input.brand }));
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const setupRequired = /schema cache|relation .* does not exist|Could not find the table|bucket not found/i.test(message);
     return Response.json(
-      { error: setupRequired ? `Database setup is incomplete (${message}). Apply migrations 017–021.` : message },
+      { error: setupRequired ? `Database setup is incomplete (${message}). Apply migrations 017–023.` : message },
       { status: setupRequired ? 503 : 500 },
     );
   }

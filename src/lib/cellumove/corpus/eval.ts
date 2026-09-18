@@ -3,9 +3,11 @@
 // scores the agreement between gold beats and predicted beats.
 
 import { collapse } from "./mine";
+import type { TranscriptChannel } from "./constants";
 import type { TranscriptSegment } from "./transcribe";
 
-export type PseudoSegment = TranscriptSegment & { id: string };
+/** A gold script has only spoken words, so its pseudo-transcript never carries a visual channel. */
+export type PseudoSegment = Omit<TranscriptSegment, "channel"> & { id: string; channel: TranscriptChannel };
 
 const WORDS_PER_SECOND = 2.5;
 

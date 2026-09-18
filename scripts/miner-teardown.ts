@@ -8,13 +8,14 @@
 //   npm run miner:teardown -- --limit 20         (top 20 instead)
 //   npm run miner:teardown -- --ad cad_… --force (re-run one ad)
 //   npm run miner:teardown -- --no-wait          (submit only; a later run collects)
+//   npm run miner:teardown -- --resync           (free: re-read finished teardowns)
 //
 // Already-completed ads are skipped unless --force; failed ones are retried.
 
 import { loadCorpusState, loadCompetitorAds } from "../src/lib/cellumove/corpus/state.server";
 import { planTeardown } from "../src/lib/cellumove/corpus/queue";
 import { isTerminal, TEARDOWN_TYPICAL_COST_USD, teardownCostUsd, teardownSourceFor } from "../src/lib/cellumove/corpus/teardown";
-import { loadAdTeardowns, submitAdTeardown, syncAdTeardown } from "../src/lib/cellumove/corpus/teardown.server";
+import { loadAdTeardowns, resyncAdTeardowns, submitAdTeardown, syncAdTeardown } from "../src/lib/cellumove/corpus/teardown.server";
 import { loadAdMedia } from "../src/lib/cellumove/corpus/media.server";
 import { refreshWinnerScores } from "../src/lib/cellumove/corpus/winner-score.server";
 import type { AdTeardownRow } from "../src/lib/database.types";
@@ -57,6 +58,14 @@ async function waitForResults(ids: string[]): Promise<AdTeardownRow[]> {
 async function main() {
   const args = parseMinerArgs();
   const noWait = process.argv.includes("--no-wait");
+
+  // Free: re-reads finished teardowns so the mirror picks up anything it used to
+  // drop (the scene-by-scene script). No model work, no credits.
+  if (process.argv.includes("--resync")) {
+    const result = await resyncAdTeardowns();
+    console.log(`Re-synced ${result.synced} teardown(s) - ${result.withScenes} now carry the scene-by-scene script, ${result.failed} failed.`);
+    return;
+  }
 
   const scoring = await refreshWinnerScores();
   const state = await loadCorpusState();
