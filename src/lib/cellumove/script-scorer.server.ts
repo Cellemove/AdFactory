@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import type { SessionUser } from "@/lib/auth";
+import { loadMinedAds } from "@/lib/cellumove/corpus/mine.server";
 import { embedTexts } from "@/lib/cellumove/embeddings";
 import { extractAnalyzedScript } from "@/lib/cellumove/script-scorer-extraction.server";
 import {
@@ -120,9 +121,35 @@ async function loadGoldAds(angleSlug: string): Promise<GoldAdInput[]> {
   }));
 }
 
+/**
+ * The Corpus Miner's fully broken-down winning ads, as Structure references. They
+ * carry no CelluMove angle, so they are matched by production format only, and
+ * every newly extracted ad joins automatically. Fail-soft: without them Structure
+ * just has no fallback, rather than the whole score run failing.
+ * ponytail: every brand in the corpus counts; filter by brand if an off-category
+ * brand is ever mined.
+ */
+async function loadCorpusReferenceAds(): Promise<GoldAdInput[]> {
+  try {
+    const ads = await loadMinedAds(SCORER_TAXONOMY_VERSION);
+    return ads.map((ad) => ({
+      id: ad.id,
+      angleSlug: "",
+      format: ad.formatTag ?? "",
+      beats: ad.beats.flatMap((beat) => {
+        const layer = ScorerLayerSchema.safeParse(beat.layer);
+        return layer.success ? [{ code: beat.code, layer: layer.data, orderIndex: beat.orderIndex, startSec: beat.startSec, endSec: beat.endSec }] : [];
+      }),
+    }));
+  } catch (error) {
+    console.warn("[scorer] corpus reference ads unavailable:", error instanceof Error ? error.message : String(error));
+    return [];
+  }
+}
+
 type VerbatimCohort = {
   count: number;
-  name: "avatar_market" | "avatar_all_markets" | "angle_market" | null;
+  name: "avatar_market" | "avatar_all_markets" | "angle_market" | "angle_all_markets" | "verified_library" | null;
   subAvatarId: string | null;
   angleSlug: string | null;
   market: string | null;
@@ -148,7 +175,18 @@ async function selectVerbatimCohort(context: ScoreContext): Promise<VerbatimCoho
     if (avatarAll >= 10) return { count: avatarAll, name: "avatar_all_markets", subAvatarId: context.project.subAvatarId, angleSlug: null, market: null };
   }
   const angleMarket = await countVerbatims({ angleSlug: context.angle.slug, market: context.marketCode });
-  return { count: angleMarket, name: angleMarket >= 10 ? "angle_market" : null, subAvatarId: null, angleSlug: context.angle.slug, market: context.marketCode };
+  if (angleMarket >= 10) return { count: angleMarket, name: "angle_market", subAvatarId: null, angleSlug: context.angle.slug, market: context.marketCode };
+  // Almost every verified verbatim is market-agnostic (market = null), and the
+  // match_verbatims RPC treats a market filter as exact — so an exact-market cohort
+  // saw none of them and Grounding always read "needs evidence". Widen in steps,
+  // narrowest audience first; the cohort name is stored so the report says which
+  // pool a score was measured against.
+  const angleAll = await countVerbatims({ angleSlug: context.angle.slug });
+  if (angleAll >= 10) return { count: angleAll, name: "angle_all_markets", subAvatarId: null, angleSlug: context.angle.slug, market: null };
+  // An angle with no tagged verbatims yet (a new angle) is still checked against
+  // real customer language — the whole verified library — instead of not at all.
+  const library = await countVerbatims({});
+  return { count: library, name: library >= 10 ? "verified_library" : null, subAvatarId: null, angleSlug: null, market: null };
 }
 
 async function runGrounding(context: ScoreContext, analysis: AnalyzedScript): Promise<ScriptScorerModuleResult> {
@@ -319,13 +357,14 @@ export async function createScriptScoreRun(input: {
     if (taxonomyResult.error) throw new Error(taxonomyResult.error.message);
     const taxonomy = (taxonomyResult.data ?? []) as CopyTaxonomyCodeRow[];
     const analysis = await extractAnalyzedScript({ document: context.document, taxonomy, runId, marketCode: context.marketCode });
-    const [goldAds, grounding, approvedEvidence] = await Promise.all([
+    const [goldAds, corpusAds, grounding, approvedEvidence] = await Promise.all([
       loadGoldAds(context.angle.slug),
+      loadCorpusReferenceAds(),
       runGrounding(context, analysis),
       loadApprovedEvidence(context),
     ]);
     const results = [
-      scoreStructuralFit({ document: context.document, analysis, goldAds, angleSlug: context.angle.slug, format: context.document.format }),
+      scoreStructuralFit({ document: context.document, analysis, goldAds, corpusAds, angleSlug: context.angle.slug, format: context.document.format }),
       grounding,
       scoreSpecificity(analysis),
       scoreFactVerification({ analysis, evidence: approvedEvidence }),

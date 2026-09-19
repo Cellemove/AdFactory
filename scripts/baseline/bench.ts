@@ -297,7 +297,8 @@ export async function main(argv: string[]): Promise<void> {
     autofix, judgeModel, briefs: results, summary: summarise(results),
   };
   await mkdir(OUT_DIR, { recursive: true });
-  const out = path.join(OUT_DIR, `${stamp}-${label.replace(/[^a-z0-9-]+/gi, "-")}.json`);
+  // Underscores only: .gitignore drops "*-*-*.json" (a guard against committed key files).
+  const out = path.join(OUT_DIR, `${stamp}_${label.replace(/[^a-z0-9]+/gi, "_")}.json`);
   await writeFile(out, `${JSON.stringify(artifact, null, 2)}\n`);
   printRun(artifact);
   if (judgeModel) {

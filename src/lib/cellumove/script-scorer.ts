@@ -2,8 +2,13 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ScriptDocument, ScriptModule } from "@/lib/cellumove/script-studio";
 
-export const SCORER_ENGINE_VERSION = "script-scorer-v2";
-export const SCORER_TAXONOMY_VERSION = "copy-taxonomy-v1";
+// v3: Structure falls back to the Corpus Miner's winning ads; Grounding counts
+// market-agnostic verbatims (both modules used to read "needs evidence" always).
+export const SCORER_ENGINE_VERSION = "script-scorer-v3";
+// v2 = the named-beat taxonomy the Corpus Miner extracts in, so a script's beats
+// and the winning ads' beats share one vocabulary. (v1 had 9 coarse codes and only
+// 3 hand-made gold ads ever existed for it.)
+export const SCORER_TAXONOMY_VERSION = "copy-taxonomy-v2";
 // v3: response schema with the taxonomy codes as an enum.
 export const SCORER_EXTRACTOR_PROMPT_VERSION = "script-scorer-extractor-v3";
 export const SCORER_BASELINE_VERSION = "gold-35-v1";
@@ -241,21 +246,35 @@ export function scoreStructuralFit(input: {
   document: ScriptDocument;
   analysis: AnalyzedScript;
   goldAds: GoldAdInput[];
+  /** Winning competitor ads broken down by the Corpus Miner — the fallback when too few gold ads match. */
+  corpusAds?: GoldAdInput[];
   angleSlug: string;
   format: string;
 }): ScriptScorerModuleResult {
   const exact = input.goldAds.filter((ad) => ad.angleSlug === input.angleSlug && ad.format.toLowerCase() === input.format.toLowerCase());
   const angleOnly = input.goldAds.filter((ad) => ad.angleSlug === input.angleSlug);
-  const cohort = exact.length >= 5 ? exact : angleOnly.length >= 5 ? angleOnly : [];
-  const cohortType = exact.length >= 5 ? "angle_and_format" : angleOnly.length >= 5 ? "angle" : null;
+  // Hand-decomposed gold ads for this angle win when there are enough of them.
+  // Otherwise the script is compared with proven winners of the same production
+  // format, then with every winner in the corpus.
+  const corpus = input.corpusAds ?? [];
+  const corpusFormat = corpus.filter((ad) => ad.format.toLowerCase() === input.format.toLowerCase());
+  const tiers = [
+    { type: "angle_and_format", ads: exact, describe: "gold ads matched by angle and format" },
+    { type: "angle", ads: angleOnly, describe: "gold ads matched by angle" },
+    { type: "corpus_format", ads: corpusFormat, describe: `winning competitor ads in the ${input.format} format (Corpus Miner)` },
+    { type: "corpus_all", ads: corpus, describe: "winning competitor ads of every format (Corpus Miner)" },
+  ] as const;
+  const tier = tiers.find((candidate) => candidate.ads.length >= 5) ?? null;
+  const cohort = tier?.ads ?? [];
+  const cohortType = tier?.type ?? null;
   if (!cohort.length) {
     return {
       module: "structural_fit",
       status: "insufficient_evidence",
       score: null,
       label: "Gold-set structural fit — provisional",
-      summary: "At least five matching gold ads are required before structural fit can be scored.",
-      metrics: { exactMatches: exact.length, angleMatches: angleOnly.length, minimumRequired: 5 },
+      summary: "At least five reference ads are required before structural fit can be scored: gold ads for this angle, or winning ads broken down in the Corpus Miner.",
+      metrics: { exactMatches: exact.length, angleMatches: angleOnly.length, corpusFormatMatches: corpusFormat.length, corpusAds: corpus.length, minimumRequired: 5 },
       findings: [],
     };
   }
@@ -354,7 +373,7 @@ export function scoreStructuralFit(input: {
     status: "scored",
     score: boundedScore(weighted),
     label: "Gold-set structural fit — provisional",
-    summary: `Compared with ${cohort.length} gold ads matched by ${cohortType === "angle_and_format" ? "angle and format" : "angle"}.`,
+    summary: `Compared with ${cohort.length} ${tier!.describe}.`,
     metrics: {
       cohortSize: cohort.length,
       cohortType,
@@ -434,7 +453,9 @@ export function scoreVerbatimGrounding(input: {
     status: "scored",
     score: boundedScore((grounded.length / eligible.length) * 100),
     label: "Verified-verbatim grounding — experimental",
-    summary: `${grounded.length} of ${eligible.length} audience-language lines cleared the provisional similarity threshold.`,
+    // A low score measured against the whole library usually means "no verbatims
+    // exist for this angle yet", not "bad copy" — so the pool is named.
+    summary: `${grounded.length} of ${eligible.length} audience-language lines cleared the provisional similarity threshold${input.cohort === "verified_library" ? `, measured against all ${input.candidateCount} verified verbatims because this angle has none tagged yet — mine verbatims for the angle to make this meaningful` : input.cohort === "angle_all_markets" ? ", measured against this angle's verbatims from every market" : ""}.`,
     metrics: { candidateCount: input.candidateCount, eligibleLines: eligible.length, groundedLines: grounded.length, cohort: input.cohort, threshold },
     findings,
   };

@@ -99,8 +99,7 @@ test("normalizes OTHER from an offer-layer hint for an ambiguous CTA sentence", 
   assert.equal(result.lines[0]?.layer, "OTHER");
 });
 
-test("scores structural coverage, order, and durations against five gold ads", () => {
-  const goldAds: GoldAdInput[] = Array.from({ length: 5 }, (_, index) => ({
+const goldAds: GoldAdInput[] = Array.from({ length: 5 }, (_, index) => ({
     id: `gold-${index}`,
     angleSlug: "daily-relief",
     format: "UGC",
@@ -109,10 +108,27 @@ test("scores structural coverage, order, and durations against five gold ads", (
       { code: "M_MECHANISM", layer: "M", orderIndex: 1, startSec: 5, endSec: 10 },
       { code: "O_CTA", layer: "O", orderIndex: 2, startSec: 10, endSec: 15 },
     ],
-  }));
+}));
+
+test("scores structural coverage, order, and durations against five gold ads", () => {
   const result = scoreStructuralFit({ document, analysis, goldAds, angleSlug: "daily-relief", format: "UGC" });
   assert.equal(result.status, "scored");
   assert.equal(result.score, 100);
+});
+
+test("Structure falls back to Corpus Miner winners: same format first, then every winner, gold ads still preferred", () => {
+  const winner = (id: string, format: string): GoldAdInput => ({ ...goldAds[0]!, id, angleSlug: "", format });
+  const sameFormat = Array.from({ length: 5 }, (_, index) => winner(`ugc-${index}`, "UGC"));
+  const otherFormat = Array.from({ length: 6 }, (_, index) => winner(`vo-${index}`, "Voiceover"));
+  const byFormat = scoreStructuralFit({ document, analysis, goldAds: [], corpusAds: [...sameFormat, ...otherFormat], angleSlug: "new-angle", format: "UGC" });
+  assert.equal(byFormat.status, "scored");
+  assert.equal(byFormat.metrics.cohortType, "corpus_format");
+  assert.equal(byFormat.metrics.cohortSize, 5);
+  const anyFormat = scoreStructuralFit({ document, analysis, goldAds: [], corpusAds: otherFormat, angleSlug: "new-angle", format: "UGC" });
+  assert.equal(anyFormat.metrics.cohortType, "corpus_all");
+  assert.match(anyFormat.summary, /Corpus Miner/);
+  assert.equal(scoreStructuralFit({ document, analysis, goldAds, corpusAds: otherFormat, angleSlug: "daily-relief", format: "UGC" }).metrics.cohortType, "angle_and_format");
+  assert.equal(scoreStructuralFit({ document, analysis, goldAds: [], corpusAds: otherFormat.slice(0, 4), angleSlug: "new-angle", format: "UGC" }).status, "insufficient_evidence");
 });
 
 test("reports unavailable structural and grounding datasets honestly", () => {

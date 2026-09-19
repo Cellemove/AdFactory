@@ -1,0 +1,174 @@
+{
+  "label": "baseline-1",
+  "createdAt": "2026-09-19T08:24:10.845Z",
+  "gitSha": "12b6a35",
+  "versions": {
+    "draft": "script-draft-v7-stated-limits",
+    "audit": "script-workflow-audit-v1"
+  },
+  "models": {
+    "script_studio_draft": "gemini-2.5-pro",
+    "script_workflow_audit": "gemini-2.5-pro",
+    "script_workflow_fix": "gemini-2.5-pro"
+  },
+  "autofix": false,
+  "judgeModel": "gemini-2.5-flash",
+  "briefs": [
+    {
+      "index": 0,
+      "title": "App Test 17 · Heat 3",
+      "ok": true,
+      "error": null,
+      "workflowScore": 77,
+      "gate": "needs_refinement",
+      "deductions": {
+        "close": 1,
+        "engagement": 9,
+        "hook": 5,
+        "pitch": 8
+      },
+      "scorerModules": {
+        "structural_fit": null,
+        "verbatim_grounding": null,
+        "specificity": 100,
+        "fact_verification": 28.57,
+        "observer_flags": null
+      },
+      "scorerMean": 64.285,
+      "judgeScore": 95,
+      "autoFix": null,
+      "attempts": 1,
+      "latencyMs": 120854,
+      "costUsd": 0.19747699999999999,
+      "calls": 10
+    },
+    {
+      "index": 1,
+      "title": "App Test 14",
+      "ok": true,
+      "error": null,
+      "workflowScore": 80,
+      "gate": "needs_refinement",
+      "deductions": {
+        "cadence": 0,
+        "close": 1,
+        "engagement": 2,
+        "pitch": 10,
+        "reframe": 7
+      },
+      "scorerModules": {
+        "fact_verification": 0,
+        "observer_flags": null,
+        "specificity": 15.15,
+        "structural_fit": null,
+        "verbatim_grounding": null
+      },
+      "scorerMean": 7.575,
+      "judgeScore": 91,
+      "autoFix": null,
+      "attempts": 1,
+      "latencyMs": 110817,
+      "costUsd": 0.142868,
+      "calls": 10
+    },
+    {
+      "index": 2,
+      "title": "APP Test 9 · Pattern Interrupt",
+      "ok": true,
+      "error": null,
+      "workflowScore": 70,
+      "gate": "needs_refinement",
+      "deductions": {
+        "pitch": 8,
+        "reframe": 9,
+        "mechanism": 11,
+        "hook": 2,
+        "cadence": 0
+      },
+      "scorerModules": {
+        "fact_verification": 20,
+        "observer_flags": null,
+        "specificity": 13.89,
+        "structural_fit": null,
+        "verbatim_grounding": null
+      },
+      "scorerMean": 16.945,
+      "judgeScore": 78,
+      "autoFix": null,
+      "attempts": 1,
+      "latencyMs": 155252,
+      "costUsd": 0.16558699999999998,
+      "calls": 10
+    },
+    {
+      "index": 3,
+      "title": "TEST POUR CLAUIDE",
+      "ok": true,
+      "error": null,
+      "workflowScore": 64,
+      "gate": "weak_alignment",
+      "deductions": {
+        "cadence": 0,
+        "hook": 8,
+        "mechanism": 7,
+        "pitch": 12,
+        "reframe": 9,
+        "trust": 2
+      },
+      "scorerModules": {
+        "fact_verification": 50,
+        "observer_flags": null,
+        "specificity": 93.33,
+        "structural_fit": null,
+        "verbatim_grounding": null
+      },
+      "scorerMean": 71.66499999999999,
+      "judgeScore": 79,
+      "autoFix": null,
+      "attempts": 1,
+      "latencyMs": 85171,
+      "costUsd": 0.12768200000000002,
+      "calls": 9
+    },
+    {
+      "index": 4,
+      "title": "script test heavy legs",
+      "ok": true,
+      "error": null,
+      "workflowScore": 55,
+      "gate": "weak_alignment",
+      "deductions": {
+        "hook": 5,
+        "pitch": 11,
+        "reframe": 15,
+        "mechanism": 7,
+        "trust": 4,
+        "engagement": 4
+      },
+      "scorerModules": {
+        "fact_verification": 25,
+        "observer_flags": null,
+        "specificity": 79.17,
+        "structural_fit": null,
+        "verbatim_grounding": null
+      },
+      "scorerMean": 52.085,
+      "judgeScore": 8,
+      "autoFix": null,
+      "attempts": 1,
+      "latencyMs": 99533,
+      "costUsd": 0.150841,
+      "calls": 9
+    }
+  ],
+  "summary": {
+    "ok": 5,
+    "failed": 0,
+    "meanWorkflow": 69.2,
+    "meanScorer": 42.5,
+    "meanJudgeDelta": 19.8,
+    "totalCostUsd": 0.7845,
+    "meanLatencyMs": 114325,
+    "totalAttempts": 5
+  }
+}
