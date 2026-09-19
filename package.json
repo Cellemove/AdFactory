@@ -51,6 +51,7 @@
     "verbatims:rebuild-verified": "tsx --env-file=.env scripts/rebuild-verified-verbatims.ts",
     "verbatims:mine-apify": "tsx --conditions=react-server --env-file=.env scripts/mine-apify-verbatims.ts",
     "test:apify": "tsx --test src/lib/apify.test.ts",
+    "miner:formats": "tsx --env-file=.env scripts/miner-formats.ts",
     "bench": "tsx --env-file=.env scripts/bench.ts",
     "baseline:e2e": "tsx --env-file=.env scripts/baseline-end-to-end.ts",
     "db:seed": "tsx --env-file=.env prisma/seed.ts",
