@@ -26,6 +26,10 @@ export interface RunAgentOptions {
   // When true, request strict JSON output mode (only valid when NOT grounded —
   // Vertex disallows tools + responseMimeType together).
   json?: boolean;
+  // Optional JSON schema for json:true calls. Keep it SHAPE-ONLY (types, keys,
+  // required) — Vertex rejects schemas carrying size limits ("too many states"),
+  // so lengths and ranges stay in Zod on the caller's side.
+  responseJsonSchema?: unknown;
   grounded?: boolean;
   feature: string;                       // usage tag, e.g. "pipeline_strategist"
   metadata?: Record<string, unknown>;
@@ -110,6 +114,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
   const system = `${promptOverride?.body.trim() || opts.instruction}${renderSops(standingSops)}`;
 
   const llm = getLLM();
+  const startedAt = Date.now();
   const resp = await llm.models.generateContent({
     model: DEFAULT_MODEL,
     contents: opts.context,
@@ -120,7 +125,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
       ...(opts.grounded
         ? { tools: [{ googleSearch: {} }] }
         : opts.json
-          ? { responseMimeType: "application/json" }
+          ? { responseMimeType: "application/json", ...(opts.responseJsonSchema ? { responseJsonSchema: opts.responseJsonSchema } : {}) }
           : {}),
       thinkingConfig: { thinkingBudget: opts.thinkingBudget ?? 2048 },
       ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
@@ -131,7 +136,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
     model: DEFAULT_MODEL,
     usage: resp.usageMetadata,
     grounded: opts.grounded,
-    metadata: { role: opts.role, sopRoles: roles, market: opts.marketCode ?? undefined, sopCount: sops.length, promptSopSlug: promptOverride?.slug, ...opts.metadata },
+    metadata: { role: opts.role, sopRoles: roles, market: opts.marketCode ?? undefined, sopCount: sops.length, promptSopSlug: promptOverride?.slug, durationMs: Date.now() - startedAt, ...opts.metadata },
   });
 
   const text = resp.text;

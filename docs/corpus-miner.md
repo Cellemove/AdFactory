@@ -67,3 +67,36 @@ Every row carries what produced it: `CorpusTranscriptRun.promptVersion`, `Corpus
 - On-screen text can be misread. Captions are deduped to first appearance, carry a confidence, and the voiceover channel is cross-checked against BrandSearch's transcript where one exists.
 - `winnerScore` is a ranking proxy (days active heaviest, then variants, placements, concept reuse). It is labelled as such everywhere and must not be read as ROAS.
 - The corpus is multilingual; prompts forbid translation. Compare within a format or brand cohort before drawing cross-language conclusions.
+
+## Daily recent winners and manual Spy batches
+
+`npm run miner:recent -- --dry-run` fetches active videos launched 7–30 UTC calendar days ago, ranked by EU spend and spread across tracked Spectre competitors. This is a performance proxy, not BrandSearch's private Winning Creative badge or proof of ROAS. The original 21-day corpus and Spy feed selection are unchanged.
+
+The job first syncs pending Teardown workbooks, then subtracts all AdTeardown rows submitted since UTC midnight from `RECENT_WINNERS_DAILY_CAP` (default 10, clamped 0–10). Manual/corpus submissions and retries consume this allowance too. At the cap it returns before fetching BrandSearch ads. `0` disables new work while retaining sync. Invalid nonnumeric configuration fails rather than silently spending credits.
+
+The pool targets four times the cap; approximately 40–50 BrandSearch credits/day (about 1.2–1.5k/month), depending on brand availability and pagination. A dry run prints candidates, launch dates and quota remaining; it submits no new jobs, but **does sync existing results** and spends BrandSearch credits. Every ad with an existing AdTeardown row is excluded, including failed jobs. Failed jobs can be retried manually. Only ads actually started are indexed. Upserts omit corpusIncluded and winnerPick, preserving corpus membership.
+
+`npm run miner:recent -- --limit 1` sets the total daily allowance to one, not one additional job. A sequential rerun returns "Day cap reached" with zero BrandSearch credits once that allowance is used. Three submission lanes stop starting ads after 450 seconds; accepted jobs finish asynchronously in Teardown. Typical workbook cost is about $0.20/video, taking 2–4 minutes.
+
+On `/spy`, creative strategists can select up to ten indexed video tiles and confirm the estimated cost before submitting. Queued/processing/completed ads cannot be selected. Pending jobs sync every 15 seconds while the page is open; closing it stops further submissions after in-flight requests. Expired links without a stored copy show a refresh instruction. Older cached feeds acquire selection IDs on their next refresh (up to three days). Images are unsupported. The latest 20 submissions appear under **Recently deconstructed**, including recent winners outside the gallery's 21-day rule. Their `/miner/[adId]` pages and Script Studio's existing Teardown2 source picker work without corpus membership; the source picker shows only the latest 100 completed workbooks.
+
+### Production setup
+
+- `vercel.json` schedules `/api/cron/recent-winners` daily at **04:00 UTC / 12:00 Singapore**, production only.
+- Configure `CRON_SECRET` (random secret) and `RECENT_WINNERS_DAILY_CAP=10` in Vercel Production, alongside existing BrandSearch, Supabase and classic Teardown credentials. Deploy to activate the schedule.
+- The route fails closed with HTTP 401 for missing/wrong bearer tokens or an unset secret. Middleware exempts `/api/cron/` so cron receives 401 instead of a login redirect. It has no interactive-user authentication; the bearer secret is mandatory.
+- Verify the project's actual function-duration support: the route requests 600 seconds; an existing export is not proof of plan eligibility. If restricted to 300 seconds, change maxDuration to 300 and budgetMs to 170_000; optionally add a second run at 05:00 UTC. See https://vercel.com/docs/functions/configuring-functions/duration.
+- After deployment, verify no/wrong/right authorization produces 401/401/200, inspect the Cron tab the following morning, and check the `[recent-winners]` JSON summary in logs. A correctly authorized request can submit paid jobs.
+
+### Known boundaries
+
+The read-before-submit guard and UTC count protect sequential reruns, not simultaneous cron/manual calls. There is no atomic claim or distributed lock; overlapping invocations can duplicate submissions or exceed the daily allowance. A Teardown POST timeout after remote acceptance can leave an orphan with no local row. Add durable claims/idempotency and orphan recovery before increasing schedule frequency. Stored-copy uploads also have longer timeouts than URL submissions, so the 450-second start budget is not a hard end-to-end deadline. No schema migration or automatic failure retry is introduced.
+
+### Verification (2026-09-18)
+
+- Passed typecheck, lint, production build, 59 corpus tests, 10 BrandSearch tests, and `npm run test:recent-winners` (runner/adapter/cron guard tests with a closed mock network).
+- Live BrandSearch lower-bound check: HTTP 200, one credit. Recent dry run: 41 credits, ten candidates across ten competitors, all inside the UTC date window.
+- Live `--limit 1`: one matching local/remote Teardown record, corpusIncluded=false, winnerPick=null; corpus count remained 103. Sequential rerun: day cap reached, zero provider credits.
+- Browser: feed Refresh, video checkboxes, $0.40 two-selection estimate, three-lane batch results, missing-link skip, status polling, ten-selection limit, completed badge/detail link, and Script Studio source visibility verified. Three live verification workbooks completed (one automatic and two manual).
+- Local HTTP cron checks: missing/wrong/valid bearer returned 401/401/200 (valid test used cap=0). Completed-ad POST returned "Already deconstructed" without resubmission.
+- Not deployed by this change. Production environment variables, the actual Vercel duration limit, deployed auth checks, and next-day Cron execution remain deployment checks.

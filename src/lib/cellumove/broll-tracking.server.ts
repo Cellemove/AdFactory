@@ -37,7 +37,8 @@ export async function recordScriptBrollSuggestions(projectId: string, document: 
     id: newId(), clipId: ref.clipId, clipName: ref.name, source: "script_studio", refId: projectId,
   })));
   if (insert.error) throw new Error(insert.error.message);
-  for (const ref of fresh) await incrementCounter(ref.clipId, "timesSuggested");
+  // Distinct clips, so the read-modify-write increments are independent.
+  await Promise.all(fresh.map((ref) => incrementCounter(ref.clipId, "timesSuggested")));
   return fresh.length;
 }
 

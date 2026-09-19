@@ -84,12 +84,13 @@ export type BrandWinnersPage = BrandSearchImportResult & { total: number | null 
  * closest public signal to BrandSearch's "Winning creative" badge (which the
  * API does not expose). Costs 1 credit per returned row.
  */
-export async function fetchBrandWinners(input: { domain: string; startedOnOrBefore: string; page: number; pageSize: number; videoOnly?: boolean }): Promise<BrandWinnersPage> {
+export async function fetchBrandWinners(input: { domain: string; startedOnOrBefore: string; startedOnOrAfter?: string; page: number; pageSize: number; videoOnly?: boolean }): Promise<BrandWinnersPage> {
   const { payload, headers } = await postJson("/v1/meta-ads/query", {
     brand_ids: [input.domain],
     status: "active",
     ...(input.videoOnly === false ? {} : { is_video: true }),
     ad_started_to: input.startedOnOrBefore,
+    ...(input.startedOnOrAfter ? { ad_started_from: input.startedOnOrAfter } : {}),
     sort_by: "eu_total_spend",
     sort_order: "desc",
     fields: META_FIELDS,

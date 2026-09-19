@@ -6,8 +6,8 @@ import type { Json } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
 import { toCompetitorAdRow, type CompetitorAdUpsertRow } from "./ingest";
 import {
-  balancedTrim, brandsToExtend, pageSizeFor, resolveCompetitors, WINNER_DEFAULT_MIN_DAYS, WINNER_DEFAULT_TARGET,
-  WINNER_RULE_VERSION, winnerCutoff, winnerRuleLabel, type BrandProgress,
+  balancedTrim, brandsToExtend, launchedWithin, pageSizeFor, resolveCompetitors, WINNER_DEFAULT_MIN_DAYS, WINNER_DEFAULT_TARGET, WINNER_RULE_VERSION,
+  winnerCutoff, winnerRuleLabel, type BrandProgress,
 } from "./winners";
 
 export type CollectWinnersInput = {
@@ -63,7 +63,7 @@ export type WinnerPool = {
  * balance them. Writes nothing — the corpus (collectWinners) and the /spy feed
  * both build on this. `videoOnly: false` also takes image ads.
  */
-export async function fetchWinnerPool(input: { brand?: string | null; target?: number; minDays?: number; videoOnly?: boolean } = {}): Promise<WinnerPool> {
+export async function fetchWinnerPool(input: { brand?: string | null; target?: number; minDays?: number; maxDays?: number; videoOnly?: boolean } = {}): Promise<WinnerPool> {
   const target = Math.max(1, Math.min(500, input.target ?? WINNER_DEFAULT_TARGET));
   const minDays = Math.max(1, input.minDays ?? WINNER_DEFAULT_MIN_DAYS);
   const videoOnly = input.videoOnly ?? true;
@@ -74,7 +74,8 @@ export async function fetchWinnerPool(input: { brand?: string | null; target?: n
   // rows carry this too, so the corpus swap below can match on it.
   const brand = input.brand ? competitors[0]!.domain : null;
 
-  const cutoff = winnerCutoff(Date.now(), minDays);
+  const now = Date.now();
+  const cutoff = winnerCutoff(now, minDays);
   const share = pageSizeFor(target, competitors.length);
   const pool = new Map<string, NormalizedBrandSearchAd[]>(competitors.map((brand) => [brand.domain, []]));
   const progress = new Map<string, BrandProgress & { page: number }>(competitors.map((brand) => [brand.domain, { domain: brand.domain, fetched: 0, total: null, exhausted: false, page: 0 }]));
@@ -87,12 +88,15 @@ export async function fetchWinnerPool(input: { brand?: string | null; target?: n
   const fetchNextPage = async (domain: string) => {
     const state = progress.get(domain)!;
     state.page += 1;
-    const page = await fetchBrandWinners({ domain, startedOnOrBefore: cutoff, page: state.page, pageSize: share, videoOnly });
+    const page = await fetchBrandWinners({ domain, startedOnOrBefore: cutoff, page: state.page, pageSize: share, videoOnly,
+      ...(input.maxDays != null ? { startedOnOrAfter: winnerCutoff(now, input.maxDays) } : {}),
+    });
     creditsUsed += page.creditsUsed ?? page.ads.length;
     dailyRemaining = page.dailyRemaining ?? dailyRemaining;
     monthlyRemaining = page.monthlyRemaining ?? monthlyRemaining;
     for (const ad of page.ads) {
       if ((videoOnly && ad.mediaType !== "video") || seen.has(ad.externalId)) continue;
+      if (input.maxDays != null && (!launchedWithin(ad.startedAt, now, minDays, input.maxDays) || ad.status !== "active")) continue;
       seen.add(ad.externalId);
       pool.get(domain)!.push(ad);
     }

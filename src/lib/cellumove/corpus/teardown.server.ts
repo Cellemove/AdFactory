@@ -61,6 +61,7 @@ export async function loadAdTeardown(competitorAdId: string): Promise<AdTeardown
 }
 
 export async function loadAdTeardowns(filters: { ids?: string[]; pendingOnly?: boolean } = {}): Promise<AdTeardownRow[]> {
+  if (filters.ids && !filters.ids.length) return [];
   let query = supabase.from("AdTeardown").select("*").order("submittedAt", { ascending: false });
   if (filters.ids?.length) query = query.in("competitorAdId", filters.ids);
   if (filters.pendingOnly) query = query.in("status", ["queued", "processing"]);

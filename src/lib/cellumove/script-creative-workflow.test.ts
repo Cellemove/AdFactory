@@ -4,6 +4,7 @@ import {
   calculateWorkflowScore,
   lexicalLineSimilarity,
   parseWorkflowAuditExtraction,
+  salvageWorkflowFindings,
   selectSpeakingRateBand,
   validateWorkflowFindingQuotes,
   workflowRubricFromConfig,
@@ -64,6 +65,21 @@ test("historical similarity is warning-grade matching, not identity-only matchin
 test("repairs Gemini's harmless top-level findings array while keeping strict finding validation", () => {
   assert.deepEqual(parseWorkflowAuditExtraction([finding("hook", 2)]).findings, [finding("hook", 2)]);
   assert.throws(() => parseWorkflowAuditExtraction([{ ...finding("hook", 2), scriptQuote: "" }]), /too_small/);
+});
+
+test("salvages valid findings instead of discarding the whole audit over one bad entry", () => {
+  const modules = [{ id: "module-1", spokenText: "This is exact.", onScreenText: "EXACT", visualDirection: "Open on the product." }];
+  const good = finding("hook", 2);
+  const raw = { findings: [
+    good,
+    { ...good, scriptModuleId: null, lineIndex: null },
+    { ...good, pointsDeducted: undefined, pointsDectucted: 2 },
+    { ...good, scriptQuote: "Paraphrased text" },
+  ] };
+  assert.deepEqual(salvageWorkflowFindings(raw, modules), [good]);
+  assert.deepEqual(salvageWorkflowFindings({ findings: [] }, modules), []);
+  assert.throws(() => salvageWorkflowFindings({ findings: [{ ...good, scriptQuote: "Paraphrased text" }] }, modules), /No workflow finding survived/);
+  assert.throws(() => salvageWorkflowFindings({ nope: true }, modules), /no findings array/);
 });
 
 test("first playbook draft keeps a valid rubric and approved-evidence boundary", () => {

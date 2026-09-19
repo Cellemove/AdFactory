@@ -10,6 +10,7 @@ import { supabase } from "@/lib/db";
 // so the user can drop entries they don't want.
 
 export interface SpyAd {
+  competitorAdId?: string;
   brand: string;            // brand / advertiser name
   brandDomain?: string;     // tracked Spectre competitor domain this creative belongs to
   imageUrl: string;         // renderable creative image
