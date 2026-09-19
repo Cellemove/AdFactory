@@ -41,6 +41,20 @@ export function pickNew<T>(picked: Map<string, T[]>, done: Set<string>, cap: num
   return out;
 }
 
+// Free pre-check before paying ~$0.20 for a Teardown, from fields BrandSearch
+// already returned. ponytail: fixed bounds; widen if good ads are being skipped
+// (the daily job logs every skip reason). There is deliberately NO "has a
+// voiceover transcript" rule: BrandSearch returns no transcript link for any of
+// our stored video ads (0 of 174 on 2026-09-19), so it would block every ad.
+export const TEARDOWN_MIN_SEC = 10;
+export const TEARDOWN_MAX_SEC = 120;
+
+export function teardownSkipReason(ad: { durationSec: number | null; rawPayload: { is_duplicate?: boolean | null } }): string | null {
+  if (ad.rawPayload.is_duplicate === true) return "duplicate creative";
+  if (ad.durationSec != null && (ad.durationSec < TEARDOWN_MIN_SEC || ad.durationSec > TEARDOWN_MAX_SEC)) return `outside ${TEARDOWN_MIN_SEC}-${TEARDOWN_MAX_SEC}s`;
+  return null;
+}
+
 /** BrandSearch caps page_size at 100 rows. */
 export const WINNER_MAX_PAGE_SIZE = 100;
 

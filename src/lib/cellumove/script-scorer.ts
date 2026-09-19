@@ -4,7 +4,8 @@ import type { ScriptDocument, ScriptModule } from "@/lib/cellumove/script-studio
 
 export const SCORER_ENGINE_VERSION = "script-scorer-v2";
 export const SCORER_TAXONOMY_VERSION = "copy-taxonomy-v1";
-export const SCORER_EXTRACTOR_PROMPT_VERSION = "script-scorer-extractor-v2";
+// v3: response schema with the taxonomy codes as an enum.
+export const SCORER_EXTRACTOR_PROMPT_VERSION = "script-scorer-extractor-v3";
 export const SCORER_BASELINE_VERSION = "gold-35-v1";
 export const GROUNDING_THRESHOLD = 0.72;
 

@@ -7,7 +7,7 @@
 // matching agent starts obeying it on the next run — no code change.
 
 import { supabase } from "../db";
-import { getLLM, DEFAULT_MODEL } from "../llm";
+import { getLLM, modelFor } from "../llm";
 import { recordUsage } from "../usage";
 import type { SopRow } from "../database.types";
 
@@ -114,9 +114,11 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
   const system = `${promptOverride?.body.trim() || opts.instruction}${renderSops(standingSops)}`;
 
   const llm = getLLM();
+  // Routed per feature: Pro unless the bench has promoted this feature (see llm.ts).
+  const model = modelFor(opts.feature);
   const startedAt = Date.now();
   const resp = await llm.models.generateContent({
-    model: DEFAULT_MODEL,
+    model,
     contents: opts.context,
     config: {
       systemInstruction: system,
@@ -133,7 +135,7 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
   });
   await recordUsage({
     feature: opts.feature,
-    model: DEFAULT_MODEL,
+    model,
     usage: resp.usageMetadata,
     grounded: opts.grounded,
     metadata: { role: opts.role, sopRoles: roles, market: opts.marketCode ?? undefined, sopCount: sops.length, promptSopSlug: promptOverride?.slug, durationMs: Date.now() - startedAt, ...opts.metadata },

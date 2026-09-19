@@ -3,7 +3,8 @@ import "server-only";
 import type { AdMediaRow, AdTeardownRow, CompetitorAdRow } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
 import { loadAdMedia, readAdMedia } from "./media.server";
-import { jobToRowPatch, TeardownJobSchema, teardownAdName, teardownRowId, teardownSourceFor, workbookScenes, type TeardownJob } from "./teardown";
+import { recordUsage } from "@/lib/usage";
+import { jobToRowPatch, TEARDOWN_TYPICAL_COST_USD, teardownCostUsd, TeardownJobSchema, teardownAdName, teardownRowId, teardownSourceFor, workbookScenes, type TeardownJob } from "./teardown";
 
 // Only Teardown's public endpoints are used (submit, poll, retry, signed
 // upload). They need no token; TEARDOWN_INTERNAL_TOKEN stays reserved for the
@@ -139,5 +140,17 @@ export async function resyncAdTeardowns(filters: { ids?: string[] } = {}): Promi
 /** Pull the current state of a queued/processing job into the mirror. */
 export async function syncAdTeardown(row: AdTeardownRow): Promise<AdTeardownRow> {
   const job = await fetchTeardownJob(row.teardownId);
-  return upsertTeardown({ ...row, ...jobToRowPatch(job), mediaSha256: row.mediaSha256 ?? job.sha256 ?? null });
+  const saved = await upsertTeardown({ ...row, ...jobToRowPatch(job), mediaSha256: row.mediaSha256 ?? job.sha256 ?? null });
+  // Teardown bills in its own GCP project, so this is the only place its spend
+  // reaches the Usage ledger. Guarded on the status transition: recorded once.
+  if (row.status !== "completed" && saved.status === "completed") {
+    await recordUsage({
+      feature: "teardown",
+      model: "teardown:gemini-2.5-pro",
+      usage: { promptTokenCount: saved.promptTokens ?? 0, candidatesTokenCount: saved.outputTokens ?? 0 },
+      costUsdOverride: teardownCostUsd(saved) ?? TEARDOWN_TYPICAL_COST_USD,
+      metadata: { competitorAdId: saved.competitorAdId, teardownId: saved.teardownId, estimated: teardownCostUsd(saved) == null },
+    });
+  }
+  return saved;
 }

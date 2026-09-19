@@ -15,7 +15,7 @@ import {
 } from "@/lib/cellumove/script-generation-progress";
 import { persistScriptSources } from "@/lib/cellumove/script-sources.server";
 import { recordScriptBrollSuggestions } from "@/lib/cellumove/broll-tracking.server";
-import { runScriptWorkflowAudit } from "@/lib/cellumove/script-workflow-audit.server";
+import { autoFixOnce, runScriptWorkflowAudit } from "@/lib/cellumove/script-workflow-audit.server";
 import { parsePipelineRunSelection } from "@/lib/cellumove/pipeline-selection";
 import type { ReferenceFormatBeat } from "@/lib/cellumove/reference-formats";
 import { createTeardownBrief } from "@/lib/cellumove/teardown-brief";
@@ -37,6 +37,7 @@ import type {
   SubAvatarRow,
 } from "@/lib/database.types";
 import { newId, supabase, unwrap, unwrapOpt } from "@/lib/db";
+import { spendWarning, todaySpendUsd } from "@/lib/usage";
 import { getTeardownDeconstruction } from "@/lib/teardown";
 
 export const CreateScriptProjectSchema = z.object({
@@ -335,14 +336,23 @@ export async function createScriptProjectCore(
 
     try {
       const savedProject = unwrapOpt(await supabase.from("ScriptProject").select("*").eq("id", projectId).maybeSingle()) as import("@/lib/database.types").ScriptProjectRow | null;
-      const runAudit = () => runScriptWorkflowAudit({ project: savedProject!, document, revision: 0, scriptVersion: 1, actorUserId: options.actor.id });
+      // Audit, then (only when SCRIPT_AUTOFIX=on and the draft is weak) one targeted
+      // fix pass whose result is offered in the Workflow panel, never applied silently.
+      const runAudit = async () => {
+        const audit = await runScriptWorkflowAudit({ project: savedProject!, document, revision: 0, scriptVersion: 1, actorUserId: options.actor.id });
+        const autoFix = await autoFixOnce({ project: savedProject!, document, audit }).catch((fixError) => {
+          console.warn("[scripts] auto-fix skipped:", fixError instanceof Error ? fixError.message : String(fixError));
+          return null;
+        });
+        return { ...audit, autoFix };
+      };
       if (savedProject && options.deferAudit) {
         after(() => runAudit().catch((auditError) => console.warn("[scripts] deferred workflow audit failed:", auditError instanceof Error ? auditError.message : String(auditError))));
         await reportScriptGenerationProgress(progress, { stage: "validation", level: "info", message: "First Creative Workflow audit is running in the background", detail: "The score appears in the Workflow panel shortly after the script opens." });
       } else if (savedProject) {
         await reportScriptGenerationProgress(progress, { stage: "validation", level: "info", message: "Running the first Creative Workflow audit" });
         const audit = await runAudit();
-        await reportScriptGenerationProgress(progress, { stage: "validation", level: "success", message: `Workflow audit complete · ${Math.round(audit.run.score ?? 0)}/100`, detail: "This playbook score is separate from the evidence scorer." });
+        await reportScriptGenerationProgress(progress, { stage: "validation", level: "success", message: `Workflow audit complete · ${Math.round(audit.run.score ?? 0)}/100`, detail: audit.autoFix ? `An improved version is available in the Workflow panel (${Math.round(audit.autoFix.fromScore)} → ${Math.round(audit.autoFix.toScore)}).` : "This playbook score is separate from the evidence scorer." });
       }
     } catch (auditError) {
       await reportScriptGenerationProgress(progress, { stage: "validation", level: "warning", message: "Script saved, but its first Workflow audit could not finish", detail: auditError instanceof Error ? auditError.message : String(auditError) });
@@ -353,6 +363,10 @@ export async function createScriptProjectCore(
     await reportScriptGenerationProgress(progress, { stage: "persistence", level: "error", message: "Saving failed; partial project data was rolled back", detail: message });
     throw error;
   }
+
+  // Warn-only spend check (never blocks): one query, after the work is done.
+  const overSpend = spendWarning(await todaySpendUsd());
+  if (overSpend) await reportScriptGenerationProgress(progress, { stage: "validation", level: "warning", message: "Daily AI spend warning", detail: overSpend });
 
   await reportScriptGenerationProgress(progress, {
     stage: "complete",

@@ -9,6 +9,16 @@ type AuditResult = {
   findings: ScriptWorkflowFindingRow[];
 };
 
+type AutoFix = { modules: Array<Pick<ScriptModule, "id" | "spokenText" | "onScreenText" | "visualDirection">>; fromScore: number; toScore: number };
+
+// The background fix pass stores its proposal on the audit run (see autoFixOnce).
+function autoFixOf(run: ScriptWorkflowAuditRunRow | null): AutoFix | null {
+  const snapshot = run?.contextSnapshot;
+  if (!snapshot || typeof snapshot !== "object" || Array.isArray(snapshot)) return null;
+  const fix = (snapshot as { autoFix?: AutoFix }).autoFix;
+  return fix && Array.isArray(fix.modules) && fix.modules.length ? fix : null;
+}
+
 const GATE_META: Record<string, { label: string; className: string }> = {
   pass: { label: "Playbook pass", className: "text-emerald-700" },
   needs_refinement: { label: "Needs refinement", className: "text-amber-700" },
@@ -61,7 +71,11 @@ export function WorkflowStrategyPanel({
         if (!active) return;
         setResult(body);
         if (body.run?.revision === revision) auditedDocumentRef.current = JSON.stringify(document);
-        if ((!body.run || body.run.status === "running") && triesLeft > 0) timer = setTimeout(() => void load(triesLeft - 1), 5000);
+        // Keep polling while the audit is pending, and briefly after a weak audit in
+        // case the background fix pass is still preparing an improved version.
+        const awaitingFix = Boolean(body.run) && body.run!.status === "complete" && body.run!.gateStatus !== "pass" && !autoFixOf(body.run)
+          && Date.now() - Date.parse(body.run!.completedAt ?? body.run!.createdAt) < 150_000;
+        if ((!body.run || body.run.status === "running" || awaitingFix) && triesLeft > 0) timer = setTimeout(() => void load(triesLeft - 1), 5000);
       })
       .catch((caught) => active && setError(caught instanceof Error ? caught.message : String(caught)))
       .finally(() => active && setPending(null));
@@ -76,6 +90,8 @@ export function WorkflowStrategyPanel({
     result.run!.revision !== revision
     || (auditedDocumentRef.current !== null && auditedDocumentRef.current !== currentSerialized)
   );
+  const autoFix = stale ? null : autoFixOf(result.run);
+  const [autoFixApplied, setAutoFixApplied] = useState(false);
   const fixable = useMemo(() => result.findings.filter((finding) => finding.fixEligible), [result.findings]);
   const gate = GATE_META[result.run?.gateStatus ?? "pending"] ?? DEFAULT_GATE_META;
   const receipt = document.workflow.evidence;
@@ -150,6 +166,13 @@ export function WorkflowStrategyPanel({
           <span className={gate.className}>{result.run ? gate.label : pending === "load" ? "Loading audit…" : "Not audited"}</span>
           {stale && <span className="font-semibold text-amber-700">Stale after edits</span>}
         </div>
+        {autoFix && !autoFixApplied && (
+          <div className="mt-2 rounded-lg bg-emerald-50 p-2 text-emerald-800">
+            <p className="font-semibold">Improved version available ({Math.round(autoFix.fromScore)} → {Math.round(autoFix.toScore)})</p>
+            <p className="mt-0.5 leading-4">{autoFix.modules.length} weak {autoFix.modules.length === 1 ? "beat was" : "beats were"} rewritten and re-scored. Applying makes unsaved edits you can review.</p>
+            <button type="button" className="btn btn-primary mt-2 w-full" disabled={pending !== null} onClick={() => { onApplyModules(autoFix.modules); setAutoFixApplied(true); setNotice("The improved version was applied as unsaved edits. Review it, then save."); }}>Apply improved version</button>
+          </div>
+        )}
       </div>
 
       {expanded && <div className="max-h-[calc(100dvh-14rem)] space-y-5 overflow-y-auto p-4">

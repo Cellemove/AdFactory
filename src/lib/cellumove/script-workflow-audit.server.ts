@@ -6,10 +6,12 @@ import { EMBED_MODEL, embedTexts } from "@/lib/cellumove/embeddings";
 import {
   calculateWorkflowScore,
   lexicalLineSimilarity,
+  pickWeakModules,
   salvageWorkflowFindings,
   SCRIPT_WORKFLOW_AUDIT_PROMPT_VERSION,
   SCRIPT_WORKFLOW_FIX_PROMPT_VERSION,
   selectSpeakingRateBand,
+  shouldKeepAutoFix,
   validateWorkflowFindingQuotes,
   WORKFLOW_AUDIT_RESPONSE_JSON_SCHEMA,
   workflowRubricFromConfig,
@@ -19,7 +21,7 @@ import {
 import { loadPublishedScriptPlaybook, loadScriptPlaybookVersion } from "@/lib/cellumove/script-playbook.server";
 import { scriptSourceLines } from "@/lib/cellumove/script-scorer";
 import { hashWorkflowDocument, normalizedLineHash } from "@/lib/cellumove/script-workflow-hash";
-import { parseScriptDocument, type ScriptDocument } from "@/lib/cellumove/script-studio";
+import { inspectScriptQuality, parseScriptDocument, type ScriptDocument } from "@/lib/cellumove/script-studio";
 import type {
   Json,
   ScriptLineFingerprintRow,
@@ -29,7 +31,7 @@ import type {
   ScriptWorkflowFindingRow,
 } from "@/lib/database.types";
 import { newId, supabase } from "@/lib/db";
-import { FAST_MODEL } from "@/lib/llm";
+import { modelFor } from "@/lib/llm";
 
 export type ScriptWorkflowAuditResult = {
   run: ScriptWorkflowAuditRunRow;
@@ -229,6 +231,24 @@ async function fingerprintVersion(projectId: string, scriptVersion: number, docu
   })), { onConflict: "projectId,scriptVersion,scriptModuleId,lineKind,normalizedHash", ignoreDuplicates: true });
 }
 
+/** Findings + score for a document. Writes nothing — the run and the auto-fix candidate both use it. */
+async function scoreWorkflowDocument(projectId: string, document: ScriptDocument): Promise<{ findings: WorkflowAuditFinding[]; score: number }> {
+  const [semantic, originality] = await Promise.all([
+    extractSemanticFindings(document),
+    originalityFindings(projectId, document),
+  ]);
+  const combined = [...deterministicWorkflowFindings(document), ...semantic, ...originality];
+  const seen = new Set<string>();
+  const findings = combined.filter((item) => {
+    const key = `${item.ruleId}:${item.scriptModuleId}:${item.scriptQuote}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  validateWorkflowFindingQuotes(findings, document.modules);
+  return { findings, score: calculateWorkflowScore(findings, workflowRubricFromConfig(document.workflow.playbook.config)) };
+}
+
 export async function runScriptWorkflowAudit(input: {
   project: ScriptProjectRow;
   document: ScriptDocument;
@@ -248,27 +268,14 @@ export async function runScriptWorkflowAudit(input: {
   const documentHash = hashWorkflowDocument(document);
   const insert = await supabase.from("ScriptWorkflowAuditRun").insert({
     id: runId, projectId: input.project.id, scriptVersion: input.scriptVersion, documentHash, revision: input.revision,
-    playbookVersionId: playbook.id, promptVersion: SCRIPT_WORKFLOW_AUDIT_PROMPT_VERSION, model: FAST_MODEL,
+    playbookVersionId: playbook.id, promptVersion: SCRIPT_WORKFLOW_AUDIT_PROMPT_VERSION, model: modelFor("script_workflow_audit"),
     status: "running", gateStatus: "pending", contextSnapshot: asJson({ workflow: document.workflow, moduleCount: document.modules.length }),
     createdByUserId: input.actorUserId, startedAt: now, createdAt: now,
   }).select("*").single();
   if (insert.error) throw new Error(insert.error.message);
 
   try {
-    const [semantic, originality] = await Promise.all([
-      extractSemanticFindings(document),
-      originalityFindings(input.project.id, document),
-    ]);
-    const combined = [...deterministicWorkflowFindings(document), ...semantic, ...originality];
-    const seen = new Set<string>();
-    const findings = combined.filter((item) => {
-      const key = `${item.ruleId}:${item.scriptModuleId}:${item.scriptQuote}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    validateWorkflowFindingQuotes(findings, document.modules);
-    const score = calculateWorkflowScore(findings, workflowRubricFromConfig(document.workflow.playbook.config));
+    const { findings, score } = await scoreWorkflowDocument(input.project.id, document);
     if (findings.length) {
       const saved = await supabase.from("ScriptWorkflowFinding").insert(findings.map((item) => ({
         id: newId(), runId, ruleId: item.ruleId, category: item.category, severity: item.severity,
@@ -332,4 +339,55 @@ export async function proposeWorkflowFix(input: {
   const returned = new Set(parsed.modules.map((module) => module.id));
   if (returned.size !== moduleIds.length || moduleIds.some((id) => !returned.has(id))) throw new Error("Workflow fix did not return exactly the selected modules.");
   return parsed.modules;
+}
+
+export type WorkflowAutoFix = {
+  modules: Array<z.infer<typeof FixModuleSchema>>;
+  fromScore: number;
+  toScore: number;
+  createdAt: string;
+};
+
+/**
+ * One targeted fix pass on a weak first draft. Rewrites only the modules losing
+ * the most points, re-scores the result, and keeps it ONLY if it is clearly
+ * better. It never touches the saved script: the proposal is stored on the audit
+ * run and offered in the Workflow panel, so nothing changes under a strategist
+ * who is already editing. Off unless SCRIPT_AUTOFIX=on — prove it on the bench
+ * (scripts/bench.ts --autofix) before enabling in production.
+ */
+export async function autoFixOnce(input: {
+  project: ScriptProjectRow;
+  document: ScriptDocument;
+  audit: ScriptWorkflowAuditResult;
+}): Promise<WorkflowAutoFix | null> {
+  if (process.env.SCRIPT_AUTOFIX?.trim().toLowerCase() !== "on") return null;
+  const fromScore = Number(input.audit.run.score ?? 0);
+  if (workflowGateStatus(fromScore) === "pass") return null;
+  const document = parseScriptDocument(input.document);
+  const locked = new Set(document.modules.filter((module) => module.locked).map((module) => module.id));
+  const weak = pickWeakModules(input.audit.findings, locked);
+  if (!weak.length) return null;
+
+  const modules = await proposeWorkflowFix({
+    project: input.project, document, expectedRevision: input.audit.run.revision, auditRun: input.audit.run, findings: weak,
+  });
+  const patchById = new Map(modules.map((module) => [module.id, module]));
+  const candidate = parseScriptDocument({
+    ...document,
+    modules: document.modules.map((module) => (patchById.has(module.id) ? { ...module, ...patchById.get(module.id)! } : module)),
+  });
+  // Free check first: never offer a rewrite that introduces a new hard problem.
+  const errorsIn = (doc: ScriptDocument) => inspectScriptQuality(doc).filter((issue) => issue.severity === "error").length;
+  if (errorsIn(candidate) > errorsIn(document)) return null;
+
+  const { score: toScore } = await scoreWorkflowDocument(input.project.id, candidate);
+  if (!shouldKeepAutoFix(fromScore, toScore)) return null;
+
+  const autoFix: WorkflowAutoFix = { modules, fromScore, toScore, createdAt: new Date().toISOString() };
+  const snapshot = (input.audit.run.contextSnapshot && typeof input.audit.run.contextSnapshot === "object" && !Array.isArray(input.audit.run.contextSnapshot))
+    ? input.audit.run.contextSnapshot as Record<string, unknown> : {};
+  const saved = await supabase.from("ScriptWorkflowAuditRun").update({ contextSnapshot: asJson({ ...snapshot, autoFix }) }).eq("id", input.audit.run.id);
+  if (saved.error) throw new Error(saved.error.message);
+  return autoFix;
 }

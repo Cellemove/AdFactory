@@ -6,9 +6,12 @@
 // here whenever the corresponding prompt or algorithm changes; never edit a
 // prompt in place under the same version.
 
-export const CORPUS_ENGINE_VERSION = "corpus-miner-v1";
+// v2: the validator repairs numbering, channel and unambiguous drifted timecodes
+// itself instead of re-calling the model (see extract.ts, evidence-gate.ts).
+export const CORPUS_ENGINE_VERSION = "corpus-miner-v2";
 export const CORPUS_TRANSCRIBE_PROMPT_VERSION = "corpus-transcribe-v2";
-export const CORPUS_EXTRACT_PROMPT_VERSION = "corpus-extract-v2";
+// v3: response schema with the taxonomy codes as an enum; retry note moved to the end.
+export const CORPUS_EXTRACT_PROMPT_VERSION = "corpus-extract-v3";
 export const WINNER_SCORE_VERSION = "winner-score-v1";
 
 /** Taxonomy the extractor selects from: v2 is the named-beat list built from the strategist's script board. */

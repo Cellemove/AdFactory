@@ -64,18 +64,21 @@ test("gate rejects invented quotes with the retry sentence", () => {
   assert.equal(report.perBeat[0]?.matchedSegmentId, null);
 });
 
-test("gate reports a channel mismatch when the quote lives in the other channel", () => {
+test("a quote declared in the wrong channel is corrected from the transcript, not sent back to the model", () => {
   const report = gateBeats([{ orderIndex: 0, evidenceQuote: "HEAVY LEGS?", channel: "vo", tStart: 0.4, tEnd: 2.0 }], segments, { transcriptEnd: 9.5 });
-  assert.equal(report.ok, false);
-  assert.match(report.errors[0] ?? "", /declares channel "vo"/);
+  assert.equal(report.ok, true, report.errors.join(" "));
+  assert.match(report.warnings[0] ?? "", /declared channel "vo"/);
   assert.equal(report.perBeat[0]?.matchedChannel, "ost");
 });
 
 test("gate enforces timecodes: beyond the end, outside the segment, out of order", () => {
   const beyond = gateBeats([{ orderIndex: 0, evidenceQuote: "my circulation was the problem", channel: "vo", tStart: 6, tEnd: 14 }], segments, { transcriptEnd: 9.5 });
   assert.match(beyond.errors.join(" "), /transcript ends at 9.5s/);
+  // A verified quote with one home in the transcript: drifted timecodes are snapped to it.
   const outside = gateBeats([{ orderIndex: 0, evidenceQuote: "my circulation was the problem", channel: "vo", tStart: 0, tEnd: 1 }], segments, { transcriptEnd: 9.5 });
-  assert.match(outside.errors.join(" "), /do not overlap the quoted segment/);
+  assert.equal(outside.ok, true, outside.errors.join(" "));
+  assert.match(outside.warnings.join(" "), /snapped to/);
+  assert.deepEqual(outside.perBeat[0]?.repairedSpan, outside.perBeat[0]?.segmentSpan);
   const disorder = gateBeats([
     { orderIndex: 0, evidenceQuote: "my circulation was the problem", channel: "vo", tStart: 6, tEnd: 9.5 },
     { orderIndex: 1, evidenceQuote: "Stop scrolling", channel: "vo", tStart: 0, tEnd: 2 },

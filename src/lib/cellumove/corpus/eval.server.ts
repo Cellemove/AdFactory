@@ -5,7 +5,7 @@ import type { CorpusEvalRunRow, GoldAdRow, GoldBeatRow, Json } from "@/lib/datab
 import { newId, supabase } from "@/lib/db";
 import { CORPUS_ENGINE_VERSION, CORPUS_EXTRACT_PROMPT_VERSION, CORPUS_TAXONOMY_VERSION, GATE1_CODE_THRESHOLD, GATE1_LAYER_THRESHOLD, USAGE_FEATURES } from "./constants";
 import { compareBeats, goldToPseudoTranscript, summarizeEval, type EvalAdResult, type EvalSummary } from "./eval";
-import { ExtractValidationError, buildExtractPrompt, validateExtractedBeats } from "./extract";
+import { ExtractValidationError, buildExtractPrompt, extractResponseJsonSchema, validateExtractedBeats } from "./extract";
 import { EXTRACT_MODEL } from "./extract.server";
 import { addUsage, generateStructured, parseJsonObject, type UsageSummary } from "./llm-seam.server";
 import { loadTaxonomy } from "./taxonomy.server";
@@ -55,8 +55,9 @@ export async function runGate1Eval(input: Gate1Input = {}): Promise<Gate1Result>
           model: EXTRACT_MODEL,
           parts: [{ text: buildExtractPrompt({ taxonomyVersion, taxonomy: taxonomy.entries, transcriptText, durationSec: pseudo.durationSec, language: null, previousError }) }],
           thinkingBudget: 2048,
+          responseJsonSchema: extractResponseJsonSchema(taxonomy.entries),
           feature: USAGE_FEATURES.eval,
-          metadata: { goldAdId: goldAd.id, externalId: goldAd.externalId, promptVersion: CORPUS_EXTRACT_PROMPT_VERSION, taxonomyVersion, attempt: attempts },
+          metadata: { goldAdId: goldAd.id, externalId: goldAd.externalId, promptVersion: CORPUS_EXTRACT_PROMPT_VERSION, taxonomyVersion, attempt: attempts, retryReason: previousError?.slice(0, 300) },
         });
         usage = addUsage(usage, response.usage);
         const validated = validateExtractedBeats({ raw: parseJsonObject(response.text), allowedCodes: taxonomy.allowedCodes, segments: pseudo.segments, transcriptEnd: pseudo.durationSec });

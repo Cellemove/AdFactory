@@ -405,6 +405,19 @@ export async function ingestPlatformVerbatims(input: IngestInput): Promise<Inges
   const warnings: string[] = [];
   let spentUsd = 0;
 
+  // Recency skip: a plain re-run of the same platform + angle inside the window
+  // mostly re-buys comments we already own. A focus, explicit URLs, or force
+  // always scrape. ponytail: one window for all platforms; split if TikTok needs fresher.
+  const rescrapeDays = Number(process.env.APIFY_RESCRAPE_DAYS) || 14;
+  if (!input.force && !input.focus?.trim() && !input.targetUrls?.length && input.angleSlug) {
+    const since = new Date(Date.now() - rescrapeDays * 86_400_000).toISOString();
+    const recent = await supabase.from("VerbatimScrapeTarget").select("scrapedAt").eq("platform", input.platform).eq("angleSlug", input.angleSlug).gte("scrapedAt", since).order("scrapedAt", { ascending: false }).limit(1).maybeSingle();
+    if (recent.data) {
+      return { platform: input.platform, scraped: 0, killedGate: 0, killedDedupe: 0, killedLLM: 0, inserted: 0, estUsd: 0,
+        warnings: [`Skipped: ${input.platform} was already scraped for this angle on ${recent.data.scrapedAt.slice(0, 10)} (within ${rescrapeDays} days). Add a focus, target URLs, or force to scrape anyway.`] };
+    }
+  }
+
   const spend = async (actorId: string, usd: number, runId: string, items: number) => {
     spentUsd += usd;
     await recordUsage({

@@ -53,6 +53,41 @@ export type ExtractResponse = z.infer<typeof ExtractResponseSchema>;
 
 export type TaxonomyEntry = { code: string; layer: string; label: string; description: string };
 
+/**
+ * Shape-only response schema for the extractor. Listing the taxonomy codes as an
+ * enum stops the model inventing codes ("STORY", "PAIN") — the most common reason
+ * extractions were quarantined. No size limits: Vertex rejects those, and Zod plus
+ * the evidence gate still validate everything after the call.
+ */
+export function extractResponseJsonSchema(taxonomy: TaxonomyEntry[]) {
+  const text = { type: "string" };
+  return {
+    type: "object",
+    properties: {
+      format: text,
+      concept: text,
+      beats: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            order_index: { type: "integer" },
+            layer: { type: "string", enum: [...new Set(taxonomy.map((entry) => entry.layer))] },
+            code: { type: "string", enum: taxonomy.map((entry) => entry.code) },
+            t_start: { type: "number" },
+            t_end: { type: "number" },
+            evidence_quote: text,
+            channel: { type: "string", enum: [...TRANSCRIPT_CHANNELS] },
+            other_explanation: { type: ["string", "null"] },
+          },
+          required: ["order_index", "layer", "code", "t_start", "t_end", "evidence_quote", "channel"],
+        },
+      },
+    },
+    required: ["beats"],
+  };
+}
+
 export type ValidatedBeat = {
   orderIndex: number;
   layer: ScorerLayer;
@@ -116,13 +151,15 @@ export function buildExtractPrompt(input: {
     `- Lines tagged [${VISUAL_CHANNEL} ...] describe what is on screen. Use them to understand demos, split screens and before/after shots, but never quote them: evidence_quote must come from a "vo" or "ost" line.`,
     "",
     'Required beat shape: {"order_index": int, "layer": string, "code": string, "t_start": number, "t_end": number, "evidence_quote": string, "channel": "vo" | "ost", "other_explanation": string | null}',
-    input.previousError ? `\nYour previous response failed validation: ${input.previousError}\nFix exactly that issue and return the full corrected list.` : "",
     "",
     `TAXONOMY (version ${input.taxonomyVersion}):`,
     JSON.stringify(input.taxonomy.map((entry) => ({ code: entry.code, layer: entry.layer, label: entry.label, description: entry.description }))),
     "",
     `TRANSCRIPT (${input.durationSec}s${input.language ? `, language ${input.language}` : ""}); one segment per line as [channel t_start-t_end] text:`,
     input.transcriptText,
+    // Last on purpose: everything above is identical to the first attempt, so a
+    // retry is served from the provider's prompt cache instead of re-billed in full.
+    input.previousError ? `\nYour previous response failed validation: ${input.previousError}\nFix exactly that issue and return the full corrected list.` : "",
   ].filter((line) => line !== "").join("\n");
 }
 
@@ -154,11 +191,13 @@ export function validateExtractedBeats(input: {
     const issue = parsed.error.issues[0];
     throw new ExtractValidationError(`Response shape is invalid at ${issue?.path.join(".") || "root"}: ${issue?.message ?? "unknown"}.`, "SCHEMA");
   }
-  const beats = [...parsed.data.beats].sort((a, b) => a.order_index - b.order_index);
-  const indexes = beats.map((beat) => beat.order_index);
-  if (new Set(indexes).size !== indexes.length || indexes.some((value, index) => value !== index)) {
-    throw new ExtractValidationError(`order_index values must be 0..${beats.length - 1} with no gaps or duplicates (got ${indexes.join(",")}).`, "SCHEMA");
-  }
+  // Numbering is bookkeeping and the timecodes already say the order, so beats are
+  // ordered by time and renumbered here instead of paying for a second model call.
+  // Judgement calls still retry — an unknown code, a quote that is not in the ad,
+  // and a code/layer mismatch (which of the two is wrong is not knowable from here).
+  const beats = [...parsed.data.beats]
+    .sort((a, b) => a.t_start - b.t_start || a.order_index - b.order_index)
+    .map((beat, index) => ({ ...beat, order_index: index }));
   for (const beat of beats) {
     const expectedLayer = input.allowedCodes.get(beat.code);
     if (!expectedLayer) {
@@ -203,8 +242,8 @@ export function validateExtractedBeats(input: {
         orderIndex: beat.order_index,
         layer: beat.layer,
         code: beat.code,
-        startSec: beat.t_start,
-        endSec: beat.t_end,
+        startSec: result.repairedSpan?.[0] ?? beat.t_start,
+        endSec: result.repairedSpan?.[1] ?? beat.t_end,
         evidenceQuote: beat.evidence_quote,
         channel: result.matchedChannel ?? beat.channel,
         otherExplanation: beat.other_explanation?.trim() || null,

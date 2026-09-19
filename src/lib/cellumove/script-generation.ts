@@ -27,7 +27,8 @@ export const GeneratedHookSchema = z.object({
 
 export type GeneratedHook = z.infer<typeof GeneratedHookSchema>;
 
-const GeneratedHooksArraySchema = z.array(GeneratedHookSchema).min(3).max(8);
+const MAX_HOOKS = 8;
+const GeneratedHooksArraySchema = z.array(GeneratedHookSchema).min(3).max(MAX_HOOKS);
 
 export const GeneratedScriptDraftSchema = z.object({
   fiveD: ScriptFiveDSchema,
@@ -283,7 +284,14 @@ export function applyGeneratedScriptDraft(input: {
   sourceRefs: ScriptGenerationSourceRef[];
   preserveLocked?: boolean;
 }): ScriptDocument {
-  const draft = GeneratedScriptDraftSchema.parse(input.draft);
+  // Too many hooks is a count overflow, not a quality problem: keep the first
+  // MAX_HOOKS instead of paying for a second Pro call (the one retry reason the
+  // Usage log showed for this prompt version).
+  const raw = input.draft as { hookAlternatives?: unknown } | null;
+  const trimmed = raw && Array.isArray(raw.hookAlternatives) && raw.hookAlternatives.length > MAX_HOOKS
+    ? { ...raw, hookAlternatives: raw.hookAlternatives.slice(0, MAX_HOOKS) }
+    : input.draft;
+  const draft = GeneratedScriptDraftSchema.parse(trimmed);
   validateModuleCoverage(input.scaffold, draft);
   const generatedById = new Map(draft.modules.map((module) => [module.id, module]));
   const brollById = new Map(input.brollClips.map((clip) => [clip.id, clip]));

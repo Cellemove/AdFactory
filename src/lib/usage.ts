@@ -78,6 +78,24 @@ export function computeCostUsd(opts: {
   return Math.round(cost * 1_000_000) / 1_000_000; // 6 decimals
 }
 
+// Warn-only daily spend check across everything in the ledger (Gemini, Teardown,
+// Apify; BrandSearch is logged at $0). Callers show the warning — nothing blocks.
+// One query per call, so use it at the END of a job, never inside recordUsage.
+export const SPEND_WARN_USD_PER_DAY = Number(process.env.SPEND_WARN_USD_PER_DAY) || 5;
+
+export function spendWarning(spentUsd: number, threshold = SPEND_WARN_USD_PER_DAY): string | null {
+  return spentUsd >= threshold
+    ? `AI spend today is $${spentUsd.toFixed(2)}, over the $${threshold.toFixed(2)} daily warning level. Nothing is blocked — see /usage for the breakdown.`
+    : null;
+}
+
+export async function todaySpendUsd(now = new Date()): Promise<number> {
+  const midnightUtc = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+  const result = await supabase.from("Usage").select("estimatedCostUsd").gte("createdAt", midnightUtc).limit(10000);
+  if (result.error) return 0;
+  return (result.data ?? []).reduce((sum, row) => sum + (Number(row.estimatedCostUsd) || 0), 0);
+}
+
 export async function recordUsage(input: RecordUsageInput): Promise<void> {
   const inputTokens = input.usage?.promptTokenCount ?? 0;
   const outputTokens = input.usage?.candidatesTokenCount ?? 0;
