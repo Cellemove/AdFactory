@@ -135,6 +135,36 @@ export type ApprovedEvidence = {
   text: string;
 };
 
+// ─── "Improve score": when is an AI edit allowed to be offered? ────────────────
+
+/** Points the four scored modules must gain in total. Smaller gains are scorer noise. */
+export const IMPROVE_MIN_TOTAL_GAIN = 3;
+/** No single module may pay for another's gain by more than this. */
+export const IMPROVE_MAX_MODULE_DROP = 2;
+
+/**
+ * Gate for an AI-edited candidate, judged on the SAME scorer as the original.
+ * Facts may never fall at all: a rewrite that raises Grounding by loosening a
+ * claim is exactly the inaccurate edit this feature must not make.
+ */
+export function judgeScoreImprovement(
+  before: Record<string, number | null | undefined>,
+  after: Record<string, number | null | undefined>,
+): { accept: boolean; gain: number; reasons: string[] } {
+  const reasons: string[] = [];
+  let gain = 0;
+  for (const [module, was] of Object.entries(before)) {
+    const now = after[module];
+    if (was == null) continue;
+    if (now == null) { reasons.push(`${module} could no longer be scored`); continue; }
+    gain += now - was;
+    const allowedDrop = module === "fact_verification" ? 0 : IMPROVE_MAX_MODULE_DROP;
+    if (was - now > allowedDrop) reasons.push(`${module} fell ${Math.round(was)} → ${Math.round(now)}`);
+  }
+  if (gain < IMPROVE_MIN_TOTAL_GAIN) reasons.push(`total gain ${gain.toFixed(1)} is below ${IMPROVE_MIN_TOTAL_GAIN}`);
+  return { accept: reasons.length === 0, gain, reasons };
+}
+
 export function scriptSourceLines(document: ScriptDocument): ScriptSourceLine[] {
   const lines: ScriptSourceLine[] = [];
   for (const scriptModule of document.modules) {

@@ -27,6 +27,15 @@ export type ScriptScoreWidgetResult = {
 
 type MarketOption = { code: string; name: string };
 
+type ImprovedModule = { id: string; spokenText: string; onScreenText: string; visualDirection: string };
+type Improvement = {
+  accepted: boolean;
+  before: Record<string, number | null>;
+  after: Record<string, number | null> | null;
+  modules: ImprovedModule[];
+  reasons: string[];
+};
+
 const MODULES = [
   { key: "structural_fit", label: "Structure" },
   { key: "verbatim_grounding", label: "Grounding" },
@@ -57,6 +66,7 @@ export function ScriptScoreWidget({
   markets,
   initialResult,
   setupError,
+  onApplyModules,
 }: {
   projectId: string;
   version: number;
@@ -65,11 +75,15 @@ export function ScriptScoreWidget({
   markets: MarketOption[];
   initialResult: ScriptScoreWidgetResult | null;
   setupError: string | null;
+  onApplyModules: (modules: ImprovedModule[]) => void;
 }) {
   const [result, setResult] = useState<ScriptScoreWidgetResult | null>(initialResult);
   const [marketCode, setMarketCode] = useState(initialResult?.run.marketCode ?? markets[0]?.code ?? "PH");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(setupError);
+  const [improving, setImproving] = useState(false);
+  const [improvement, setImprovement] = useState<Improvement | null>(null);
+  const [applied, setApplied] = useState(false);
 
   useEffect(() => {
     if (initialResult?.run.scriptVersion === version) {
@@ -106,6 +120,26 @@ export function ScriptScoreWidget({
       setError(caught instanceof Error ? caught.message : String(caught));
     } finally {
       setPending(false);
+    }
+  };
+
+  // The AI edit is proposed AND re-scored on the server before it comes back, so
+  // what is shown here is a measured before/after, not a promise.
+  const improveScore = async () => {
+    if (!result || improving) return;
+    setImproving(true);
+    setError(null);
+    setImprovement(null);
+    setApplied(false);
+    try {
+      const response = await fetch(`/api/scorer/runs/${encodeURIComponent(result.run.id)}/improve`, { method: "POST" });
+      const body = await response.json() as Improvement & { error?: string };
+      if (!response.ok) throw new Error(body.error || "The improvement could not be prepared.");
+      setImprovement(body);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      setImproving(false);
     }
   };
 
@@ -182,6 +216,36 @@ export function ScriptScoreWidget({
             <button type="button" className="btn btn-primary w-full" disabled={pending || !hasImmutableVersion} onClick={runScorer}>
               {pending ? "Scoring version…" : result?.run.status === "complete" && result.run.marketCode === marketCode ? "Refresh result" : `Score v${version} · ${marketCode}`}
             </button>
+            {result?.run.status === "complete" && (
+              <button type="button" className="btn w-full" disabled={pending || improving || !draftMatchesVersion} onClick={improveScore} title={draftMatchesVersion ? undefined : "Save a named version and score it first, so the edit is made on the text that was scored."}>
+                {improving ? "Editing and re-scoring… (1–2 min)" : "Improve score with AI"}
+              </button>
+            )}
+            {result?.run.status === "complete" && !draftMatchesVersion && <p className="text-[11px] leading-4 text-ink-500">Save and score the current draft to use AI improvement.</p>}
+            {improvement && (
+              <div className={`rounded-xl border p-3 text-xs ${improvement.accepted ? "border-emerald-200 bg-emerald-50 text-emerald-900" : "border-amber-200 bg-amber-50 text-amber-900"}`}>
+                {improvement.accepted ? (
+                  <>
+                    <p className="font-semibold">{applied ? "Applied as unsaved edits" : `Verified improvement on ${improvement.modules.length} beat${improvement.modules.length === 1 ? "" : "s"}`}</p>
+                    <dl className="mt-1.5 space-y-0.5">
+                      {MODULES.map((item) => {
+                        const was = improvement.before[item.key];
+                        const now = improvement.after?.[item.key];
+                        return was == null || now == null ? null : <div key={item.key} className="flex justify-between gap-3"><dt>{item.label}</dt><dd className="font-semibold">{Math.round(was)} → {Math.round(now)}</dd></div>;
+                      })}
+                    </dl>
+                    {applied
+                      ? <p className="mt-2 leading-4">Review the changed beats, save a new version, then score it to confirm.</p>
+                      : <button type="button" className="btn btn-primary mt-2 w-full" onClick={() => { onApplyModules(improvement.modules); setApplied(true); }}>Apply changes</button>}
+                  </>
+                ) : (
+                  <>
+                    <p className="font-semibold">No verified improvement was found</p>
+                    <p className="mt-1 leading-4">Nothing was changed. {improvement.reasons.join("; ")}</p>
+                  </>
+                )}
+              </div>
+            )}
             <Link href={reportHref} className="flex min-h-9 items-center justify-center rounded-full text-xs font-semibold text-ink-700 hover:bg-ink-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900">
               {result ? "Open full report" : "Open scorer setup"}
             </Link>

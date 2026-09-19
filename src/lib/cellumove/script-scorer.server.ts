@@ -3,6 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { SessionUser } from "@/lib/auth";
 import { loadMinedAds } from "@/lib/cellumove/corpus/mine.server";
+import { extractJsonObject, runAgent } from "@/lib/cellumove/agents";
 import { cosine, embedTexts } from "@/lib/cellumove/embeddings";
 import { extractAnalyzedScript } from "@/lib/cellumove/script-scorer-extraction.server";
 import {
@@ -16,6 +17,7 @@ import {
   scoreObserverFlags,
   scoreSpecificity,
   scoreStructuralFit,
+  judgeScoreImprovement,
   scoreVerbatimGrounding,
   scorerInputHash,
   type AnalyzedScript,
@@ -24,7 +26,7 @@ import {
   type GroundingMatch,
   type ScriptScorerModuleResult,
 } from "@/lib/cellumove/script-scorer";
-import { parseScriptDocument, type ScriptDocument } from "@/lib/cellumove/script-studio";
+import { inspectScriptQuality, parseScriptDocument, type ScriptDocument } from "@/lib/cellumove/script-studio";
 import type {
   AngleRow,
   BrandFactRow,
@@ -295,6 +297,31 @@ async function persistResults(runId: string, results: ScriptScorerModuleResult[]
   }
 }
 
+/**
+ * Score one document. Writes nothing (apart from Usage rows): the saved run and an
+ * AI-edited candidate (proposeScoreImprovement) are both judged by exactly this.
+ */
+async function scoreDocument(context: ScoreContext, document: ScriptDocument, usageRunId: string) {
+  const taxonomyResult = await supabase.from("CopyTaxonomyCode").select("*").eq("version", SCORER_TAXONOMY_VERSION).order("code");
+  if (taxonomyResult.error) throw new Error(taxonomyResult.error.message);
+  const taxonomy = (taxonomyResult.data ?? []) as CopyTaxonomyCodeRow[];
+  const analysis = await extractAnalyzedScript({ document, taxonomy, runId: usageRunId, marketCode: context.marketCode });
+  const [goldAds, corpusAds, grounding, approvedEvidence] = await Promise.all([
+    loadGoldAds(context.angle.slug),
+    loadCorpusReferenceAds(),
+    runGrounding(context, analysis),
+    loadApprovedEvidence(context),
+  ]);
+  const results = [
+    scoreStructuralFit({ document, analysis, goldAds, corpusAds, angleSlug: context.angle.slug, format: document.format }),
+    grounding,
+    scoreSpecificity(analysis),
+    scoreFactVerification({ analysis, evidence: approvedEvidence }),
+    scoreObserverFlags({ document, analysis }),
+  ];
+  return { taxonomy, analysis, results, goldAds, approvedEvidence, grounding };
+}
+
 export async function createScriptScoreRun(input: {
   projectId: string;
   scriptVersion: number;
@@ -368,23 +395,7 @@ export async function createScriptScoreRun(input: {
     throw new Error(runInsert.error.message);
   }
   try {
-    const taxonomyResult = await supabase.from("CopyTaxonomyCode").select("*").eq("version", SCORER_TAXONOMY_VERSION).order("code");
-    if (taxonomyResult.error) throw new Error(taxonomyResult.error.message);
-    const taxonomy = (taxonomyResult.data ?? []) as CopyTaxonomyCodeRow[];
-    const analysis = await extractAnalyzedScript({ document: context.document, taxonomy, runId, marketCode: context.marketCode });
-    const [goldAds, corpusAds, grounding, approvedEvidence] = await Promise.all([
-      loadGoldAds(context.angle.slug),
-      loadCorpusReferenceAds(),
-      runGrounding(context, analysis),
-      loadApprovedEvidence(context),
-    ]);
-    const results = [
-      scoreStructuralFit({ document: context.document, analysis, goldAds, corpusAds, angleSlug: context.angle.slug, format: context.document.format }),
-      grounding,
-      scoreSpecificity(analysis),
-      scoreFactVerification({ analysis, evidence: approvedEvidence }),
-      scoreObserverFlags({ document: context.document, analysis }),
-    ];
+    const { analysis, results, goldAds, approvedEvidence, grounding } = await scoreDocument(context, context.document, runId);
     const auditedContext = asJson({
       ...(contextSnapshot as Record<string, Json | undefined>),
       analysis,
@@ -433,4 +444,147 @@ export async function getScriptScoreRun(runId: string): Promise<ScriptScoreResul
     findings: (findingsResult.data ?? []) as ScriptScoreFindingRow[],
     scriptSnapshot: parseScriptDocument(snapshot.document),
   };
+}
+
+// ─── Improve score ───────────────────────────────────────────────────────────
+
+const IMPROVE_MAX_MODULES = 4;
+// A beat may grow or shrink by a quarter, but never by fewer than 15 words of
+// room: a 25-word beat cannot take a customer's sentence inside +-6 words.
+const IMPROVE_MAX_LENGTH_CHANGE = 0.25;
+const IMPROVE_MIN_WORD_ROOM = 15;
+function allowedWords(current: number): { min: number; max: number } {
+  const room = Math.max(IMPROVE_MIN_WORD_ROOM, Math.round(current * IMPROVE_MAX_LENGTH_CHANGE));
+  return { min: Math.max(5, current - room), max: current + room };
+}
+export const SCRIPT_SCORE_IMPROVE_PROMPT_VERSION = "script-score-improve-v1";
+
+export type ScoreImprovementModule = { id: string; spokenText: string; onScreenText: string; visualDirection: string };
+export type ScoreImprovement = {
+  accepted: boolean;
+  before: Record<string, number | null>;
+  after: Record<string, number | null> | null;
+  modules: ScoreImprovementModule[];
+  reasons: string[];
+  attempts: number;
+};
+
+const IMPROVE_RESPONSE_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    modules: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: { id: { type: "string" }, spokenText: { type: "string" }, onScreenText: { type: "string" }, visualDirection: { type: "string" } },
+        required: ["id", "spokenText", "onScreenText", "visualDirection"],
+      },
+    },
+  },
+  required: ["modules"],
+} as const;
+
+const IMPROVE_INSTRUCTION = [
+  "You edit an existing ad script so that four automatic checks score higher. You are an editor, not a rewriter: change only the listed target modules, and inside them only the lines the findings name, plus the minimum around them to keep the copy flowing.",
+  "ACCURACY IS THE FIRST RULE.",
+  "- Facts: every product, mechanism, outcome, price, guarantee, bonus or availability statement must be supported by an entry in facts.approved. For each facts.unsupported item, either restate it so that an approved entry supports it, or remove the specific claim and say something true and non-specific instead. Never introduce a factual claim that is not in facts.approved. Never invent numbers, studies, timeframes, testimonials or credentials.",
+  "- Grounding: for each grounding.weakLines item, rewrite that line so it says what the customer sentence says, in nearly the customer's own words (change I/my to you/your, or she/her in a story). Use only the customer sentences supplied. Do not present them as quotes or testimonials.",
+  "- Specificity: replace generic lines with a concrete moment, object, action or sensation taken from the supplied customer sentences or approved facts. Do not invent specifics.",
+  "- Structure: if structure.missingBeats lists beats, work each into the most fitting target module in roughly the expected order. A beat is one or two sentences doing that job; it must obey the Facts rule.",
+  "Each target module states allowedSpokenWords {min,max}: its spokenText must land inside that range, so trade words rather than only adding them. Keep its purpose, keep the script's angle, voice and person (first, second or third) as they are, and keep onScreenText to eight words or fewer.",
+  "Return JSON only: {\"modules\":[{\"id\":\"target module id\",\"spokenText\":\"...\",\"onScreenText\":\"...\",\"visualDirection\":\"...\"}]} containing every target module exactly once and no other module.",
+].join("\n");
+
+const spokenWords = (text: string) => text.trim().split(/\s+/).filter(Boolean).length;
+
+/**
+ * Ask the model for a targeted edit that raises the scorer's numbers, then PROVE
+ * it on the same scorer before anyone sees it. Nothing is saved: an accepted edit
+ * is returned for the strategist to apply as unsaved changes, and a refused one is
+ * reported with the reason. One retry, told exactly why the first edit was refused.
+ */
+export async function proposeScoreImprovement(input: { runId: string; actor: SessionUser }): Promise<ScoreImprovement> {
+  const scored = await getScriptScoreRun(input.runId);
+  if (!scored || scored.run.status !== "complete") throw new Error("Score the script first; only a completed score run can be improved.");
+  const context = await loadContext(scored.run.projectId, scored.run.scriptVersion, scored.run.marketCode);
+  const document = context.document;
+  const before = Object.fromEntries(scored.modules.map((module) => [module.module, module.score == null ? null : Number(module.score)]));
+
+  // The beats the findings point at most, unlocked only.
+  const locked = new Set(document.modules.filter((module) => module.locked).map((module) => module.id));
+  const weight: Record<string, number> = { critical: 3, warning: 2, info: 1 };
+  const pressure = new Map<string, number>();
+  for (const finding of scored.findings) {
+    if (!finding.scriptModuleId || locked.has(finding.scriptModuleId) || finding.module === "observer_flags") continue;
+    pressure.set(finding.scriptModuleId, (pressure.get(finding.scriptModuleId) ?? 0) + (weight[finding.severity] ?? 1));
+  }
+  const targetIds = [...pressure].sort((a, b) => b[1] - a[1]).slice(0, IMPROVE_MAX_MODULES).map(([id]) => id);
+  if (!targetIds.length) return { accepted: false, before, after: null, modules: [], reasons: ["The scorer reported nothing fixable on an unlocked beat."], attempts: 0 };
+  const targets = new Set(targetIds);
+  const findingsFor = (module: string) => scored.findings.filter((finding) => finding.module === module && finding.scriptModuleId && targets.has(finding.scriptModuleId));
+
+  const structure = scored.modules.find((module) => module.module === "structural_fit")?.metrics as { expectedCodes?: string[]; actualCodes?: string[] } | undefined;
+  const present = new Set(structure?.actualCodes ?? []);
+  const missingCodes = (structure?.expectedCodes ?? []).filter((code) => !present.has(code));
+  const missingBeats = missingCodes.length
+    ? ((await supabase.from("CopyTaxonomyCode").select("*").eq("version", SCORER_TAXONOMY_VERSION).in("code", missingCodes)).data ?? []) as CopyTaxonomyCodeRow[]
+    : [];
+  const approved = await loadApprovedEvidence(context);
+
+  const brief = {
+    currentScores: before,
+    targetModules: document.modules.filter((module) => targets.has(module.id)).map((module) => ({
+      id: module.id, label: module.label, kind: module.kind, seconds: module.durationSec, currentWords: spokenWords(module.spokenText), allowedSpokenWords: allowedWords(spokenWords(module.spokenText)),
+      spokenText: module.spokenText, onScreenText: module.onScreenText, visualDirection: module.visualDirection,
+    })),
+    readOnlyContext: document.modules.filter((module) => !targets.has(module.id)).map((module) => ({ id: module.id, label: module.label, spokenText: module.spokenText })),
+    grounding: { weakLines: findingsFor("verbatim_grounding").filter((finding) => finding.evidenceQuote).map((finding) => ({ moduleId: finding.scriptModuleId, line: finding.scriptQuote, customerSentence: finding.evidenceQuote })) },
+    facts: { approved: approved.map((item) => item.text), unsupported: findingsFor("fact_verification").map((finding) => ({ moduleId: finding.scriptModuleId, claim: finding.scriptQuote, problem: finding.message })) },
+    specificity: { genericLines: findingsFor("specificity").map((finding) => ({ moduleId: finding.scriptModuleId, line: finding.scriptQuote })) },
+    structure: { expectedOrder: structure?.expectedCodes ?? [], missingBeats: missingBeats.map((entry) => ({ code: entry.code, label: entry.label, description: entry.description })) },
+  };
+
+  let feedback: string | null = null;
+  let last: ScoreImprovement = { accepted: false, before, after: null, modules: [], reasons: [], attempts: 0 };
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const text = await runAgent({
+        role: "copywriter",
+        additionalRoles: ["strategist"],
+        instruction: IMPROVE_INSTRUCTION,
+        context: JSON.stringify(feedback ? { ...brief, previousEditRefused: feedback } : brief),
+        json: true,
+        responseJsonSchema: IMPROVE_RESPONSE_JSON_SCHEMA,
+        feature: "script_score_improve",
+        metadata: { promptVersion: SCRIPT_SCORE_IMPROVE_PROMPT_VERSION, runId: input.runId, attempt, retryReason: feedback?.slice(0, 300) },
+        maxOutputTokens: 8192,
+        thinkingBudget: 3072,
+      });
+      const modules = (extractJsonObject<{ modules?: ScoreImprovementModule[] }>(text).modules ?? []).filter((module) => targets.has(module.id));
+      if (modules.length !== targets.size || new Set(modules.map((module) => module.id)).size !== targets.size) throw new Error("The edit must return every target module exactly once.");
+      const byId = new Map(modules.map((module) => [module.id, module]));
+      for (const original of document.modules.filter((module) => targets.has(module.id))) {
+        const edited = byId.get(original.id)!;
+        if (!edited.spokenText.trim() || !edited.onScreenText.trim() || !edited.visualDirection.trim()) throw new Error(`${original.label}: a field came back empty.`);
+        const bounds = allowedWords(spokenWords(original.spokenText));
+        const words = spokenWords(edited.spokenText);
+        if (words < bounds.min || words > bounds.max) throw new Error(`${original.label}: spokenText is ${words} words; it must be between ${bounds.min} and ${bounds.max}.`);
+      }
+      const candidate = parseScriptDocument({ ...document, modules: document.modules.map((module) => (byId.has(module.id) ? { ...module, ...byId.get(module.id)! } : module)) });
+      const errorsIn = (doc: ScriptDocument) => inspectScriptQuality(doc).filter((issue) => issue.severity === "error").length;
+      if (errorsIn(candidate) > errorsIn(document)) throw new Error("The edit introduced a new script-quality error.");
+
+      const rescored = await scoreDocument(context, candidate, input.runId);
+      const after = Object.fromEntries(rescored.results.map((result) => [result.module, result.score]));
+      const verdict = judgeScoreImprovement(before, after);
+      last = { accepted: verdict.accept, before, after, modules: verdict.accept ? modules : [], reasons: verdict.reasons, attempts: attempt };
+      if (verdict.accept) return last;
+      feedback = `Re-scoring your edit gave ${JSON.stringify(after)} against ${JSON.stringify(before)}. Refused because: ${verdict.reasons.join("; ")}. Fix exactly that.`;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      last = { ...last, reasons: [reason], attempts: attempt };
+      feedback = `Your edit was refused before scoring: ${reason}`;
+    }
+  }
+  return last;
 }

@@ -113,7 +113,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
         return patch ? { ...module, spokenText: patch.spokenText, onScreenText: patch.onScreenText, visualDirection: patch.visualDirection } : module;
       }),
     }));
-    setMessage("Workflow fixes were applied as unsaved changes. Review the affected beats, then save.");
+    setMessage("AI edits were applied as unsaved changes. Review the affected beats, then save.");
   };
   const openModuleAssist = (moduleId: string) => {
     setAssistModuleId(moduleId);
@@ -345,6 +345,7 @@ export function ScriptStudioClient({ projectId, initialDocument, initialRevision
           markets={scorerMarkets}
           initialResult={initialScore}
           setupError={scorerSetupError}
+          onApplyModules={applyWorkflowModules}
         />
         {hasUnsavedChanges && <p className="px-2 text-[11px] leading-4 text-amber-700">Unsaved edits are visible in the Workflow audit only after you rerun it. Evidence scores remain tied to immutable v{version}.</p>}
       </aside>

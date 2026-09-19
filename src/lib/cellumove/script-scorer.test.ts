@@ -3,6 +3,7 @@ import test from "node:test";
 import type { ScriptDocument } from "./script-studio";
 import {
   scoreFactVerification,
+  judgeScoreImprovement,
   scoreObserverFlags,
   scoreSpecificity,
   scoreStructuralFit,
@@ -129,6 +130,16 @@ test("Structure falls back to Corpus Miner winners: same format first, then ever
   assert.match(anyFormat.summary, /Corpus Miner/);
   assert.equal(scoreStructuralFit({ document, analysis, goldAds, corpusAds: otherFormat, angleSlug: "daily-relief", format: "UGC" }).metrics.cohortType, "angle_and_format");
   assert.equal(scoreStructuralFit({ document, analysis, goldAds: [], corpusAds: otherFormat.slice(0, 4), angleSlug: "new-angle", format: "UGC" }).status, "insufficient_evidence");
+});
+
+test("an AI edit is offered only when scores really rise and Facts never fall", () => {
+  const before = { structural_fit: 70, verbatim_grounding: 27, specificity: 69, fact_verification: 25, observer_flags: null };
+  assert.equal(judgeScoreImprovement(before, { ...before, verbatim_grounding: 45, specificity: 75 }).accept, true);
+  assert.equal(judgeScoreImprovement(before, { ...before, verbatim_grounding: 28 }).accept, false, "a 1-point gain is noise");
+  assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, fact_verification: 24 }).reasons.join(" "), /fact_verification fell/);
+  assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, structural_fit: 60 }).reasons.join(" "), /structural_fit fell/);
+  assert.equal(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, structural_fit: 69 }).accept, true, "a 1-point wobble elsewhere is tolerated");
+  assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: null }).reasons.join(" "), /no longer be scored/);
 });
 
 test("reports unavailable structural and grounding datasets honestly", () => {
