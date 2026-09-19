@@ -4,7 +4,10 @@ import type { ScriptDocument, ScriptModule } from "@/lib/cellumove/script-studio
 
 // v3: Structure falls back to the Corpus Miner's winning ads; Grounding counts
 // market-agnostic verbatims (both modules used to read "needs evidence" always).
-export const SCORER_ENGINE_VERSION = "script-scorer-v3";
+// v4: Grounding compares a line with verbatim SENTENCES, not whole comments. The
+// version is part of the run key, so bumping it makes "Refresh result" re-score
+// instead of returning the stored run.
+export const SCORER_ENGINE_VERSION = "script-scorer-v4";
 // v2 = the named-beat taxonomy the Corpus Miner extracts in, so a script's beats
 // and the winning ads' beats share one vocabulary. (v1 had 9 coarse codes and only
 // 3 hand-made gold ads ever existed for it.)
@@ -453,9 +456,7 @@ export function scoreVerbatimGrounding(input: {
     status: "scored",
     score: boundedScore((grounded.length / eligible.length) * 100),
     label: "Verified-verbatim grounding — experimental",
-    // A low score measured against the whole library usually means "no verbatims
-    // exist for this angle yet", not "bad copy" — so the pool is named.
-    summary: `${grounded.length} of ${eligible.length} audience-language lines cleared the provisional similarity threshold${input.cohort === "verified_library" ? `, measured against all ${input.candidateCount} verified verbatims because this angle has none tagged yet — mine verbatims for the angle to make this meaningful` : input.cohort === "angle_all_markets" ? ", measured against this angle's verbatims from every market" : ""}.`,
+    summary: `${grounded.length} of ${eligible.length} audience-language lines closely echo a real customer sentence (compared with ${input.candidateCount} verified verbatims).`,
     metrics: { candidateCount: input.candidateCount, eligibleLines: eligible.length, groundedLines: grounded.length, cohort: input.cohort, threshold },
     findings,
   };

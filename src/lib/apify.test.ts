@@ -12,6 +12,7 @@ import {
   normalizeTiktokComments,
   normalizeTiktokVideos,
   rankRedditPosts,
+  hasRedditVocabulary,
   redditSearchTerms,
   rankTiktokVideos,
   type RawComment,
@@ -97,6 +98,11 @@ test("reddit searches use audience vocabulary instead of marketing labels", () =
   assert.deepEqual(redditSearchTerms({ angleSlug: "lipoedema", angleName: "Lipoedema" }).slice(0, 2), ["lipedema", "lipoedema"]);
   assert.equal(redditSearchTerms({ angleSlug: "heavy-legs", angleName: "Heavy Legs" })[0], "heavy legs");
   assert.equal(redditSearchTerms({ angleSlug: "heavy-legs", angleName: "Heavy Legs", focus: "legs feel heavy" })[0], "legs feel heavy");
+  // An internal angle name is never glued onto the audience's phrase.
+  assert.deepEqual(redditSearchTerms({ angleSlug: "piriformis-prison-relief", angleName: "Piriformis Prison Relief", focus: "piriformis syndrome" }), ["piriformis syndrome"]);
+  assert.deepEqual(redditSearchTerms({ angleSlug: "piriformis-prison-relief", angleName: "Piriformis Prison Relief" }), ["Piriformis Prison Relief"]);
+  assert.equal(hasRedditVocabulary({ angleSlug: "heavy-legs", angleName: "Heavy Legs" }), true);
+  assert.equal(hasRedditVocabulary({ angleSlug: "piriformis-prison-relief", angleName: "Piriformis Prison Relief" }), false);
 });
 
 test("rankTiktokVideos floors at 10 comments and sorts by plays+10*likes", () => {

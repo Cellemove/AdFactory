@@ -3,7 +3,7 @@ import "server-only";
 import { createHash } from "node:crypto";
 import type { SessionUser } from "@/lib/auth";
 import { loadMinedAds } from "@/lib/cellumove/corpus/mine.server";
-import { embedTexts } from "@/lib/cellumove/embeddings";
+import { cosine, embedTexts } from "@/lib/cellumove/embeddings";
 import { extractAnalyzedScript } from "@/lib/cellumove/script-scorer-extraction.server";
 import {
   GROUNDING_THRESHOLD,
@@ -149,13 +149,13 @@ async function loadCorpusReferenceAds(): Promise<GoldAdInput[]> {
 
 type VerbatimCohort = {
   count: number;
-  name: "avatar_market" | "avatar_all_markets" | "angle_market" | "angle_all_markets" | "verified_library" | null;
+  name: "verified_library" | null;
   subAvatarId: string | null;
   angleSlug: string | null;
   market: string | null;
 };
 
-async function countVerbatims(filters: { subAvatarId?: string; angleSlug?: string; market?: string }): Promise<number> {
+async function countVerbatims(filters: { subAvatarId?: string; angleSlug?: string; market?: string } = {}): Promise<number> {
   let query = supabase.from("Verbatim").select("id", { count: "exact", head: true })
     .like("researchId", "verified:%")
     .not("embedding", "is", null);
@@ -167,24 +167,13 @@ async function countVerbatims(filters: { subAvatarId?: string; angleSlug?: strin
   return result.count ?? 0;
 }
 
-async function selectVerbatimCohort(context: ScoreContext): Promise<VerbatimCohort> {
-  if (context.project.subAvatarId) {
-    const avatarMarket = await countVerbatims({ subAvatarId: context.project.subAvatarId, market: context.marketCode });
-    if (avatarMarket >= 10) return { count: avatarMarket, name: "avatar_market", subAvatarId: context.project.subAvatarId, angleSlug: null, market: context.marketCode };
-    const avatarAll = await countVerbatims({ subAvatarId: context.project.subAvatarId });
-    if (avatarAll >= 10) return { count: avatarAll, name: "avatar_all_markets", subAvatarId: context.project.subAvatarId, angleSlug: null, market: null };
-  }
-  const angleMarket = await countVerbatims({ angleSlug: context.angle.slug, market: context.marketCode });
-  if (angleMarket >= 10) return { count: angleMarket, name: "angle_market", subAvatarId: null, angleSlug: context.angle.slug, market: context.marketCode };
-  // Almost every verified verbatim is market-agnostic (market = null), and the
-  // match_verbatims RPC treats a market filter as exact — so an exact-market cohort
-  // saw none of them and Grounding always read "needs evidence". Widen in steps,
-  // narrowest audience first; the cohort name is stored so the report says which
-  // pool a score was measured against.
-  const angleAll = await countVerbatims({ angleSlug: context.angle.slug });
-  if (angleAll >= 10) return { count: angleAll, name: "angle_all_markets", subAvatarId: null, angleSlug: context.angle.slug, market: null };
-  // An angle with no tagged verbatims yet (a new angle) is still checked against
-  // real customer language — the whole verified library — instead of not at all.
+async function selectVerbatimCohort(): Promise<VerbatimCohort> {
+  // Every verified verbatim is the same product's audience, and the words a script
+  // should echo are often filed under a sibling angle: a varicose-veins script says
+  // "heavy, achy legs", which lives under heavy-legs, while the varicose-veins
+  // verbatims are mostly about vein surgery. Measured 2026-09-19 on one script:
+  // 1 of 12 lines grounded inside its angle, 4 of 12 against the library, and
+  // unrelated lines still pass 0% at the 0.72 threshold. So the library is the pool.
   const library = await countVerbatims({});
   return { count: library, name: library >= 10 ? "verified_library" : null, subAvatarId: null, angleSlug: null, market: null };
 }
@@ -192,7 +181,7 @@ async function selectVerbatimCohort(context: ScoreContext): Promise<VerbatimCoho
 async function runGrounding(context: ScoreContext, analysis: AnalyzedScript): Promise<ScriptScorerModuleResult> {
   let cohort: VerbatimCohort;
   try {
-    cohort = await selectVerbatimCohort(context);
+    cohort = await selectVerbatimCohort();
   } catch (error) {
     return {
       module: "verbatim_grounding", status: "failed", score: null,
@@ -212,19 +201,45 @@ async function runGrounding(context: ScoreContext, analysis: AnalyzedScript): Pr
       metrics: { candidateCount: cohort.count, cohort: cohort.name, threshold: GROUNDING_THRESHOLD }, findings: [],
     };
   }
-  const matched = await Promise.all(eligible.map(async (line, index): Promise<GroundingMatch> => {
+  // Retrieve the closest whole comments, then compare the script line with each
+  // SENTENCE inside them. A script line is one sentence and a Reddit comment is
+  // several, so line-vs-whole-comment understates real reuse. Measured on
+  // 2026-09-19 at the 0.72 threshold: customer wording reused in ad voice passes
+  // 88% sentence-level vs 68% whole-comment; unrelated lines pass 0% either way.
+  const retrieved = await Promise.all(eligible.map(async (_line, index) => {
     const response = await supabase.rpc("match_verbatims", {
       query_embedding: `[${embeddings[index]!.join(",")}]`,
-      match_count: 1,
+      match_count: GROUNDING_RERANK_COMMENTS,
       filter_sub_avatar_id: cohort.subAvatarId,
       filter_angle_slug: cohort.angleSlug,
       filter_market: cohort.market,
     });
     if (response.error) throw new Error(response.error.message);
-    const best = response.data?.[0];
-    return { line, evidenceId: best?.id ?? null, evidenceQuote: best?.text ?? null, similarity: best?.similarity ?? null };
+    return (response.data ?? []) as Array<{ id: string; text: string; similarity: number }>;
   }));
+  const sentencePool = [...new Set(retrieved.flat().flatMap((comment) => verbatimSentences(comment.text)))];
+  const sentenceEmbeddings = sentencePool.length ? await embedTexts(sentencePool) : [];
+  const sentenceVector = new Map(sentencePool.map((sentence, index) => [sentence, sentenceEmbeddings?.[index] ?? []]));
+  const matched = eligible.map((line, index): GroundingMatch => {
+    const whole = retrieved[index]![0];
+    let best = { evidenceId: whole?.id ?? null, evidenceQuote: whole?.text ?? null, similarity: whole?.similarity ?? null };
+    for (const comment of retrieved[index]!) {
+      for (const sentence of verbatimSentences(comment.text)) {
+        const vector = sentenceVector.get(sentence);
+        const similarity = vector?.length ? cosine(embeddings[index]!, vector) : 0;
+        if (similarity > (best.similarity ?? 0)) best = { evidenceId: comment.id, evidenceQuote: sentence, similarity };
+      }
+    }
+    return { line, ...best };
+  });
   return scoreVerbatimGrounding({ matches: matched, candidateCount: cohort.count, cohort: cohort.name });
+}
+
+const GROUNDING_RERANK_COMMENTS = 5;
+
+/** Sentences of a customer comment worth comparing: at least five words, not a wall of text. */
+function verbatimSentences(text: string): string[] {
+  return text.split(/(?<=[.!?])\s+|\n+/).map((sentence) => sentence.trim()).filter((sentence) => sentence.split(/\s+/).length >= 5 && sentence.length <= 240);
 }
 
 async function loadApprovedEvidence(context: ScoreContext): Promise<ApprovedEvidence[]> {
