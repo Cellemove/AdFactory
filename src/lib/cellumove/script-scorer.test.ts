@@ -5,6 +5,7 @@ import {
   scoreFactVerification,
   judgeScoreImprovement,
   scoreObserverFlags,
+  stabilizedFactScore,
   scoreSpecificity,
   scoreStructuralFit,
   scoreVerbatimGrounding,
@@ -138,8 +139,21 @@ test("an AI edit is offered only when scores really rise and Facts never fall", 
   assert.equal(judgeScoreImprovement(before, { ...before, verbatim_grounding: 28 }).accept, false, "a 1-point gain is noise");
   assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, fact_verification: 24 }).reasons.join(" "), /fact_verification fell/);
   assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, structural_fit: 60 }).reasons.join(" "), /structural_fit fell/);
-  assert.equal(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, structural_fit: 69 }).accept, true, "a 1-point wobble elsewhere is tolerated");
+  assert.equal(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, structural_fit: 66 }).accept, true, "a small dip is fine when the gain dwarfs it");
+  assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: 35, structural_fit: 66 }).reasons.join(" "), /does not clearly outweigh/, "+8 for -4 is a trade, not an improvement");
+  // The real case that was wrongly refused: +16 Grounding, +45 Specificity, +7 Facts, -4 Structure.
+  assert.equal(judgeScoreImprovement({ structural_fit: 75, verbatim_grounding: 9, specificity: 55, fact_verification: 33 }, { structural_fit: 71, verbatim_grounding: 25, specificity: 100, fact_verification: 40 }).accept, true);
   assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: null }).reasons.join(" "), /no longer be scored/);
+});
+
+test("an unchanged claim keeps its original Facts verdict; only new wording is judged fresh", () => {
+  const original = [{ scriptQuote: "go all the way up to 7XL", severity: "info" }, { scriptQuote: "boosts circulation by thirty percent", severity: "warning" }];
+  // Same two sentences, but this run's paraphrase flipped the first one: noise, not an edit.
+  assert.equal(stabilizedFactScore(original, [{ scriptQuote: "go all the way up to 7XL", severity: "warning" }, { scriptQuote: "boosts circulation by thirty percent", severity: "warning" }]), 50);
+  // A reworded claim is judged on its own merits, in both directions.
+  assert.equal(stabilizedFactScore(original, [{ scriptQuote: "go all the way up to 7XL", severity: "info" }, { scriptQuote: "is designed to stay in contact with the legs", severity: "info" }]), 100);
+  assert.equal(stabilizedFactScore(original, [{ scriptQuote: "sizes run up to 9XL", severity: "critical" }, { scriptQuote: "boosts circulation by thirty percent", severity: "warning" }]), 0);
+  assert.equal(stabilizedFactScore(original, []), null);
 });
 
 test("reports unavailable structural and grounding datasets honestly", () => {

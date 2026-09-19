@@ -34,6 +34,8 @@ type Improvement = {
   after: Record<string, number | null> | null;
   modules: ImprovedModule[];
   reasons: string[];
+  reverted?: string[];
+  unverifiedClaims?: string[];
 };
 
 const MODULES = [
@@ -218,7 +220,7 @@ export function ScriptScoreWidget({
             </button>
             {result?.run.status === "complete" && (
               <button type="button" className="btn w-full" disabled={pending || improving || !draftMatchesVersion} onClick={improveScore} title={draftMatchesVersion ? undefined : "Save a named version and score it first, so the edit is made on the text that was scored."}>
-                {improving ? "Editing and re-scoring… (1–2 min)" : "Improve score with AI"}
+                {improving ? "Editing and re-scoring… (1–3 min)" : "Improve score with AI"}
               </button>
             )}
             {result?.run.status === "complete" && !draftMatchesVersion && <p className="text-[11px] leading-4 text-ink-500">Save and score the current draft to use AI improvement.</p>}
@@ -234,6 +236,7 @@ export function ScriptScoreWidget({
                         return was == null || now == null ? null : <div key={item.key} className="flex justify-between gap-3"><dt>{item.label}</dt><dd className="font-semibold">{Math.round(was)} → {Math.round(now)}</dd></div>;
                       })}
                     </dl>
+                    {Boolean(improvement.reverted?.length) && <p className="mt-2 leading-4">Left unchanged because the edit lowered a score: {improvement.reverted!.join(", ")}.</p>}
                     {applied
                       ? <p className="mt-2 leading-4">Review the changed beats, save a new version, then score it to confirm.</p>
                       : <button type="button" className="btn btn-primary mt-2 w-full" onClick={() => { onApplyModules(improvement.modules); setApplied(true); }}>Apply changes</button>}
@@ -244,6 +247,13 @@ export function ScriptScoreWidget({
                     <p className="mt-1 leading-4">Nothing was changed. {improvement.reasons.join("; ")}</p>
                   </>
                 )}
+              </div>
+            )}
+            {Boolean(improvement?.unverifiedClaims?.length) && (
+              <div className="rounded-xl border border-ink-200 bg-ink-50 p-3 text-xs text-ink-700">
+                <p className="font-semibold">Claims no approved fact backs</p>
+                <ul className="mt-1 list-disc space-y-0.5 pl-4">{improvement!.unverifiedClaims!.slice(0, 6).map((claim) => <li key={claim}>{claim}</li>)}</ul>
+                <p className="mt-1.5 leading-4">The AI will not invent support for these. If one is true, add it as an approved fact or offer, then score again; if not, remove it.</p>
               </div>
             )}
             <Link href={reportHref} className="flex min-h-9 items-center justify-center rounded-full text-xs font-semibold text-ink-700 hover:bg-ink-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ink-900">

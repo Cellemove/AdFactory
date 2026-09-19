@@ -7,7 +7,8 @@ import type { ScriptDocument, ScriptModule } from "@/lib/cellumove/script-studio
 // v4: Grounding compares a line with verbatim SENTENCES, not whole comments. The
 // version is part of the run key, so bumping it makes "Refresh result" re-score
 // instead of returning the stored run.
-export const SCORER_ENGINE_VERSION = "script-scorer-v4";
+// v5: ungrounded findings keep the next-closest customer sentences.
+export const SCORER_ENGINE_VERSION = "script-scorer-v5";
 // v2 = the named-beat taxonomy the Corpus Miner extracts in, so a script's beats
 // and the winning ads' beats share one vocabulary. (v1 had 9 coarse codes and only
 // 3 hand-made gold ads ever existed for it.)
@@ -127,6 +128,8 @@ export type GroundingMatch = {
   evidenceId: string | null;
   evidenceQuote: string | null;
   similarity: number | null;
+  /** Next-closest customer sentences, for "Improve score" to write from. */
+  alternatives?: string[];
 };
 
 export type ApprovedEvidence = {
@@ -139,13 +142,19 @@ export type ApprovedEvidence = {
 
 /** Points the four scored modules must gain in total. Smaller gains are scorer noise. */
 export const IMPROVE_MIN_TOTAL_GAIN = 3;
-/** No single module may pay for another's gain by more than this. */
-export const IMPROVE_MAX_MODULE_DROP = 2;
+/** The most any single module other than Facts may dip. */
+export const IMPROVE_MAX_MODULE_DROP = 5;
+/** The net gain must be at least this many times the points lost elsewhere. */
+export const IMPROVE_GAIN_TO_DROP_RATIO = 3;
 
 /**
  * Gate for an AI-edited candidate, judged on the SAME scorer as the original.
- * Facts may never fall at all: a rewrite that raises Grounding by loosening a
- * claim is exactly the inaccurate edit this feature must not make.
+ *
+ * Facts may never fall at all: a rewrite that lifts Grounding by loosening a claim
+ * is exactly the inaccurate edit this feature must not make. The other modules rest
+ * on an LLM's line classification and wobble a few points between runs, so a small
+ * dip is tolerated — but only when the overall gain clearly outweighs it. (A first
+ * version refused +16 Grounding, +45 Specificity, +7 Facts over a 4-point Structure dip.)
  */
 export function judgeScoreImprovement(
   before: Record<string, number | null | undefined>,
@@ -153,16 +162,36 @@ export function judgeScoreImprovement(
 ): { accept: boolean; gain: number; reasons: string[] } {
   const reasons: string[] = [];
   let gain = 0;
+  let lost = 0;
   for (const [module, was] of Object.entries(before)) {
     const now = after[module];
     if (was == null) continue;
     if (now == null) { reasons.push(`${module} could no longer be scored`); continue; }
     gain += now - was;
+    if (now < was) lost += was - now;
     const allowedDrop = module === "fact_verification" ? 0 : IMPROVE_MAX_MODULE_DROP;
     if (was - now > allowedDrop) reasons.push(`${module} fell ${Math.round(was)} → ${Math.round(now)}`);
   }
   if (gain < IMPROVE_MIN_TOTAL_GAIN) reasons.push(`total gain ${gain.toFixed(1)} is below ${IMPROVE_MIN_TOTAL_GAIN}`);
+  else if (gain < lost * IMPROVE_GAIN_TO_DROP_RATIO) reasons.push(`the ${gain.toFixed(0)}-point gain does not clearly outweigh the ${lost.toFixed(0)} points lost elsewhere`);
   return { accept: reasons.length === 0, gain, reasons };
+}
+
+/**
+ * Facts score for an edited script, with the scorer's own run-to-run noise removed.
+ * Support is decided from an LLM-written paraphrase of each claim, so a borderline
+ * claim can flip between two runs on IDENTICAL text — and with ~6 claims one flip is
+ * 17 points. A sentence the edit did not change cannot have changed its support, so
+ * it keeps the verdict of the original run; only new or reworded claims are judged fresh.
+ */
+export function stabilizedFactScore(
+  original: Array<{ scriptQuote: string | null; severity: string }>,
+  candidate: Array<{ scriptQuote: string | null; severity: string }>,
+): number | null {
+  if (!candidate.length) return null;
+  const verdict = new Map(original.map((finding) => [finding.scriptQuote, finding.severity === "info"]));
+  const supported = candidate.filter((finding) => verdict.get(finding.scriptQuote) ?? finding.severity === "info").length;
+  return Math.round((supported / candidate.length) * 10000) / 100;
 }
 
 export function scriptSourceLines(document: ScriptDocument): ScriptSourceLine[] {
@@ -465,6 +494,7 @@ export function scoreVerbatimGrounding(input: {
     evidenceId: match.evidenceId,
     evidenceQuote: match.evidenceQuote,
     similarity: match.similarity,
+    metadata: match.alternatives?.length ? { alternatives: match.alternatives } : undefined,
   }));
   for (const match of grounded) {
     findings.push({
