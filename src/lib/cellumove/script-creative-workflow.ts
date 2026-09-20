@@ -168,7 +168,33 @@ export function salvageWorkflowFindings(
   return kept;
 }
 
-export type SpeakingRateBand ="fast_direct_response" | "standard_ugc" | "calm_testimonial" | "sung";
+// ─── Auto-fix (one targeted pass on a weak first draft) ─────────────────────────
+
+/** A re-scored candidate must beat the draft by this much; smaller gains are audit noise. */
+export const AUTOFIX_MIN_GAIN = 3;
+export const AUTOFIX_MAX_MODULES = 4;
+
+/**
+ * The findings worth one fix pass: fixable, point-costing, on unlocked modules —
+ * limited to the modules losing the most points so the rewrite stays targeted.
+ */
+export function pickWeakModules<T extends { scriptModuleId: string | null; fixEligible: boolean; pointsDeducted: number }>(
+  findings: T[],
+  lockedModuleIds: ReadonlySet<string>,
+  maxModules = AUTOFIX_MAX_MODULES,
+): T[] {
+  const eligible = findings.filter((item) => item.fixEligible && item.pointsDeducted > 0 && item.scriptModuleId && !lockedModuleIds.has(item.scriptModuleId));
+  const lostByModule = new Map<string, number>();
+  for (const item of eligible) lostByModule.set(item.scriptModuleId!, (lostByModule.get(item.scriptModuleId!) ?? 0) + item.pointsDeducted);
+  const worst = new Set([...lostByModule].sort((a, b) => b[1] - a[1]).slice(0, maxModules).map(([id]) => id));
+  return eligible.filter((item) => worst.has(item.scriptModuleId!));
+}
+
+export function shouldKeepAutoFix(fromScore: number, toScore: number): boolean {
+  return toScore - fromScore >= AUTOFIX_MIN_GAIN;
+}
+
+export type SpeakingRateBand = "fast_direct_response" | "standard_ugc" | "calm_testimonial" | "sung";
 
 export function selectSpeakingRateBand(input: { format: string; voicePlan: string; avatarName?: string | null }): {
   key: SpeakingRateBand;

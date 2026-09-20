@@ -110,7 +110,9 @@ test("recent-winner guards, budget and provider contracts", async (t) => {
     const result = await runRecentWinners({ cap: 1, dryRun: true });
     assert.equal(result.candidates.length, 1);
     assert.equal(result.candidates[0]!.adId, competitorAdId("brandsearch", "meta", "new"));
-    assert.equal(calls.some((call) => call.method === "POST" && call.url.hostname !== "api.brandsearch.co"), false);
+    // A dry run writes no corpus data and pays for no Teardown. The one allowed
+    // write is the Usage ledger row for BrandSearch credits the pull really spent.
+    assert.equal(calls.some((call) => call.method === "POST" && call.url.hostname !== "api.brandsearch.co" && !call.url.pathname.endsWith("/Usage")), false);
     assert.ok(calls.find((call) => call.url.hostname === "api.brandsearch.co" && call.method === "POST")!.body!.ad_started_from);
   });
   await t.test("automatic submission preserves corpus flags and sequential replay spends zero", async () => {

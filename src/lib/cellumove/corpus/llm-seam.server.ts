@@ -5,7 +5,7 @@ import "server-only";
 // another provider (the spec names the Claude API) is an adapter here and
 // nothing in the stages changes.
 
-import { DEFAULT_MODEL, getLLM } from "@/lib/llm";
+import { getLLM, modelFor } from "@/lib/llm";
 import { computeCostUsd, recordUsage, type GeminiUsageMetadata } from "@/lib/usage";
 
 export type StructuredPart =
@@ -18,6 +18,8 @@ export type StructuredRequest = {
   temperature?: number;
   maxOutputTokens?: number;
   thinkingBudget?: number;
+  /** Shape-only JSON schema (keys, types, enums). No size limits — Vertex rejects those. */
+  responseJsonSchema?: unknown;
   /** Usage-ledger feature name (see USAGE_FEATURES). */
   feature: string;
   metadata?: Record<string, unknown>;
@@ -76,9 +78,10 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** One JSON-mode model call. Throws on transport/model errors; returns raw text otherwise. */
 export async function generateStructured(request: StructuredRequest): Promise<StructuredResponse> {
-  const model = request.model ?? DEFAULT_MODEL;
+  const model = request.model ?? modelFor(request.feature);
+  const startedAt = Date.now();
   const response = await callWithRetry(model, request);
-  await recordUsage({ feature: request.feature, model, usage: response.usageMetadata, metadata: request.metadata });
+  await recordUsage({ feature: request.feature, model, usage: response.usageMetadata, metadata: { durationMs: Date.now() - startedAt, ...request.metadata } });
   const text = response.text ?? "";
   if (!text.trim()) throw new Error("The model returned no text.");
   return { text, usage: summarizeUsage(model, response.usageMetadata) };
@@ -108,6 +111,7 @@ async function rawCall(model: string, request: StructuredRequest) {
     contents: [{ role: "user", parts: request.parts }],
     config: {
       responseMimeType: "application/json",
+      ...(request.responseJsonSchema ? { responseJsonSchema: request.responseJsonSchema } : {}),
       temperature: request.temperature ?? 0,
       maxOutputTokens: request.maxOutputTokens ?? 16384,
       ...(request.thinkingBudget != null ? { thinkingConfig: { thinkingBudget: request.thinkingBudget } } : {}),

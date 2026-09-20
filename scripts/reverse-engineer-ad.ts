@@ -15,6 +15,7 @@
 
 import { execFileSync } from "node:child_process";
 import { getLLM, DEFAULT_MODEL } from "../src/lib/llm";
+import { recordUsage } from "../src/lib/usage";
 import { MECHANISM_GUARDRAIL } from "../src/lib/cellumove/pipeline-stages";
 
 // IMPORTANT: keep this UA SHORT/generic. FB 400-blocks a full "Chrome/124" UA
@@ -124,6 +125,7 @@ async function main() {
     ],
     config: { maxOutputTokens: 8192, thinkingConfig: { thinkingBudget: 2048 } },
   });
+  await recordUsage({ feature: "reverse_engineer_ad", model: DEFAULT_MODEL, usage: resp.usageMetadata });
 
   const text = resp.text ?? "";
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/);

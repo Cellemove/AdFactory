@@ -42,7 +42,9 @@ test("schema failures name the field", () => {
 });
 
 test("order, taxonomy membership, layer pairing and OTHER explanations are enforced", () => {
-  rejects({ beats: [good.beats[0], { ...good.beats[1], order_index: 5 }] }, /order_index values must be 0..1/, "SCHEMA");
+  // A numbering slip is repaired from the timecodes rather than sent back to the model.
+  const renumbered = validateExtractedBeats({ raw: { ...good, beats: [{ ...good.beats[1], order_index: 5 }, good.beats[0]] }, allowedCodes, segments, transcriptEnd: 6 });
+  assert.deepEqual(renumbered.beats.map((beat) => [beat.orderIndex, beat.code]), [[0, "H_OPENING"], [1, "O_CTA"]]);
   rejects({ beats: [{ ...good.beats[0], code: "H_INVENTED" }] }, /unknown taxonomy code "H_INVENTED"/, "SCHEMA");
   rejects({ beats: [{ ...good.beats[0], code: "P_PROBLEM" }] }, /belongs to layer P/, "SCHEMA");
   rejects({ beats: [{ ...good.beats[0], layer: "M", code: "M_OTHER" }] }, /without other_explanation/, "SCHEMA");

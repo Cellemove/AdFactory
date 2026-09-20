@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { supabase } from "@/lib/db";
+import { spendWarning } from "@/lib/usage";
 
 export const dynamic = "force-dynamic";
 
@@ -17,13 +18,30 @@ const FEATURE_LABEL: Record<string, string> = {
   corpus_transcribe: "Corpus Miner · transcription",
   corpus_extract: "Corpus Miner · beat extraction",
   corpus_eval: "Corpus Miner · Gate 1 evaluation",
+  script_studio_draft: "Script Studio · draft",
+  script_workflow_audit: "Script Studio · workflow audit",
+  script_workflow_fix: "Script Studio · workflow fix",
+  script_scorer: "Script Studio · scorer",
+  teardown: "Teardown · ad deconstruction",
+  brandsearch: "BrandSearch · credits (prepaid, $0)",
+  broll_analysis: "B-roll · clip analysis",
+  embeddings: "Embeddings (estimated)",
+  verbatim_ingest_apify: "Apify · verbatim scraping",
 };
 
-type Totals = { calls: number; input: number; output: number; thinking: number; cost: number };
+// retries = calls whose metadata.attempt > 1 (a validation failure paid for twice);
+// cached = input tokens served from Vertex's implicit cache; credits = BrandSearch.
+type Totals = { calls: number; input: number; output: number; thinking: number; cost: number; retries: number; cached: number; credits: number; models: Set<string> };
 
-const emptyTotals = (): Totals => ({ calls: 0, input: 0, output: 0, thinking: 0, cost: 0 });
+const emptyTotals = (): Totals => ({ calls: 0, input: 0, output: 0, thinking: 0, cost: 0, retries: 0, cached: 0, credits: 0, models: new Set() });
 
-function addRow(acc: Totals, r: { inputTokens: number | null; outputTokens: number | null; thinkingTokens: number | null; estimatedCostUsd: unknown }): Totals {
+function addRow(acc: Totals, r: { inputTokens: number | null; outputTokens: number | null; thinkingTokens: number | null; estimatedCostUsd: unknown; model?: string | null; metadata?: string | null }): Totals {
+  let meta: { attempt?: number; cachedTokens?: number; credits?: number } = {};
+  try { meta = r.metadata ? JSON.parse(r.metadata) : {}; } catch { /* free-form metadata */ }
+  if ((meta.attempt ?? 1) > 1) acc.retries += 1;
+  acc.cached += meta.cachedTokens ?? 0;
+  acc.credits += meta.credits ?? 0;
+  if (r.model) acc.models.add(r.model.replace(/^gemini-/, ""));
   acc.calls += 1;
   acc.input += r.inputTokens ?? 0;
   acc.output += r.outputTokens ?? 0;
@@ -81,6 +99,8 @@ export default async function UsagePage({ searchParams }: { searchParams: Promis
 
   // Aggregates for the selected month
   const total = monthRows.reduce(addRow, emptyTotals());
+  const today = new Date().toISOString().slice(0, 10);
+  const todayWarning = spendWarning(rows.filter((r) => (r.createdAt ?? "").startsWith(today)).reduce((sum, r) => sum + Number(r.estimatedCostUsd ?? 0), 0));
 
   const byFeature = new Map<string, Totals>();
   for (const r of monthRows) {
@@ -109,8 +129,8 @@ export default async function UsagePage({ searchParams }: { searchParams: Promis
         <div>
           <h1 className="text-2xl font-semibold tracking-tight">Usage</h1>
           <p className="text-sm text-ink-500">
-            Gemini 2.5 Pro on Vertex AI. Cost is estimated using published Vertex prices —
-            your actual GCP bill is authoritative.
+            Gemini on Vertex AI, plus Teardown and Apify. Cost is estimated from published prices —
+            your actual bills are authoritative. BrandSearch credits are prepaid and shown at $0.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -122,6 +142,10 @@ export default async function UsagePage({ searchParams }: { searchParams: Promis
           )}
         </div>
       </header>
+
+      {todayWarning && (
+        <div className="card border-amber-300 bg-amber-50 text-sm text-amber-900">{todayWarning}</div>
+      )}
 
       <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat label="Calls" value={total.calls.toLocaleString()} />
@@ -140,9 +164,13 @@ export default async function UsagePage({ searchParams }: { searchParams: Promis
             <thead>
               <tr className="border-b border-ink-200 text-left text-xs uppercase tracking-wide text-ink-500">
                 <th className="py-2">Feature</th>
+                <th className="py-2">Model</th>
                 <th className="py-2 text-right">Calls</th>
+                <th className="py-2 text-right" title="Calls that were a second or third attempt after a rejected response">Retries</th>
                 <th className="py-2 text-right">Input</th>
+                <th className="py-2 text-right" title="Share of input tokens served from the provider's cache">Cached</th>
                 <th className="py-2 text-right">Output+thinking</th>
+                <th className="py-2 text-right">Per call</th>
                 <th className="py-2 text-right">Est. cost</th>
               </tr>
             </thead>
@@ -151,10 +179,14 @@ export default async function UsagePage({ searchParams }: { searchParams: Promis
                 .sort((a, b) => b[1].cost - a[1].cost)
                 .map(([feature, f]) => (
                   <tr key={feature} className="border-b border-ink-100">
-                    <td className="py-1.5">{FEATURE_LABEL[feature] ?? feature}</td>
+                    <td className="py-1.5">{FEATURE_LABEL[feature] ?? feature}{f.credits > 0 && <span className="text-ink-500"> · {f.credits.toLocaleString()} credits</span>}</td>
+                    <td className="py-1.5 text-xs text-ink-500">{[...f.models].join(", ")}</td>
                     <td className="py-1.5 text-right">{f.calls.toLocaleString()}</td>
+                    <td className="py-1.5 text-right">{f.retries ? `${f.retries} (${Math.round((100 * f.retries) / f.calls)}%)` : "—"}</td>
                     <td className="py-1.5 text-right">{fmt(f.input)}</td>
+                    <td className="py-1.5 text-right">{f.input && f.cached ? `${Math.round((100 * f.cached) / f.input)}%` : "—"}</td>
                     <td className="py-1.5 text-right">{fmt(f.output + f.thinking)}</td>
+                    <td className="py-1.5 text-right">${(f.cost / f.calls).toFixed(4)}</td>
                     <td className="py-1.5 text-right">${f.cost.toFixed(4)}</td>
                   </tr>
                 ))}

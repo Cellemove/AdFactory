@@ -4,7 +4,7 @@ import { DEFAULT_MODEL } from "@/lib/llm";
 import type { AdBeatRow, AdMediaRow, CompetitorAdRow, CorpusExtractRunRow, CorpusTranscriptRunRow, Json } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
 import { CORPUS_ENGINE_VERSION, CORPUS_EXTRACT_PROMPT_VERSION, CORPUS_TAXONOMY_VERSION, USAGE_FEATURES, type SegmentChannel } from "./constants";
-import { ExtractValidationError, buildExtractPrompt, validateExtractedBeats, type ValidatedExtraction } from "./extract";
+import { ExtractValidationError, buildExtractPrompt, extractResponseJsonSchema, validateExtractedBeats, type ValidatedExtraction } from "./extract";
 import { beatId, extractRunId, runKey } from "./ids";
 import { addUsage, generateStructured, parseJsonObject, type StructuredPart, type UsageSummary } from "./llm-seam.server";
 import { readAdMedia } from "./media.server";
@@ -142,8 +142,9 @@ export async function extractAdBeats(
         model: EXTRACT_MODEL,
         parts: videoPart ? [videoPart, { text: prompt }] : [{ text: prompt }],
         thinkingBudget: 2048,
+        responseJsonSchema: extractResponseJsonSchema(taxonomy.entries),
         feature: USAGE_FEATURES.extract,
-        metadata: { competitorAdId: ad.id, runId, promptVersion: CORPUS_EXTRACT_PROMPT_VERSION, taxonomyVersion, attempt: attempts, withVideo },
+        metadata: { competitorAdId: ad.id, runId, promptVersion: CORPUS_EXTRACT_PROMPT_VERSION, taxonomyVersion, attempt: attempts, withVideo, retryReason: previousError?.slice(0, 300) },
       });
       usage = addUsage(usage, response.usage);
       try {

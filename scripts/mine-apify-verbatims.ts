@@ -12,6 +12,7 @@
 //   --max-comments=N per post (default 40)
 //   --focus=phrase   optional exact Reddit search phrase for this run
 //   --force          ignore the scrape ledger
+//   --enough=N       per angle: stop adding platforms once N new verbatims are in (default 30)
 //   --dry-run        resolve targets and print the plan, scrape nothing
 
 import { supabase } from "../src/lib/db";
@@ -58,8 +59,15 @@ async function main() {
 
   let spent = 0;
   let inserted = 0;
+  const enough = Number(flag("enough")) || 30;
   for (const angle of angles) {
+    let angleInserted = 0;
     for (const platform of platforms) {
+      // An actor run cannot be stopped midway, so "enough" is checked between runs.
+      if (angleInserted >= enough) {
+        console.log(`· ${platform.padEnd(6)} ${angle.slug.padEnd(28)} skipped — ${angleInserted} new verbatims already meets --enough=${enough}`);
+        continue;
+      }
       const remaining = maxUsd - spent;
       if (remaining <= 0.05) {
         console.log(`\nBudget $${maxUsd} exhausted — stopping.`);
@@ -82,6 +90,7 @@ async function main() {
         });
         spent += s.estUsd;
         inserted += s.inserted;
+        angleInserted += s.inserted;
         console.log(
           `✓ ${platform.padEnd(6)} ${angle.slug.padEnd(28)} scraped ${String(s.scraped).padStart(4)} → gate -${s.killedGate} · dupes -${s.killedDedupe} · AI -${s.killedLLM} → inserted ${s.inserted} · $${s.estUsd.toFixed(3)}${s.warnings.length ? ` · ${s.warnings.join(" ")}` : ""}`,
         );

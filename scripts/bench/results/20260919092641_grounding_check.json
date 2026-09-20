@@ -1,0 +1,59 @@
+{
+  "label": "grounding_check",
+  "createdAt": "2026-09-19T09:29:41.157Z",
+  "gitSha": "a3f7237",
+  "versions": {
+    "draft": "script-draft-v7-stated-limits",
+    "audit": "script-workflow-audit-v1"
+  },
+  "models": {
+    "script_studio_draft": "gemini-2.5-pro",
+    "script_workflow_audit": "gemini-2.5-pro",
+    "script_workflow_fix": "gemini-2.5-pro"
+  },
+  "autofix": false,
+  "judgeModel": null,
+  "briefs": [
+    {
+      "index": 0,
+      "title": "App Test 17 · Heat 3",
+      "ok": true,
+      "error": null,
+      "workflowScore": 67,
+      "gate": "weak_alignment",
+      "deductions": {
+        "cadence": 0,
+        "close": 3,
+        "engagement": 5,
+        "hook": 3,
+        "mechanism": 7,
+        "pitch": 15,
+        "reframe": 5
+      },
+      "scorerModules": {
+        "fact_verification": 50,
+        "observer_flags": null,
+        "specificity": 47.22,
+        "structural_fit": 70.53,
+        "verbatim_grounding": 0
+      },
+      "scorerMean": 41.9375,
+      "judgeScore": null,
+      "autoFix": null,
+      "attempts": 1,
+      "latencyMs": 145992,
+      "costUsd": 0.294776,
+      "calls": 22
+    }
+  ],
+  "summary": {
+    "ok": 1,
+    "failed": 0,
+    "meanWorkflow": 67,
+    "meanScorer": 41.9,
+    "meanJudgeDelta": null,
+    "totalCostUsd": 0.2948,
+    "meanLatencyMs": 145992,
+    "totalAttempts": 1
+  }
+}

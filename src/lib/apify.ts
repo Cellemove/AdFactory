@@ -84,8 +84,17 @@ export function redditSearchTerms(input: {
         ? ["heavy legs", "legs feel heavy", "tired aching legs", "swollen legs"]
         : [];
   if (terms.length) return [...new Set([explicitFocus, ...terms].filter((value): value is string => Boolean(value)))];
-  const fallback = [input.angleName, input.focus].filter((value): value is string => Boolean(value?.trim())).join(" ").trim();
-  return fallback ? [fallback] : ["women leg symptoms"];
+  // A focus is the audience's own phrase, so it leads ALONE. Gluing it onto an
+  // internal angle name ("Piriformis Prison Relief …") and quoting the result
+  // matched no Reddit post at all.
+  if (explicitFocus) return [explicitFocus];
+  return input.angleName?.trim() ? [input.angleName.trim()] : ["women leg symptoms"];
+}
+
+/** True when the angle has a hand-written audience-vocabulary mapping above. */
+export function hasRedditVocabulary(input: { angleSlug?: string | null; angleName?: string | null }): boolean {
+  // Mapped themes return several terms; the literal-name fallback returns one.
+  return redditSearchTerms({ angleSlug: input.angleSlug, angleName: input.angleName }).length > 1;
 }
 
 export function normalizeApifyRedditPosts(items: unknown[]): RedditPostItem[] {

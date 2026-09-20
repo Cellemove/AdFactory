@@ -4,8 +4,10 @@ import {
   calculateWorkflowScore,
   lexicalLineSimilarity,
   parseWorkflowAuditExtraction,
+  pickWeakModules,
   salvageWorkflowFindings,
   selectSpeakingRateBand,
+  shouldKeepAutoFix,
   validateWorkflowFindingQuotes,
   workflowRubricFromConfig,
   workflowGateStatus,
@@ -80,6 +82,16 @@ test("salvages valid findings instead of discarding the whole audit over one bad
   assert.deepEqual(salvageWorkflowFindings({ findings: [] }, modules), []);
   assert.throws(() => salvageWorkflowFindings({ findings: [{ ...good, scriptQuote: "Paraphrased text" }] }, modules), /No workflow finding survived/);
   assert.throws(() => salvageWorkflowFindings({ nope: true }, modules), /no findings array/);
+});
+
+test("auto-fix targets only the fixable, unlocked modules losing the most points, and keeps clear wins only", () => {
+  const f = (scriptModuleId: string | null, pointsDeducted: number, fixEligible = true) => ({ scriptModuleId, pointsDeducted, fixEligible });
+  const findings = [f("m1", 5), f("m1", 3), f("m2", 6), f("m3", 1), f("m4", 9, false), f("m5", 0), f("locked", 10), f(null, 4)];
+  assert.deepEqual(pickWeakModules(findings, new Set(["locked"]), 2).map((item) => item.scriptModuleId), ["m1", "m1", "m2"]);
+  assert.deepEqual(pickWeakModules([f("m4", 9, false), f("m5", 0)], new Set()), []);
+  assert.equal(shouldKeepAutoFix(72, 75), true);
+  assert.equal(shouldKeepAutoFix(72, 74), false);
+  assert.equal(shouldKeepAutoFix(80, 70), false);
 });
 
 test("first playbook draft keeps a valid rubric and approved-evidence boundary", () => {

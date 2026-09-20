@@ -3,7 +3,8 @@ import "server-only";
 import type { AdMediaRow, AdTeardownRow, CompetitorAdRow } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
 import { loadAdMedia, readAdMedia } from "./media.server";
-import { jobToRowPatch, TeardownJobSchema, teardownAdName, teardownRowId, teardownSourceFor, workbookScenes, type TeardownJob } from "./teardown";
+import { recordUsage } from "@/lib/usage";
+import { jobToRowPatch, TEARDOWN_TYPICAL_COST_USD, teardownCostUsd, TeardownJobSchema, teardownAdName, teardownRowId, teardownSourceFor, workbookScenes, type TeardownJob } from "./teardown";
 
 // Only Teardown's public endpoints are used (submit, poll, retry, signed
 // upload). They need no token; TEARDOWN_INTERNAL_TOKEN stays reserved for the
@@ -40,18 +41,15 @@ export async function fetchTeardownJob(teardownId: string): Promise<TeardownJob>
   return TeardownJobSchema.parse(await teardownRequest(`/deconstructions/${encodeURIComponent(teardownId)}`));
 }
 
-/** The stored copy goes browser-style: signed GCS PUT, then a submission naming the object. */
-async function stageStoredCopy(media: AdMediaRow): Promise<string> {
+// A stored copy goes to Teardown as a plain file upload. It used to be staged in
+// Teardown's bucket first ("gcs_object"), but that path records the object's MD5
+// (32 hex) where Teardown's database requires a SHA-256 (64), so every staged
+// submission was refused with a 500. Stored copies are capped at
+// CORPUS_MEDIA_MAX_BYTES (15 MB), far under Cloud Run's 32 MB request limit, and the
+// upload path hashes the bytes properly on Teardown's side.
+async function storedCopyFile(media: AdMediaRow): Promise<{ blob: Blob; filename: string }> {
   const { bytes, mime } = await readAdMedia(media);
-  const ticket = await teardownRequest("/uploads", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ filename: `${media.competitorAdId}.${mime.split("/")[1] ?? "mp4"}`, mime_type: mime, size_bytes: bytes.byteLength }),
-  }) as { upload_url?: unknown; object_name?: unknown };
-  if (typeof ticket.upload_url !== "string" || typeof ticket.object_name !== "string") throw new Error("Teardown returned an unexpected upload ticket.");
-  const put = await fetch(ticket.upload_url, { method: "PUT", headers: { "Content-Type": mime }, body: new Uint8Array(bytes), signal: AbortSignal.timeout(300_000) });
-  if (!put.ok) throw new Error(`Uploading the stored copy to Teardown's bucket failed (${put.status}).`);
-  return ticket.object_name;
+  return { blob: new Blob([new Uint8Array(bytes)], { type: mime }), filename: `${media.competitorAdId}.${mime.split("/")[1] ?? "mp4"}` };
 }
 
 export async function loadAdTeardown(competitorAdId: string): Promise<AdTeardownRow | null> {
@@ -98,7 +96,10 @@ export async function submitAdTeardown(ad: CompetitorAdRow, existing: AdTeardown
   form.set("ad_name", teardownAdName(ad));
   form.set("platform", ad.platform);
   if (source.kind === "url") form.set("source_url", source.url);
-  else form.set("gcs_object", await stageStoredCopy(media!));
+  else {
+    const file = await storedCopyFile(media!);
+    form.set("file", file.blob, file.filename);
+  }
 
   const job = parseAccepted(await teardownRequest("/deconstructions", { method: "POST", body: form }));
   return upsertTeardown({
@@ -139,5 +140,17 @@ export async function resyncAdTeardowns(filters: { ids?: string[] } = {}): Promi
 /** Pull the current state of a queued/processing job into the mirror. */
 export async function syncAdTeardown(row: AdTeardownRow): Promise<AdTeardownRow> {
   const job = await fetchTeardownJob(row.teardownId);
-  return upsertTeardown({ ...row, ...jobToRowPatch(job), mediaSha256: row.mediaSha256 ?? job.sha256 ?? null });
+  const saved = await upsertTeardown({ ...row, ...jobToRowPatch(job), mediaSha256: row.mediaSha256 ?? job.sha256 ?? null });
+  // Teardown bills in its own GCP project, so this is the only place its spend
+  // reaches the Usage ledger. Guarded on the status transition: recorded once.
+  if (row.status !== "completed" && saved.status === "completed") {
+    await recordUsage({
+      feature: "teardown",
+      model: "teardown:gemini-2.5-pro",
+      usage: { promptTokenCount: saved.promptTokens ?? 0, candidatesTokenCount: saved.outputTokens ?? 0 },
+      costUsdOverride: teardownCostUsd(saved) ?? TEARDOWN_TYPICAL_COST_USD,
+      metadata: { competitorAdId: saved.competitorAdId, teardownId: saved.teardownId, estimated: teardownCostUsd(saved) == null },
+    });
+  }
+  return saved;
 }

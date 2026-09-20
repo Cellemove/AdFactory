@@ -75,3 +75,17 @@ export function getLLM(): GoogleGenAI {
 export const DEFAULT_MODEL = process.env.GEMINI_MODEL?.trim() || "gemini-2.5-pro";
 export const FAST_MODEL =
   process.env.GEMINI_FAST_MODEL?.trim() || process.env.RESEARCH_FAST_MODEL?.trim() || "gemini-2.5-flash";
+
+// Per-feature routing (key = the Usage `feature` tag). A feature is added here
+// ONLY after the script bench (scripts/bench.ts) shows its scores hold on the
+// cheaper model twice in a row — name the two bench artifacts in a comment next
+// to the entry. Everything not listed runs on DEFAULT_MODEL.
+export const MODEL_BY_FEATURE: Record<string, string> = {};
+
+// Resolution order: AI_MODEL_<FEATURE> env (how the bench trials a model with no
+// code edit, e.g. AI_MODEL_SCRIPT_WORKFLOW_AUDIT=gemini-2.5-flash) → the promoted
+// table above → DEFAULT_MODEL. Env is read per call so a bench run can flip it.
+export function modelFor(feature: string): string {
+  const override = process.env[`AI_MODEL_${feature.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}`]?.trim();
+  return override || MODEL_BY_FEATURE[feature] || DEFAULT_MODEL;
+}

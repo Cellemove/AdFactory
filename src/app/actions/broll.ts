@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { supabase, newId } from "@/lib/db";
 import { listBrollFromDrive, downloadDriveFile } from "@/lib/drive";
-import { getLLM } from "@/lib/llm";
+import { FAST_MODEL, getLLM } from "@/lib/llm";
+import { recordUsage } from "@/lib/usage";
 import type { BrollClipRow, TablesInsert } from "@/lib/database.types";
 
 type ClipWrite = TablesInsert<"BrollClip">;
@@ -274,7 +275,7 @@ export async function analyzeBroll(
       const bytes = await downloadDriveFile(clip.driveId);
       const llm = getLLM();
       const resp = await llm.models.generateContent({
-        model: "gemini-2.5-flash",
+        model: FAST_MODEL,
         contents: [
           {
             role: "user",
@@ -293,6 +294,7 @@ export async function analyzeBroll(
         ],
         config: { responseMimeType: "application/json", temperature: 0.2 },
       });
+      await recordUsage({ feature: "broll_analysis", model: FAST_MODEL, usage: resp.usageMetadata, metadata: { clipId: clip.id } });
       const parsed = JSON.parse(resp.text ?? "{}") as { description?: string; tags?: string[] };
       const upd = await supabase
         .from("BrollClip")

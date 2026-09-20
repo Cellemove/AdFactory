@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { balancedTrim, brandsToExtend, fairShare, launchedWithin, pickNew, winnerCutoff } from "./winners";
+import { balancedTrim, brandsToExtend, fairShare, launchedWithin, pageSizeFor, pickNew, readWinnerPick, resolveCompetitors, teardownSkipReason, winnerCutoff } from "./winners";
 
 test("the cutoff is today minus the minimum run, as a UTC date", () => {
   assert.equal(winnerCutoff(Date.parse("2026-09-11T20:00:00Z"), 21), "2026-08-21");
@@ -59,4 +59,48 @@ test("new picks deduplicate across brands and prefer spend within a brand", () =
   const pool = new Map([["a", [2, 4, 4]], ["b", [4, 3]], ["empty", []]]);
   assert.deepEqual(pickNew(pool, new Set(), 2, String, Number), [4, 3]);
   assert.deepEqual(pickNew(pool, new Set(["2", "3", "4"]), 2, String, Number), []);
+});
+
+
+test("page size never exceeds the provider's 100-row cap", () => {
+  assert.equal(pageSizeFor(100, 21), 5);
+  assert.equal(pageSizeFor(100, 1), 100);
+  // Without the clamp a single-brand pull asks for 200, gets 100, and is wrongly
+  // marked exhausted after the first page.
+  assert.equal(pageSizeFor(200, 1), 100);
+  assert.equal(pageSizeFor(500, 3), 100);
+});
+
+const tracked = [{ domain: "getionix.com", name: "Ionix" }, { domain: "luveon.com", name: "Luveon" }];
+
+test("a brand resolves to one competitor, by domain or name, any case", () => {
+  assert.deepEqual(resolveCompetitors(tracked, "GetIonix.com"), [tracked[0]]);
+  assert.deepEqual(resolveCompetitors(tracked, " luveon "), [tracked[1]]);
+  assert.deepEqual(resolveCompetitors(tracked, "Ionix"), [tracked[0]]);
+  assert.deepEqual(resolveCompetitors(tracked, null), tracked);
+  assert.deepEqual(resolveCompetitors(tracked, "  "), tracked);
+});
+
+test("an untracked brand fails loudly, listing what is tracked", () => {
+  assert.throws(() => resolveCompetitors(tracked, "nope.com"), /not tracked.*getionix\.com, luveon\.com/s);
+});
+
+test("winner picks are read back, and rubbish is rejected", () => {
+  const pick = { ruleVersion: "winners-v1", rule: "r", minDays: 21, cutoff: "2026-08-21", brand: "luveon.com", brandRank: 7, target: 100, pickedAt: "2026-09-11T00:00:00Z" };
+  assert.deepEqual(readWinnerPick(pick), pick);
+  assert.equal(readWinnerPick({ brand: "x" }), null, "a pick without pickedAt is not a pick");
+  assert.equal(readWinnerPick(null), null);
+  assert.equal(readWinnerPick("nope"), null);
+});
+
+test("teardown pre-filter skips only flagged duplicates and out-of-range durations", () => {
+  const ad = (over: Partial<{ durationSec: number | null; is_duplicate: boolean | null }>) => ({
+    durationSec: "durationSec" in over ? over.durationSec! : 30,
+    rawPayload: { is_duplicate: over.is_duplicate ?? false },
+  });
+  assert.equal(teardownSkipReason(ad({})), null);
+  assert.equal(teardownSkipReason(ad({ durationSec: null })), null);
+  assert.equal(teardownSkipReason(ad({ is_duplicate: true })), "duplicate creative");
+  assert.match(teardownSkipReason(ad({ durationSec: 6 })) ?? "", /outside/);
+  assert.match(teardownSkipReason(ad({ durationSec: 300 })) ?? "", /outside/);
 });

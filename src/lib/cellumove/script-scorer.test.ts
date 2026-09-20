@@ -3,7 +3,9 @@ import test from "node:test";
 import type { ScriptDocument } from "./script-studio";
 import {
   scoreFactVerification,
+  judgeScoreImprovement,
   scoreObserverFlags,
+  stabilizedFactScore,
   scoreSpecificity,
   scoreStructuralFit,
   scoreVerbatimGrounding,
@@ -99,8 +101,7 @@ test("normalizes OTHER from an offer-layer hint for an ambiguous CTA sentence", 
   assert.equal(result.lines[0]?.layer, "OTHER");
 });
 
-test("scores structural coverage, order, and durations against five gold ads", () => {
-  const goldAds: GoldAdInput[] = Array.from({ length: 5 }, (_, index) => ({
+const goldAds: GoldAdInput[] = Array.from({ length: 5 }, (_, index) => ({
     id: `gold-${index}`,
     angleSlug: "daily-relief",
     format: "UGC",
@@ -109,10 +110,50 @@ test("scores structural coverage, order, and durations against five gold ads", (
       { code: "M_MECHANISM", layer: "M", orderIndex: 1, startSec: 5, endSec: 10 },
       { code: "O_CTA", layer: "O", orderIndex: 2, startSec: 10, endSec: 15 },
     ],
-  }));
+}));
+
+test("scores structural coverage, order, and durations against five gold ads", () => {
   const result = scoreStructuralFit({ document, analysis, goldAds, angleSlug: "daily-relief", format: "UGC" });
   assert.equal(result.status, "scored");
   assert.equal(result.score, 100);
+});
+
+test("Structure falls back to Corpus Miner winners: same format first, then every winner, gold ads still preferred", () => {
+  const winner = (id: string, format: string): GoldAdInput => ({ ...goldAds[0]!, id, angleSlug: "", format });
+  const sameFormat = Array.from({ length: 5 }, (_, index) => winner(`ugc-${index}`, "UGC"));
+  const otherFormat = Array.from({ length: 6 }, (_, index) => winner(`vo-${index}`, "Voiceover"));
+  const byFormat = scoreStructuralFit({ document, analysis, goldAds: [], corpusAds: [...sameFormat, ...otherFormat], angleSlug: "new-angle", format: "UGC" });
+  assert.equal(byFormat.status, "scored");
+  assert.equal(byFormat.metrics.cohortType, "corpus_format");
+  assert.equal(byFormat.metrics.cohortSize, 5);
+  const anyFormat = scoreStructuralFit({ document, analysis, goldAds: [], corpusAds: otherFormat, angleSlug: "new-angle", format: "UGC" });
+  assert.equal(anyFormat.metrics.cohortType, "corpus_all");
+  assert.match(anyFormat.summary, /Corpus Miner/);
+  assert.equal(scoreStructuralFit({ document, analysis, goldAds, corpusAds: otherFormat, angleSlug: "daily-relief", format: "UGC" }).metrics.cohortType, "angle_and_format");
+  assert.equal(scoreStructuralFit({ document, analysis, goldAds: [], corpusAds: otherFormat.slice(0, 4), angleSlug: "new-angle", format: "UGC" }).status, "insufficient_evidence");
+});
+
+test("an AI edit is offered only when scores really rise and Facts never fall", () => {
+  const before = { structural_fit: 70, verbatim_grounding: 27, specificity: 69, fact_verification: 25, observer_flags: null };
+  assert.equal(judgeScoreImprovement(before, { ...before, verbatim_grounding: 45, specificity: 75 }).accept, true);
+  assert.equal(judgeScoreImprovement(before, { ...before, verbatim_grounding: 28 }).accept, false, "a 1-point gain is noise");
+  assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, fact_verification: 24 }).reasons.join(" "), /fact_verification fell/);
+  assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, structural_fit: 60 }).reasons.join(" "), /structural_fit fell/);
+  assert.equal(judgeScoreImprovement(before, { ...before, verbatim_grounding: 60, structural_fit: 66 }).accept, true, "a small dip is fine when the gain dwarfs it");
+  assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: 35, structural_fit: 66 }).reasons.join(" "), /does not clearly outweigh/, "+8 for -4 is a trade, not an improvement");
+  // The real case that was wrongly refused: +16 Grounding, +45 Specificity, +7 Facts, -4 Structure.
+  assert.equal(judgeScoreImprovement({ structural_fit: 75, verbatim_grounding: 9, specificity: 55, fact_verification: 33 }, { structural_fit: 71, verbatim_grounding: 25, specificity: 100, fact_verification: 40 }).accept, true);
+  assert.match(judgeScoreImprovement(before, { ...before, verbatim_grounding: null }).reasons.join(" "), /no longer be scored/);
+});
+
+test("an unchanged claim keeps its original Facts verdict; only new wording is judged fresh", () => {
+  const original = [{ scriptQuote: "go all the way up to 7XL", severity: "info" }, { scriptQuote: "boosts circulation by thirty percent", severity: "warning" }];
+  // Same two sentences, but this run's paraphrase flipped the first one: noise, not an edit.
+  assert.equal(stabilizedFactScore(original, [{ scriptQuote: "go all the way up to 7XL", severity: "warning" }, { scriptQuote: "boosts circulation by thirty percent", severity: "warning" }]), 50);
+  // A reworded claim is judged on its own merits, in both directions.
+  assert.equal(stabilizedFactScore(original, [{ scriptQuote: "go all the way up to 7XL", severity: "info" }, { scriptQuote: "is designed to stay in contact with the legs", severity: "info" }]), 100);
+  assert.equal(stabilizedFactScore(original, [{ scriptQuote: "sizes run up to 9XL", severity: "critical" }, { scriptQuote: "boosts circulation by thirty percent", severity: "warning" }]), 0);
+  assert.equal(stabilizedFactScore(original, []), null);
 });
 
 test("reports unavailable structural and grounding datasets honestly", () => {

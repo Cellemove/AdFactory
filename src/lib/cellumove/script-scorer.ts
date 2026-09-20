@@ -2,9 +2,19 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { ScriptDocument, ScriptModule } from "@/lib/cellumove/script-studio";
 
-export const SCORER_ENGINE_VERSION = "script-scorer-v2";
-export const SCORER_TAXONOMY_VERSION = "copy-taxonomy-v1";
-export const SCORER_EXTRACTOR_PROMPT_VERSION = "script-scorer-extractor-v2";
+// v3: Structure falls back to the Corpus Miner's winning ads; Grounding counts
+// market-agnostic verbatims (both modules used to read "needs evidence" always).
+// v4: Grounding compares a line with verbatim SENTENCES, not whole comments. The
+// version is part of the run key, so bumping it makes "Refresh result" re-score
+// instead of returning the stored run.
+// v5: ungrounded findings keep the next-closest customer sentences.
+export const SCORER_ENGINE_VERSION = "script-scorer-v5";
+// v2 = the named-beat taxonomy the Corpus Miner extracts in, so a script's beats
+// and the winning ads' beats share one vocabulary. (v1 had 9 coarse codes and only
+// 3 hand-made gold ads ever existed for it.)
+export const SCORER_TAXONOMY_VERSION = "copy-taxonomy-v2";
+// v3: response schema with the taxonomy codes as an enum.
+export const SCORER_EXTRACTOR_PROMPT_VERSION = "script-scorer-extractor-v3";
 export const SCORER_BASELINE_VERSION = "gold-35-v1";
 export const GROUNDING_THRESHOLD = 0.72;
 
@@ -118,6 +128,8 @@ export type GroundingMatch = {
   evidenceId: string | null;
   evidenceQuote: string | null;
   similarity: number | null;
+  /** Next-closest customer sentences, for "Improve score" to write from. */
+  alternatives?: string[];
 };
 
 export type ApprovedEvidence = {
@@ -125,6 +137,62 @@ export type ApprovedEvidence = {
   type: "brand_fact" | "product_offer";
   text: string;
 };
+
+// ─── "Improve score": when is an AI edit allowed to be offered? ────────────────
+
+/** Points the four scored modules must gain in total. Smaller gains are scorer noise. */
+export const IMPROVE_MIN_TOTAL_GAIN = 3;
+/** The most any single module other than Facts may dip. */
+export const IMPROVE_MAX_MODULE_DROP = 5;
+/** The net gain must be at least this many times the points lost elsewhere. */
+export const IMPROVE_GAIN_TO_DROP_RATIO = 3;
+
+/**
+ * Gate for an AI-edited candidate, judged on the SAME scorer as the original.
+ *
+ * Facts may never fall at all: a rewrite that lifts Grounding by loosening a claim
+ * is exactly the inaccurate edit this feature must not make. The other modules rest
+ * on an LLM's line classification and wobble a few points between runs, so a small
+ * dip is tolerated — but only when the overall gain clearly outweighs it. (A first
+ * version refused +16 Grounding, +45 Specificity, +7 Facts over a 4-point Structure dip.)
+ */
+export function judgeScoreImprovement(
+  before: Record<string, number | null | undefined>,
+  after: Record<string, number | null | undefined>,
+): { accept: boolean; gain: number; reasons: string[] } {
+  const reasons: string[] = [];
+  let gain = 0;
+  let lost = 0;
+  for (const [module, was] of Object.entries(before)) {
+    const now = after[module];
+    if (was == null) continue;
+    if (now == null) { reasons.push(`${module} could no longer be scored`); continue; }
+    gain += now - was;
+    if (now < was) lost += was - now;
+    const allowedDrop = module === "fact_verification" ? 0 : IMPROVE_MAX_MODULE_DROP;
+    if (was - now > allowedDrop) reasons.push(`${module} fell ${Math.round(was)} → ${Math.round(now)}`);
+  }
+  if (gain < IMPROVE_MIN_TOTAL_GAIN) reasons.push(`total gain ${gain.toFixed(1)} is below ${IMPROVE_MIN_TOTAL_GAIN}`);
+  else if (gain < lost * IMPROVE_GAIN_TO_DROP_RATIO) reasons.push(`the ${gain.toFixed(0)}-point gain does not clearly outweigh the ${lost.toFixed(0)} points lost elsewhere`);
+  return { accept: reasons.length === 0, gain, reasons };
+}
+
+/**
+ * Facts score for an edited script, with the scorer's own run-to-run noise removed.
+ * Support is decided from an LLM-written paraphrase of each claim, so a borderline
+ * claim can flip between two runs on IDENTICAL text — and with ~6 claims one flip is
+ * 17 points. A sentence the edit did not change cannot have changed its support, so
+ * it keeps the verdict of the original run; only new or reworded claims are judged fresh.
+ */
+export function stabilizedFactScore(
+  original: Array<{ scriptQuote: string | null; severity: string }>,
+  candidate: Array<{ scriptQuote: string | null; severity: string }>,
+): number | null {
+  if (!candidate.length) return null;
+  const verdict = new Map(original.map((finding) => [finding.scriptQuote, finding.severity === "info"]));
+  const supported = candidate.filter((finding) => verdict.get(finding.scriptQuote) ?? finding.severity === "info").length;
+  return Math.round((supported / candidate.length) * 10000) / 100;
+}
 
 export function scriptSourceLines(document: ScriptDocument): ScriptSourceLine[] {
   const lines: ScriptSourceLine[] = [];
@@ -240,21 +308,35 @@ export function scoreStructuralFit(input: {
   document: ScriptDocument;
   analysis: AnalyzedScript;
   goldAds: GoldAdInput[];
+  /** Winning competitor ads broken down by the Corpus Miner — the fallback when too few gold ads match. */
+  corpusAds?: GoldAdInput[];
   angleSlug: string;
   format: string;
 }): ScriptScorerModuleResult {
   const exact = input.goldAds.filter((ad) => ad.angleSlug === input.angleSlug && ad.format.toLowerCase() === input.format.toLowerCase());
   const angleOnly = input.goldAds.filter((ad) => ad.angleSlug === input.angleSlug);
-  const cohort = exact.length >= 5 ? exact : angleOnly.length >= 5 ? angleOnly : [];
-  const cohortType = exact.length >= 5 ? "angle_and_format" : angleOnly.length >= 5 ? "angle" : null;
+  // Hand-decomposed gold ads for this angle win when there are enough of them.
+  // Otherwise the script is compared with proven winners of the same production
+  // format, then with every winner in the corpus.
+  const corpus = input.corpusAds ?? [];
+  const corpusFormat = corpus.filter((ad) => ad.format.toLowerCase() === input.format.toLowerCase());
+  const tiers = [
+    { type: "angle_and_format", ads: exact, describe: "gold ads matched by angle and format" },
+    { type: "angle", ads: angleOnly, describe: "gold ads matched by angle" },
+    { type: "corpus_format", ads: corpusFormat, describe: `winning competitor ads in the ${input.format} format (Corpus Miner)` },
+    { type: "corpus_all", ads: corpus, describe: "winning competitor ads of every format (Corpus Miner)" },
+  ] as const;
+  const tier = tiers.find((candidate) => candidate.ads.length >= 5) ?? null;
+  const cohort = tier?.ads ?? [];
+  const cohortType = tier?.type ?? null;
   if (!cohort.length) {
     return {
       module: "structural_fit",
       status: "insufficient_evidence",
       score: null,
       label: "Gold-set structural fit — provisional",
-      summary: "At least five matching gold ads are required before structural fit can be scored.",
-      metrics: { exactMatches: exact.length, angleMatches: angleOnly.length, minimumRequired: 5 },
+      summary: "At least five reference ads are required before structural fit can be scored: gold ads for this angle, or winning ads broken down in the Corpus Miner.",
+      metrics: { exactMatches: exact.length, angleMatches: angleOnly.length, corpusFormatMatches: corpusFormat.length, corpusAds: corpus.length, minimumRequired: 5 },
       findings: [],
     };
   }
@@ -353,7 +435,7 @@ export function scoreStructuralFit(input: {
     status: "scored",
     score: boundedScore(weighted),
     label: "Gold-set structural fit — provisional",
-    summary: `Compared with ${cohort.length} gold ads matched by ${cohortType === "angle_and_format" ? "angle and format" : "angle"}.`,
+    summary: `Compared with ${cohort.length} ${tier!.describe}.`,
     metrics: {
       cohortSize: cohort.length,
       cohortType,
@@ -412,6 +494,7 @@ export function scoreVerbatimGrounding(input: {
     evidenceId: match.evidenceId,
     evidenceQuote: match.evidenceQuote,
     similarity: match.similarity,
+    metadata: match.alternatives?.length ? { alternatives: match.alternatives } : undefined,
   }));
   for (const match of grounded) {
     findings.push({
@@ -433,7 +516,7 @@ export function scoreVerbatimGrounding(input: {
     status: "scored",
     score: boundedScore((grounded.length / eligible.length) * 100),
     label: "Verified-verbatim grounding — experimental",
-    summary: `${grounded.length} of ${eligible.length} audience-language lines cleared the provisional similarity threshold.`,
+    summary: `${grounded.length} of ${eligible.length} audience-language lines closely echo a real customer sentence (compared with ${input.candidateCount} verified verbatims).`,
     metrics: { candidateCount: input.candidateCount, eligibleLines: eligible.length, groundedLines: grounded.length, cohort: input.cohort, threshold },
     findings,
   };

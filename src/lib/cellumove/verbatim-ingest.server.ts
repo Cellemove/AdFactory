@@ -24,6 +24,7 @@ import {
   normalizeFacebookComments,
   normalizeTiktokComments,
   normalizeTiktokVideos,
+  hasRedditVocabulary,
   redditSearchTerms,
   rankTiktokVideos,
   type IngestPlatform,
@@ -398,12 +399,64 @@ async function scrapeTiktok(
 
 // ─── Entry point ─────────────────────────────────────────────────────────────
 
+async function redditAudiencePhrase(input: IngestInput): Promise<string | null> {
+  try {
+    const response = await getLLM().models.generateContent({
+      model: FAST_MODEL,
+      contents: JSON.stringify({ angle: input.angleName, mechanism: input.mechanism ?? null }),
+      config: {
+        systemInstruction: [
+          "An ad angle name is an internal marketing label. Return the plain 2-4 word phrase real people type on Reddit when they talk about living with this problem themselves.",
+          "Use everyday sufferer vocabulary (a condition or a symptom). Never brand, product, or marketing words. Lowercase, no quotes, no hashtags.",
+          'Examples: "The Confidence Restorer" -> "hate my legs"; "Piriformis Prison Relief" -> "piriformis syndrome"; "Chub Rub Relief" -> "thigh chafing".',
+          'Return JSON only: {"phrase": string}',
+        ].join("\n"),
+        responseMimeType: "application/json",
+        maxOutputTokens: 256,
+        temperature: 0,
+        thinkingConfig: { thinkingBudget: 0 },
+      },
+    });
+    await recordUsage({ feature: "verbatim_ingest_query", model: FAST_MODEL, usage: response.usageMetadata, metadata: { angleSlug: input.angleSlug ?? undefined } });
+    const phrase = String((JSON.parse(response.text ?? "{}") as { phrase?: unknown }).phrase ?? "").replace(/["#]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    const words = phrase.split(" ").filter(Boolean).length;
+    return words >= 1 && words <= 5 && phrase.length <= 60 ? phrase : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function ingestPlatformVerbatims(input: IngestInput): Promise<IngestSummary> {
   const maxPosts = Math.min(20, Math.max(1, input.maxPosts ?? 8));
   const maxComments = Math.min(100, Math.max(5, input.maxCommentsPerPost ?? 40));
   const maxUsd = Math.min(20, input.maxUsd ?? apifyMaxUsdPerRun());
   const warnings: string[] = [];
   let spentUsd = 0;
+
+  // Recency skip: a plain re-run of the same platform + angle inside the window
+  // mostly re-buys comments we already own. A focus, explicit URLs, or force
+  // always scrape. ponytail: one window for all platforms; split if TikTok needs fresher.
+  const rescrapeDays = Number(process.env.APIFY_RESCRAPE_DAYS) || 14;
+  if (!input.force && !input.focus?.trim() && !input.targetUrls?.length && input.angleSlug) {
+    const since = new Date(Date.now() - rescrapeDays * 86_400_000).toISOString();
+    const recent = await supabase.from("VerbatimScrapeTarget").select("scrapedAt").eq("platform", input.platform).eq("angleSlug", input.angleSlug).gte("scrapedAt", since).order("scrapedAt", { ascending: false }).limit(1).maybeSingle();
+    if (recent.data) {
+      return { platform: input.platform, scraped: 0, killedGate: 0, killedDedupe: 0, killedLLM: 0, inserted: 0, estUsd: 0,
+        warnings: [`Skipped: ${input.platform} was already scraped for this angle on ${recent.data.scrapedAt.slice(0, 10)} (within ${rescrapeDays} days). Add a focus, target URLs, or force to scrape anyway.`] };
+    }
+  }
+
+  // Angle names are internal labels ("The Confidence Restorer"); searched literally
+  // they find nothing. With no focus given and no hand-written vocabulary for the
+  // angle, ask the fast model once for the phrase the audience itself would type.
+  // Fail-soft: on any error the literal name is searched, as before.
+  if (input.platform === "reddit" && !input.focus?.trim() && !hasRedditVocabulary(input)) {
+    const phrase = await redditAudiencePhrase(input);
+    if (phrase) {
+      input = { ...input, focus: phrase };
+      warnings.push(`Searched Reddit for "${phrase}".`);
+    }
+  }
 
   const spend = async (actorId: string, usd: number, runId: string, items: number) => {
     spentUsd += usd;

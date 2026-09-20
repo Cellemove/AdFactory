@@ -81,6 +81,18 @@ const completeDraft = {
   ],
 };
 
+test("more than eight hooks are trimmed to the first eight instead of rejecting the draft", () => {
+  const manyHooks = Array.from({ length: 11 }, (_, index) => ({ ...completeDraft.hookAlternatives[0]!, spokenText: `Distinct hook number ${index + 1} for the opening.` }));
+  const document = applyGeneratedScriptDraft({
+    scaffold: scaffold(),
+    draft: { ...completeDraft, hookAlternatives: manyHooks },
+    brollClips: [{ id: "clip-1", name: "Packing suitcase.mp4", url: "https://example.com/clip" }],
+    sourceRefs: [],
+  });
+  assert.equal(document.hookAlternatives.length, 8);
+  assert.equal(document.hookAlternatives[7]?.text, "Distinct hook number 8 for the opening.");
+});
+
 test("fills every editable module field and maps only real B-roll references", () => {
   const document = applyGeneratedScriptDraft({
     scaffold: scaffold(),

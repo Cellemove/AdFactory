@@ -32,6 +32,8 @@ export type BeatGateResult = {
   matchedChannel: TranscriptChannel | null;
   segmentSpan: [number, number] | null;
   lowConfidenceEvidence: boolean;
+  /** Set when the quote matched but the beat's timecodes missed it: the matched segment's real span. */
+  repairedSpan: [number, number] | null;
   errors: string[];
 };
 
@@ -39,6 +41,8 @@ export type GateReport = {
   ok: boolean;
   threshold: number;
   errors: string[];
+  /** Problems the gate fixed itself from the transcript. They never cost a model retry. */
+  warnings: string[];
   perBeat: BeatGateResult[];
 };
 
@@ -202,8 +206,11 @@ export function gateBeats(
 ): GateReport {
   const threshold = options.threshold ?? EVIDENCE_GATE_THRESHOLD;
   const errors: string[] = [];
+  const warnings: string[] = [];
   const perBeat: BeatGateResult[] = [];
   const ordered = [...beats].sort((a, b) => a.orderIndex - b.orderIndex);
+  // Start time after any repair, so the order check below judges the real position.
+  const effectiveStart = new Map<number, number>();
 
   for (const beat of ordered) {
     const beatErrors: string[] = [];
@@ -212,7 +219,9 @@ export function gateBeats(
       const other: TranscriptChannel = beat.channel === "vo" ? "ost" : "vo";
       const crossed = bestSegmentMatch(beat.evidenceQuote, segments, other, [beat.tStart, beat.tEnd]);
       if (crossed.score >= threshold) {
-        beatErrors.push(`Beat ${beat.orderIndex} declares channel "${beat.channel}" but its evidence_quote is in the "${other}" channel; set channel to "${other}".`);
+        // The transcript already says which channel the words are in; the caller
+        // takes matchedChannel, so asking the model again would buy nothing.
+        warnings.push(`Beat ${beat.orderIndex} declared channel "${beat.channel}"; its evidence_quote is in "${other}" — corrected.`);
         match = crossed;
       } else {
         beatErrors.push(`Beat ${beat.orderIndex} evidence_quote "${shortQuote(beat.evidenceQuote)}" is not a near-exact transcript substring (best ${match.score} in ${beat.channel}); copy the exact words from one segment.`);
@@ -224,13 +233,24 @@ export function gateBeats(
     if (beat.tEnd > options.transcriptEnd + END_TOLERANCE_SEC) {
       beatErrors.push(`Beat ${beat.orderIndex} ends at ${beat.tEnd}s but the transcript ends at ${options.transcriptEnd}s.`);
     }
+    let repairedSpan: [number, number] | null = null;
     if (match.span && match.score >= threshold) {
       const [segStart, segEnd] = match.span;
       const overlaps = beat.tStart <= segEnd + OVERLAP_TOLERANCE_SEC && beat.tEnd >= segStart - OVERLAP_TOLERANCE_SEC;
-      if (!overlaps) {
-        beatErrors.push(`Beat ${beat.orderIndex} timecodes ${beat.tStart}-${beat.tEnd}s do not overlap the quoted segment (${segStart}-${segEnd}s).`);
+      // Copy that is said more than once cannot be placed by its words alone, so
+      // only a quote with a single home in the transcript is snapped; a repeated
+      // line with drifted timecodes still goes back to the model.
+      const occurrences = segments.filter((segment) => segment.channel === match.channel && partialRatio(beat.evidenceQuote, segment.text) >= threshold).length;
+      if (!overlaps && occurrences <= 1) {
+        // The quote is verified against a timed segment, so the segment's span is
+        // better evidence of where the beat sits than the model's drifted guess.
+        repairedSpan = [segStart, segEnd];
+        warnings.push(`Beat ${beat.orderIndex} timecodes ${beat.tStart}-${beat.tEnd}s missed its quoted segment; snapped to ${segStart}-${segEnd}s.`);
+      } else if (!overlaps) {
+        beatErrors.push(`Beat ${beat.orderIndex} timecodes ${beat.tStart}-${beat.tEnd}s do not overlap the quoted segment (${segStart}-${segEnd}s), and that line occurs ${occurrences} times; give the timecodes of the occurrence you mean.`);
       }
     }
+    effectiveStart.set(beat.orderIndex, repairedSpan ? repairedSpan[0] : beat.tStart);
 
     perBeat.push({
       orderIndex: beat.orderIndex,
@@ -239,6 +259,7 @@ export function gateBeats(
       matchedChannel: match.score >= threshold ? match.channel : null,
       segmentSpan: match.score >= threshold ? match.span : null,
       lowConfidenceEvidence: match.lowConfidence,
+      repairedSpan,
       errors: beatErrors,
     });
     errors.push(...beatErrors);
@@ -247,11 +268,13 @@ export function gateBeats(
   for (let i = 1; i < ordered.length; i += 1) {
     const previous = ordered[i - 1]!;
     const current = ordered[i]!;
-    if (current.tStart < previous.tStart - ORDER_TOLERANCE_SEC) {
-      errors.push(`Beats are not in time order: beat ${current.orderIndex} starts at ${current.tStart}s before beat ${previous.orderIndex} at ${previous.tStart}s.`);
+    const currentStart = effectiveStart.get(current.orderIndex) ?? current.tStart;
+    const previousStart = effectiveStart.get(previous.orderIndex) ?? previous.tStart;
+    if (currentStart < previousStart - ORDER_TOLERANCE_SEC) {
+      errors.push(`Beats are not in time order: beat ${current.orderIndex} starts at ${currentStart}s before beat ${previous.orderIndex} at ${previousStart}s.`);
       break;
     }
   }
 
-  return { ok: errors.length === 0, threshold, errors, perBeat };
+  return { ok: errors.length === 0, threshold, errors, warnings, perBeat };
 }

@@ -114,7 +114,7 @@ export async function transcribeAd(ad: CompetitorAdRow, media: AdMediaRow, optio
             parts: [{ inlineData: { mimeType: mime, data: bytes.toString("base64") } }, { text: prompt }],
             thinkingBudget: 1024,
             feature: USAGE_FEATURES.transcribe,
-            metadata: { competitorAdId: ad.id, runId, promptVersion: CORPUS_TRANSCRIBE_PROMPT_VERSION, mediaSha256: media.sha256, attempt },
+            metadata: { competitorAdId: ad.id, runId, promptVersion: CORPUS_TRANSCRIBE_PROMPT_VERSION, mediaSha256: media.sha256, attempt, retryReason: previousError?.slice(0, 300) },
           });
           usage = addUsage(usage, response.usage);
           try {

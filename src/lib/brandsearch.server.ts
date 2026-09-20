@@ -10,6 +10,7 @@ import {
   type NormalizedBrandSearchAd,
   type SpectreCompetitor,
 } from "@/lib/brandsearch";
+import { recordUsage } from "@/lib/usage";
 
 const API_BASE = "https://api.brandsearch.co";
 const META_FIELDS = [
@@ -60,7 +61,16 @@ async function getJson(pathAndQuery: string): Promise<{ payload: unknown; header
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) throw new Error(errorMessage(payload, response.status));
+  await recordCredits(pathAndQuery, response.headers);
   return { payload, headers: response.headers };
+}
+
+// Credits are prepaid, so they are logged at $0: visible on /usage, excluded from
+// the dollar total and the daily spend warning.
+async function recordCredits(path: string, headers: Headers): Promise<void> {
+  const credits = headerNumber(headers, "X-Credits-Used");
+  if (!credits) return;
+  await recordUsage({ feature: "brandsearch", model: "brandsearch", usage: null, costUsdOverride: 0, metadata: { credits, path: path.split("?")[0] } });
 }
 
 async function postJson(path: string, body: unknown): Promise<{ payload: unknown; headers: Headers }> {
@@ -72,6 +82,7 @@ async function postJson(path: string, body: unknown): Promise<{ payload: unknown
   });
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) throw new Error(errorMessage(payload, response.status));
+  await recordCredits(path, response.headers);
   return { payload, headers: response.headers };
 }
 

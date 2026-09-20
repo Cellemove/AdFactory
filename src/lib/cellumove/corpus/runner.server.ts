@@ -3,7 +3,8 @@ import "server-only";
 import { supabase } from "@/lib/db";
 import { BRANDSEARCH_MEDIA_TTL_MS, type NormalizedBrandSearchAd } from "@/lib/brandsearch";
 import { competitorAdId, toCompetitorAdRow } from "./ingest";
-import { pickNew, RECENT_DAILY_CAP, RECENT_MAX_DAYS, RECENT_MIN_DAYS, RECENT_POOL_FACTOR } from "./winners";
+import { spendWarning, todaySpendUsd } from "@/lib/usage";
+import { pickNew, RECENT_DAILY_CAP, RECENT_MAX_DAYS, RECENT_MIN_DAYS, RECENT_POOL_FACTOR, teardownSkipReason } from "./winners";
 
 // The /miner/run page drives the pipeline one ad per request so no single call
 // can outlive a serverless time limit, and closing the tab simply stops after
@@ -209,7 +210,13 @@ export async function deconstructAd(adId: string): Promise<StepResult> {
     const existing = await loadAdTeardown(adId);
     if (existing?.status === "completed") return result("done", "Already deconstructed");
     if (existing?.status === "queued" || existing?.status === "processing") return result(existing.status, "Already deconstructing");
-    if (!teardownSourceFor(ad, await loadAdMedia(adId))) return result("skipped", "Video link expired — refresh the feed");
+    const media = await loadAdMedia(adId);
+    if (!teardownSourceFor(ad, media)) return result("skipped", "Video link expired — refresh the feed");
+    // Same video under another ad id: never pay for it twice.
+    if (media?.sha256) {
+      const twin = await supabase.from("AdTeardown").select("competitorAdId").eq("mediaSha256", media.sha256).neq("competitorAdId", adId).limit(1).maybeSingle();
+      if (twin.data) return result("skipped", `Same video already deconstructed (${twin.data.competitorAdId})`);
+    }
     const saved = await submitAdTeardown(ad, existing);
     return result(saved.status === "completed" ? "done" : saved.status, "Submitted to Teardown");
   } catch (error) {
@@ -233,11 +240,15 @@ export async function runRecentWinners(input: { cap?: number; dryRun?: boolean; 
     cap, submittedToday: count.count ?? 0, remaining, dryRun: Boolean(input.dryRun),
     reason: "", creditsUsed: 0, dailyRemaining: null as number | null, monthlyRemaining: null as number | null,
     synced: synced.length, results: [] as StepResult[],
+    skipped: {} as Record<string, number>, spendTodayUsd: 0, spendWarning: null as string | null,
     candidates: [] as Array<{ adId: string; brand: string; startedAt: string | null }>,
   };
-  const finish = (reason: string) => {
+  const finish = async (reason: string) => {
     summary.reason = reason;
+    summary.spendTodayUsd = Math.round((await todaySpendUsd()) * 100) / 100;
+    summary.spendWarning = spendWarning(summary.spendTodayUsd);
     console.log("[recent-winners]", JSON.stringify(summary));
+    if (summary.spendWarning) console.warn("[recent-winners]", summary.spendWarning);
     return summary;
   };
   if (!remaining) return finish(cap === 0 ? "Disabled (sync complete)" : "Day cap reached");
@@ -248,6 +259,15 @@ export async function runRecentWinners(input: { cap?: number; dryRun?: boolean; 
   summary.dailyRemaining = pool.dailyRemaining;
   summary.monthlyRemaining = pool.monthlyRemaining;
   const idOf = (ad: NormalizedBrandSearchAd) => competitorAdId(ad.provider, ad.platform.toLowerCase(), ad.externalId);
+  // Drop ads that are not worth a paid Teardown before the cap is filled; the
+  // 4x pool tops the day back up from what is left.
+  for (const [brand, ads] of pool.picked) {
+    pool.picked.set(brand, ads.filter((ad) => {
+      const reason = teardownSkipReason(ad);
+      if (reason) summary.skipped[reason] = (summary.skipped[reason] ?? 0) + 1;
+      return !reason;
+    }));
+  }
   const ids = [...pool.picked.values()].flat().map(idOf);
   const done = new Set((await loadAdTeardowns({ ids })).map((row) => row.competitorAdId));
   const todo = pickNew(pool.picked, done, remaining, idOf, (ad) => typeof ad.metrics.euTotalSpend === "number" ? ad.metrics.euTotalSpend : 0);

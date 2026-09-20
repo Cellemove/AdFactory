@@ -49,6 +49,36 @@ function buildPrompt(input: {
   ].filter(Boolean).join("\n\n");
 }
 
+// Shape-only response schema. The taxonomy codes are an enum because the most
+// common failure was the model answering with a LAYER letter ("P") where a code
+// belongs — two paid attempts, then no score at all. No size limits (Vertex
+// rejects those); Zod and the exact-substring checks still run afterwards.
+function responseJsonSchema(codes: string[]) {
+  const text = { type: "string" };
+  return {
+    type: "object",
+    properties: {
+      lines: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            scriptModuleId: text,
+            lineIndex: { type: "integer" },
+            text,
+            code: { type: "string", enum: codes },
+            otherExplanation: { type: ["string", "null"] },
+            concreteSpans: { type: "array", items: { type: "object", properties: { text, kind: { type: "string", enum: ["number", "time", "place", "named_object", "action", "sensory"] } }, required: ["text", "kind"] } },
+            factualAssertions: { type: "array", items: { type: "object", properties: { quote: text, normalizedClaim: text, claimType: { type: "string", enum: ["product", "mechanism", "outcome", "price", "guarantee", "bonus", "availability"] } }, required: ["quote", "normalizedClaim", "claimType"] } },
+          },
+          required: ["scriptModuleId", "lineIndex", "text", "code", "concreteSpans", "factualAssertions"],
+        },
+      },
+    },
+    required: ["lines"],
+  };
+}
+
 export async function extractAnalyzedScript(input: {
   document: ScriptDocument;
   taxonomy: Array<{ code: string; layer: string; label: string; description: string }>;
@@ -67,6 +97,7 @@ export async function extractAnalyzedScript(input: {
       contents: buildPrompt({ document: input.document, taxonomy: input.taxonomy, previousError }),
       config: {
         responseMimeType: "application/json",
+        responseJsonSchema: responseJsonSchema([...allowedCodes.keys()]),
         maxOutputTokens: 16384,
         thinkingConfig: { thinkingBudget: 0 },
         temperature: 0,
@@ -81,6 +112,7 @@ export async function extractAnalyzedScript(input: {
         marketCode: input.marketCode,
         promptVersion: SCORER_EXTRACTOR_PROMPT_VERSION,
         attempt,
+        retryReason: previousError?.slice(0, 300),
       },
     });
     try {

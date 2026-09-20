@@ -9,10 +9,12 @@
 // dedupe helpers fall back to the lexical result so generation is never blocked.
 
 import { getLLM, isLLMConfigured } from "@/lib/llm";
+import { recordUsage } from "@/lib/usage";
 import { filterNovel } from "./novelty";
 
 // Vertex text-embedding model. Overridable; text-embedding-004 is broadly available.
 export const EMBED_MODEL = process.env.EMBED_MODEL?.trim() || "text-embedding-004";
+const EMBED_USD_PER_1K_CHARS = 0.000025;
 const SIM_THRESHOLD = 0.9; // cosine >= this ⇒ semantic near-duplicate
 
 /** Embed texts (batched, order-preserving). null on any failure — caller fails soft. */
@@ -37,6 +39,11 @@ export async function embedTexts(texts: string[]): Promise<number[][] | null> {
       if (!Array.isArray(embs) || embs.length !== batches[b]!.length) return null;
       for (const e of embs) out.push(e.values ?? []);
     }
+    // Vertex bills text embeddings per input character and returns no token
+    // count, so the ledger entry is estimated from the characters sent.
+    // ponytail: list price as of mid-2026; pennies a month, adjust if pricing moves.
+    const chars = inputs.reduce((sum, input) => sum + input.length, 0);
+    await recordUsage({ feature: "embeddings", model: EMBED_MODEL, usage: null, costUsdOverride: (chars / 1000) * EMBED_USD_PER_1K_CHARS, metadata: { texts: inputs.length, chars } });
     return out;
   } catch {
     return null;
