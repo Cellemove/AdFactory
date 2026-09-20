@@ -115,7 +115,15 @@ export default async function MinerPage({ searchParams }: { searchParams: Promis
     <div className="space-y-8">
       <MinerTabs active="results" />
       <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Results</h1>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <h1 className="text-2xl font-semibold tracking-tight">Results</h1>
+          {/* A plain link: the browser saves the ZIP itself, so no client code is needed. */}
+          {teardownsDone > 0 && (
+            <a href="/api/miner/ads/dump-all" className="btn btn-primary" title="One JSON file per deconstructed ad (transcript, beats and the full Teardown workbook), grouped by brand, with an index.">
+              Download {teardownsDone} deconstructed ads (JSON)
+            </a>
+          )}
+        </div>
         <p className="mt-1 max-w-3xl text-sm text-ink-500">The numbers behind the playbooks: what every processed ad is made of, which patterns repeat, and anything that needs a second look. Start or continue a run on <Link href="/miner" className="font-medium text-ink-800 underline-offset-2 hover:underline">Run pipeline</Link>.</p>
         <details className="mt-2 text-xs text-ink-400"><summary className="cursor-pointer">Versions</summary><p className="mt-1">engine {CORPUS_ENGINE_VERSION} · beat list {CORPUS_TAXONOMY_VERSION} · transcribe {CORPUS_TRANSCRIBE_PROMPT_VERSION} · split {CORPUS_EXTRACT_PROMPT_VERSION}</p></details>
       </header>

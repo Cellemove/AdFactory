@@ -5,11 +5,19 @@ import "server-only";
 // timecodes, plus the versions that produced it.
 
 import { CORPUS_ENGINE_VERSION, CORPUS_EXTRACT_PROMPT_VERSION, CORPUS_TRANSCRIBE_PROMPT_VERSION, WINNER_SCORE_VERSION } from "./constants";
+import type { AdTeardownRow } from "@/lib/database.types";
 import { loadAdDetail } from "./state.server";
+import { teardownCostUsd } from "./teardown";
+import { loadAdTeardown } from "./teardown.server";
 
-export async function dumpAdJson(adId: string): Promise<Record<string, unknown> | null> {
+/**
+ * `teardown` may be passed by a caller that already holds the row (the bulk
+ * export loads them all in one query); left undefined, it is looked up here.
+ */
+export async function dumpAdJson(adId: string, teardown?: AdTeardownRow | null): Promise<Record<string, unknown> | null> {
   const detail = await loadAdDetail(adId);
   if (!detail) return null;
+  const deconstruction = teardown === undefined ? await loadAdTeardown(adId).catch(() => null) : teardown;
   const { ad, media, transcriptRun, segments, extractRun, beats } = detail;
   return {
     ad: {
@@ -65,6 +73,21 @@ export async function dumpAdJson(adId: string): Promise<Record<string, unknown> 
       matchedSegmentId: beat.matchedSegmentId,
       otherExplanation: beat.otherExplanation,
     })),
+    // The Teardown deconstruction: the full workbook (its fields and the
+    // scene-by-scene script), exactly as mirrored from the Teardown service.
+    teardown: deconstruction ? {
+      teardownId: deconstruction.teardownId,
+      status: deconstruction.status,
+      sourceKind: deconstruction.sourceKind,
+      sheetRowLink: deconstruction.sheetRowLink,
+      submittedAt: deconstruction.submittedAt,
+      completedAt: deconstruction.completedAt,
+      promptTokens: deconstruction.promptTokens,
+      outputTokens: deconstruction.outputTokens,
+      estimatedCostUsd: teardownCostUsd(deconstruction),
+      errorCode: deconstruction.errorCode,
+      workbook: deconstruction.workbook,
+    } : null,
     versions: {
       engine: CORPUS_ENGINE_VERSION,
       transcribePrompt: CORPUS_TRANSCRIBE_PROMPT_VERSION,
