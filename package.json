@@ -29,6 +29,8 @@
     "test:zip": "tsx --test src/lib/zip.test.ts",
     "test:dump-usable": "tsx --test src/lib/cellumove/corpus/dump-usable.test.ts",
     "test:llm": "tsx --test src/lib/llm.test.ts",
+    "test:corpus": "tsx --test src/lib/cellumove/corpus/*.test.ts",
+    "test:image-ads": "tsx --test src/lib/cellumove/image-ad-references.test.ts src/lib/cellumove/image-ad-concepts.test.ts src/lib/cellumove/image-ad-branding.test.ts src/lib/image-probe.test.ts src/lib/image-compress.test.ts",
     "test:corpus": "tsx --test src/lib/cellumove/corpus/*.test.ts src/app/miner/_run/*.test.ts",
     "test:image-ads": "tsx --test src/lib/cellumove/image-ad-references.test.ts src/lib/cellumove/image-ad-concepts.test.ts src/lib/image-probe.test.ts src/lib/image-compress.test.ts",
     "test:recent-winners": "tsx --conditions=react-server --test scripts/tests/recent-winners.test.ts",

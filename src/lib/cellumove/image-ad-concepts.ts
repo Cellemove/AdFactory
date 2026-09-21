@@ -5,6 +5,7 @@ import type { ImageAdReferenceRole } from "./image-ad-references";
 
 export type ImageAdCandidateStatus = "planned" | "generating" | "ready" | "failed";
 export type ImageAdConceptSource = "reference_informed" | "original";
+export const IMAGE_AD_LOGO_LAYOUT_VERSION = 2;
 
 export interface ImageAdConcept {
   direction: string;        // the message direction this execution belongs to
@@ -29,10 +30,20 @@ export interface ImageAdCandidate {
   attempts: number;
   error: string | null;
   generatedAt: string | null;
+  logoAppliedAt?: string;
+  logoLayoutVersion?: number;
+  // Keep the clean source so branding can be repaired without regenerating.
+  unbrandedImageUrl?: string;
   // Result of the existing claim scan over the concept copy. Advisory: it flags
   // wording for a human, it does not block generation.
   claimStatus?: "clean" | "warn" | "flagged";
   claimFlags?: string[];
+}
+
+export function canApplyImageAdLogo(candidate: ImageAdCandidate): boolean {
+  return candidate.status === "ready" && Boolean(candidate.imageUrl)
+    && candidate.logoLayoutVersion !== IMAGE_AD_LOGO_LAYOUT_VERSION
+    && (!candidate.logoAppliedAt || Boolean(candidate.unbrandedImageUrl));
 }
 
 // 60–70% reference-informed, 30–40% original, rounded to whole candidates while

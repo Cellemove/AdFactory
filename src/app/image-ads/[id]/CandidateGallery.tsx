@@ -1,9 +1,11 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { generateImageAdCandidate, planImageAdConcepts } from "@/app/actions/image-ads";
+import { brandImageAdCandidate, generateImageAdCandidate, planImageAdConcepts } from "@/app/actions/image-ads";
 import {
   candidateCounts,
+  canApplyImageAdLogo,
+  IMAGE_AD_LOGO_LAYOUT_VERSION,
   duplicateHeadlineSlots,
   type ImageAdCandidate,
 } from "@/lib/cellumove/image-ad-concepts";
@@ -35,6 +37,7 @@ export function CandidateGallery({
   onCandidatesChange: (update: (current: ImageAdCandidate[]) => ImageAdCandidate[]) => void;
 }) {
   const [planning, setPlanning] = useState(false);
+  const [branding, setBranding] = useState(false);
   const [running, setRunning] = useState(false);
   const [busySlot, setBusySlot] = useState<number | null>(null);
   const [queueSize, setQueueSize] = useState(0);
@@ -55,7 +58,9 @@ export function CandidateGallery({
   const flagged = candidates.filter((c) => c.claimStatus === "flagged").length;
   const todoSlots = candidates.filter((c) => c.status !== "ready").map((c) => c.slot);
   const failedSlots = candidates.filter((c) => c.status === "failed").map((c) => c.slot);
-  const busy = planning || running;
+  const unbrandedSlots = candidates.filter(canApplyImageAdLogo).map((c) => c.slot);
+  const needsLogoRegeneration = candidates.some((c) => c.status === "ready" && c.imageUrl && c.logoAppliedAt && c.logoLayoutVersion !== IMAGE_AD_LOGO_LAYOUT_VERSION && !c.unbrandedImageUrl);
+  const busy = planning || running || branding;
   const open = openSlot === null ? null : candidates.find((c) => c.slot === openSlot) ?? null;
 
   const visible = candidates.filter((candidate) =>
@@ -83,6 +88,32 @@ export function CandidateGallery({
       setError("Could not reach the server. Check your connection and try again.");
     } finally {
       setPlanning(false);
+    }
+  };
+
+  const addLogos = async () => {
+    if (busy) return;
+    setBranding(true);
+    setError(null);
+    setNotice(null);
+    try {
+      for (let i = 0; i < unbrandedSlots.length; i += 1) {
+        setNotice(`Adding logo ${i + 1} of ${unbrandedSlots.length}...`);
+        const slot = unbrandedSlots[i]!;
+        const result = await brandImageAdCandidate(batchId, slot);
+        if (!result.ok) {
+          setError(result.error);
+          setNotice(null);
+          return;
+        }
+        onCandidatesChange((current) => current.map((item) => item.slot === slot ? result.candidate : item));
+      }
+      setNotice("Cellumove logos added. No image-generation charge. Open the images to review their placement.");
+    } catch {
+      setNotice(null);
+      setError("Could not reach the server. Logos already applied are saved; try again to finish the rest.");
+    } finally {
+      setBranding(false);
     }
   };
 
@@ -217,6 +248,11 @@ export function CandidateGallery({
           {flagged > 0 && <span className="tag tag-danger">{flagged} claim flag{flagged === 1 ? "" : "s"}</span>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          {(unbrandedSlots.length > 0 || branding) && (
+            <button type="button" className="btn text-xs" onClick={addLogos} disabled={busy}>
+              {branding ? "Updating logos..." : "Add or fix logos"}
+            </button>
+          )}
           {counts.ready === 0 && !running && (
             <button type="button" className="btn text-xs" onClick={plan} disabled={busy}>
               {planning ? `Re-planning… ${formatDuration(planElapsed)}` : "Re-plan concepts"}
@@ -244,6 +280,13 @@ export function CandidateGallery({
       {!running && !allReady && (
         <p className="mt-2 text-right text-[11px] text-ink-400">
           ≈ ${(todoSlots.length * costPerImage).toFixed(2)} · about {formatDuration(todoSlots.length * secondsPerImage)} · keep this tab open while it runs
+        </p>
+      )}
+
+      {needsLogoRegeneration && (
+        <p className="mt-2 text-xs text-ink-500">
+          Some older images have a logo embedded over the artwork and no saved clean original.
+          If text is covered, open the image and regenerate it to use the separate logo header. Generation charges apply.
         </p>
       )}
 
