@@ -9,6 +9,7 @@ import { recordUsage } from "@/lib/usage";
 import { requireStrategist } from "@/lib/authorization";
 import { readStoredImage, saveImage, storedImageExists } from "@/lib/storage";
 import { finalizeAdImage } from "@/lib/image-compress";
+import { applyCellumoveLogo, imageAdBrandingPrompt, loadCellumoveLogos } from "@/lib/cellumove/image-ad-branding";
 import { probeImage } from "@/lib/image-probe";
 import { extractJsonObject } from "@/lib/cellumove/agents";
 import { scanClaims } from "@/lib/cellumove/claim-check";
@@ -673,6 +674,7 @@ function renderPrompt(doc: ImageAdBatchDoc, concept: ImageAdConcept, ctx: BatchC
     "",
     "VISUAL BRIEF:",
     concept.visualInstructions,
+    imageAdBrandingPrompt(doc.format),
     "",
     // Only the headline and CTA go into the pixels. Image models spell short
     // display text reliably and long sentences badly, and the body copy belongs
@@ -705,6 +707,7 @@ async function generateImageAdCandidateImpl(
   }));
 
   try {
+    const logos = await loadCellumoveLogos();
     const ctx = await loadBatchContext(doc);
     const parts: Part[] = [];
     // Anchor product fidelity on the real product photo when the batch has one.
@@ -768,18 +771,11 @@ async function generateImageAdCandidateImpl(
     }
     if (!rendered) throw new Error(lastProblem || "The image model returned no image.");
 
-    // Fit to the exact delivery size and apply the house PNG compression. If that
-    // step cannot run, keep the full render: a large file beats a failed slot.
-    const finalized = await finalizeAdImage(rendered.bytes, imageAdExportSize(doc.format));
-    const output = finalized
-      ? { bytes: finalized.bytes, width: finalized.width, height: finalized.height, extension: "png", contentType: "image/png" }
-      : {
-          bytes: rendered.bytes,
-          width: rendered.width,
-          height: rendered.height,
-          extension: rendered.format === "jpeg" ? "jpg" : rendered.format,
-          contentType: `image/${rendered.format}`,
-        };
+    // Brand the fitted image before compression. Even a compression fallback
+    // must keep the real logo in the saved/downloaded pixels.
+    const branded = await applyCellumoveLogo(rendered.bytes, doc.format, imageAdExportSize(doc.format), logos);
+    const finalized = await finalizeAdImage(branded.bytes, null) ?? branded;
+    const output = { ...finalized, extension: "png", contentType: "image/png" };
 
     const saved = await saveImage({
       prefix: "image-ad-candidates",
@@ -796,6 +792,8 @@ async function generateImageAdCandidateImpl(
       height: output.height,
       error: null,
       generatedAt: new Date().toISOString(),
+      logoAppliedAt: new Date().toISOString(),
+      unbrandedImageUrl: undefined,
     }));
     return { candidate };
   } catch (reason) {
@@ -856,6 +854,48 @@ export async function generateImageAdCandidate(
 ): Promise<ActionResult<{ candidate: ImageAdCandidate }>> {
   await requireStrategist();
   return attempt(() => generateImageAdCandidateImpl(batchId, slot, options));
+}
+
+// Existing renders can be branded without another paid model request. Keep the
+// old blob and URL, and only mark the new version after storage succeeds.
+export async function brandImageAdCandidate(
+  batchId: string,
+  slot: number,
+): Promise<ActionResult<{ candidate: ImageAdCandidate }>> {
+  await requireStrategist();
+  return attempt(async () => {
+    const doc = await loadBatchDoc(batchId);
+    const existing = doc.candidates.find((candidate) => candidate.slot === slot);
+    if (!existing?.imageUrl || existing.status !== "ready") throw new Error("Generate this image before adding the logo.");
+    if (existing.logoAppliedAt) return { candidate: existing };
+    const originalUrl = existing.imageUrl;
+    const source = await readStoredImage(originalUrl);
+    const branded = await applyCellumoveLogo(source, doc.format, imageAdExportSize(doc.format));
+    const output = await finalizeAdImage(branded.bytes, null) ?? branded;
+    const saved = await saveImage({
+      prefix: "image-ad-candidates",
+      filename: `${batchId}-${String(slot).padStart(2, "0")}-${randomUUID()}.png`,
+      bytes: output.bytes,
+      contentType: "image/png",
+    });
+    const candidate = await patchCandidate(batchId, slot, (current) => {
+      if (current.imageUrl !== originalUrl || current.status !== "ready" || current.logoAppliedAt) {
+        throw new Error("This image changed while the logo was being added. Refresh the batch to see the latest version.");
+      }
+      return {
+        ...current,
+        unbrandedImageUrl: originalUrl,
+        imageUrl: saved.url,
+        width: output.width,
+        height: output.height,
+        logoAppliedAt: new Date().toISOString(),
+        error: null,
+      };
+    });
+    revalidatePath(`/image-ads/${batchId}`);
+    revalidatePath("/image-ads");
+    return { candidate };
+  });
 }
 
 // Removes the batch record. Archived and rendered image files are left in

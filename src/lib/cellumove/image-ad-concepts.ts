@@ -29,6 +29,9 @@ export interface ImageAdCandidate {
   attempts: number;
   error: string | null;
   generatedAt: string | null;
+  logoAppliedAt?: string;
+  // Retained when adding the logo to an older render, so the source is recoverable.
+  unbrandedImageUrl?: string;
   // Result of the existing claim scan over the concept copy. Advisory: it flags
   // wording for a human, it does not block generation.
   claimStatus?: "clean" | "warn" | "flagged";
