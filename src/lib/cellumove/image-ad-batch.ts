@@ -85,9 +85,9 @@ export function parseImageAdBatchDoc(raw: string): ImageAdBatchDoc {
 // Server actions hand failures back as data — see `attempt` in the action file.
 export type ActionResult<T> = ({ ok: true } & T) | { ok: false; error: string };
 
-// Images are not billed per token, so the token-based usage estimator cannot
-// price them, and each model renders at its own speed and resolution. These are
-// per-model facts the UI quotes before spending and the usage log records after.
+// Image output has separate token rates from text. These per-image estimates
+// cover image output only; input and reasoning may add to the provider bill.
+// The UI quotes them before spending and the usage log records them after.
 export interface ImageModelProfile {
   model: string;
   costUsd: number;
@@ -97,6 +97,9 @@ export interface ImageModelProfile {
 }
 
 const IMAGE_MODEL_PROFILES: Record<string, Omit<ImageModelProfile, "model">> = {
+  // Nano Banana 2. Default to 2K so renders stay above the delivery size.
+  // Keep the conservative 50s planning estimate until measured on our workload.
+  "gemini-3.1-flash-image": { costUsd: 0.101, secondsPerImage: 50, imageSize: "2K" },
   // Nano Banana Pro. Slower and dearer, but it renders display text cleanly,
   // honours the requested aspect ratio, and follows the product brief. 2K keeps
   // the output above the 1080 x 1350 export target.
@@ -107,7 +110,14 @@ const IMAGE_MODEL_PROFILES: Record<string, Omit<ImageModelProfile, "model">> = {
 
 const FALLBACK_PROFILE: Omit<ImageModelProfile, "model"> = { costUsd: 0.134, secondsPerImage: 50 };
 
+// Standard global-endpoint image-output estimates, USD (Google Cloud pricing).
+const IMAGE_SIZE_COSTS: Record<string, Record<string, number>> = {
+  "gemini-3.1-flash-image": { "512": 0.045, "1K": 0.067, "2K": 0.101, "4K": 0.15 },
+  "gemini-3-pro-image": { "1K": 0.134, "2K": 0.134, "4K": 0.24 },
+};
+
 function positiveNumber(raw: string | undefined, fallback: number): number {
+  if (!raw?.trim()) return fallback;
   const value = Number(raw?.trim());
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
@@ -115,12 +125,13 @@ function positiveNumber(raw: string | undefined, fallback: number): number {
 // Prices and speeds move; IMAGE_COST_USD, IMAGE_SECONDS and IMAGE_SIZE override
 // the table without a deploy, and IMAGE_MODEL switches the model itself.
 export function imageAdModelProfile(): ImageModelProfile {
-  const model = process.env.IMAGE_MODEL?.trim() || "gemini-3-pro-image";
+  const model = process.env.IMAGE_MODEL?.trim() || "gemini-3.1-flash-image";
   const known = IMAGE_MODEL_PROFILES[model] ?? FALLBACK_PROFILE;
   const imageSize = process.env.IMAGE_SIZE?.trim() || known.imageSize;
+  const costUsd = (imageSize ? IMAGE_SIZE_COSTS[model]?.[imageSize] : undefined) ?? known.costUsd;
   return {
     model,
-    costUsd: positiveNumber(process.env.IMAGE_COST_USD, known.costUsd),
+    costUsd: positiveNumber(process.env.IMAGE_COST_USD, costUsd),
     secondsPerImage: positiveNumber(process.env.IMAGE_SECONDS, known.secondsPerImage) || known.secondsPerImage,
     ...(imageSize ? { imageSize } : {}),
   };

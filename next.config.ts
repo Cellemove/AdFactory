@@ -9,6 +9,7 @@ const nextConfig: NextConfig = {
   // Guarantee pdf.js's worker is packaged with the Milanote import function on
   // Vercel even though pdf.js itself only references it dynamically.
   outputFileTracingIncludes: {
+    "/image-ads/**": ["./assets/brand/cellumove-dark.png", "./assets/brand/cellumove-white.png"],
     "/api/scorer/evidence/**": ["./node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs"],
   },
   experimental: {
