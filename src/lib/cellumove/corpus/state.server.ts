@@ -1,4 +1,7 @@
 import "server-only";
+import { defaultResearchMode } from "@/lib/brandsearch-research.server";
+import type { ResearchMode } from "@/lib/brandsearch-research";
+import { loadAllRows } from "./pagination";
 
 import type { AdBeatRow, AdMediaRow, AdTeardownRow, CompetitorAdRow, CorpusAdStateRow, CorpusExtractRunRow, CorpusTranscriptRunRow, CorpusTranscriptSegmentRow } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
@@ -17,10 +20,35 @@ export type CorpusState = {
   expiringSoon: number;
 };
 
-export async function loadCorpusState(): Promise<CorpusState> {
-  const result = await supabase.from("CorpusAdState").select("*").order("winnerScore", { ascending: false, nullsFirst: false });
+export async function loadCorpusState(mode: ResearchMode = defaultResearchMode(), adId?: string): Promise<CorpusState> {
+  // One ad's detail page must not scan every run and beat in the corpus.
+  const scoped = <Q extends { eq(column: string, value: string): Q }>(query: Q, column = "competitorAdId"): Q => adId ? query.eq(column, adId) : query;
+  const result = await scoped(supabase.from("CorpusAdState").select("*"), "id").order("winnerScore", { ascending: false, nullsFirst: false });
   if (result.error) throw new Error(result.error.message);
   const rows = (result.data ?? []) as CorpusAdStateRow[];
+  // Select a run within the requested coverage mode; latest overall mixes evidence.
+  const [transcripts, extracts] = await Promise.all([
+    loadAllRows((from, to) => scoped(supabase.from("CorpusTranscriptRun").select("*")).eq("source", mode === "speech_only" ? "brandsearch" : "video_model").order("createdAt", { ascending: false }).order("id").range(from, to)),
+    loadAllRows((from, to) => scoped(supabase.from("CorpusExtractRun").select("*")).eq("researchMode", mode).order("createdAt", { ascending: false }).order("id").range(from, to)),
+  ]);
+  const allBeats = await loadAllRows((from, to) => scoped(supabase.from("AdBeat").select("runId")).order("id").range(from, to));
+  const beatCounts = new Map<string, number>();
+  for (const beat of allBeats as Array<{ runId: string }>) beatCounts.set(beat.runId, (beatCounts.get(beat.runId) ?? 0) + 1);
+  for (const row of rows) {
+    const runs = (transcripts as CorpusTranscriptRunRow[]).filter((t) => t.competitorAdId === row.id);
+    const t = runs.find((t) => t.status === "complete") ?? runs[0];
+    const es = (extracts as CorpusExtractRunRow[]).filter((e) => e.competitorAdId === row.id && e.transcriptRunId === t?.id);
+    const e = es.find((e) => ["complete", "reviewed"].includes(e.status)) ?? es[0];
+    row.transcriptRunId = t?.id ?? null; row.transcriptStatus = t?.status ?? null; row.segmentCount = t?.segmentCount ?? null;
+    row.beatCount = e ? beatCounts.get(e.id) ?? 0 : 0;
+    row.extractRunId = e?.id ?? null; row.extractStatus = e?.status ?? null;
+    row.extractTaxonomyVersion = e?.taxonomyVersion ?? null; row.extractError = e?.errorSummary ?? null;
+    row.stage = !row.corpusIncluded || row.mediaType !== "video" ? "skipped"
+      : e && ["complete", "reviewed"].includes(e.status) ? "extracted" : e?.status === "needs_human_review" ? "needs_review"
+      : t?.status === "complete" ? "transcribed" : t?.status === "failed" || e?.status === "failed" || (mode === "full_video" && ["failed", "oversize", "unavailable", "expired", "not_video"].includes(row.mediaStatus ?? "")) ? "failed"
+      : row.mediaStatus === "downloaded" ? "media" : "ingested";
+  }
+
   const counts = Object.fromEntries(STAGES.map((stage) => [stage, 0])) as Record<Stage, number>;
   for (const row of rows) counts[row.stage] += 1;
   const soon = Date.now() + 24 * 60 * 60 * 1000;
@@ -87,9 +115,11 @@ export async function loadAdDetail(adId: string): Promise<AdDetail | null> {
   if (adResult.error) throw new Error(adResult.error.message);
   const ad = adResult.data as CompetitorAdRow | null;
   if (!ad) return null;
-  const stateResult = await supabase.from("CorpusAdState").select("*").eq("id", adId).maybeSingle();
-  if (stateResult.error) throw new Error(stateResult.error.message);
-  const state = (stateResult.data as CorpusAdStateRow | null) ?? null;
+  // Show the default mode's evidence, else whatever the other mode already holds:
+  // flipping the feature flag must not hide an ad's existing full-video breakdown.
+  const mode = defaultResearchMode();
+  let state = (await loadCorpusState(mode, adId)).rows[0] ?? null;
+  if (!state?.transcriptRunId) state = (await loadCorpusState(mode === "speech_only" ? "full_video" : "speech_only", adId)).rows.find((row) => row.transcriptRunId) ?? state;
   const media = await loadAdMedia(adId);
   const transcriptRun = state?.transcriptRunId ? await loadTranscriptRun(state.transcriptRunId) : null;
   const segments = transcriptRun ? await loadTranscriptSegments(transcriptRun.id) : [];

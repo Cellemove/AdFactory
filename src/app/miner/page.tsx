@@ -1,3 +1,5 @@
+import { brandSearchResearchEnabled, defaultResearchMode } from "@/lib/brandsearch-research.server";
+import { ResearchModeSchema } from "@/lib/brandsearch-research";
 import type { Metadata } from "next";
 import { getSessionUser } from "@/lib/auth";
 import { requireUser } from "@/lib/authorization";
@@ -22,14 +24,15 @@ export const metadata: Metadata = { title: "Run pipeline · Corpus Miner · AdFa
 export const dynamic = "force-dynamic";
 
 
-export default async function MinerRunPage({ searchParams }: { searchParams: Promise<{ brand?: string }> }) {
+export default async function MinerRunPage({ searchParams }: { searchParams: Promise<{ brand?: string; mode?: string }> }) {
   await requireUser();
   const [user, query] = await Promise.all([getSessionUser(), searchParams]);
 
+  const mode = brandSearchResearchEnabled() ? ResearchModeSchema.catch(defaultResearchMode()).parse(query.mode) : "full_video";
   let snapshot: RunSnapshot;
   try {
     const [state, teardowns, competitors, gate] = await Promise.all([
-      loadCorpusState(),
+      loadCorpusState(mode),
       loadAdTeardowns().catch((): AdTeardownRow[] => []),
       // Spectre is a network call; a blip must not take the whole page down.
       isBrandSearchConfigured()
@@ -38,20 +41,20 @@ export default async function MinerRunPage({ searchParams }: { searchParams: Pro
           return null;
         })
         : Promise.resolve(null),
-      latestGate1(),
+      latestGate1(undefined, mode),
     ]);
 
     const rows = state.rows;
-    const brands = brandSummaries(rows, competitors ?? [], teardowns);
+    const brands = brandSummaries(rows, competitors ?? [], teardowns, mode);
     const brand = findBrandSummary(brands, query.brand ?? null);
-    const scope = { brand: brand?.domain ?? undefined };
+    const scope = { mode, brand: brand?.domain ?? undefined };
     const ofBrand = brand ? rows.filter((row) => row.brandName.toLowerCase() === brand.domain.toLowerCase()) : [];
     const count = (predicate: (row: (typeof ofBrand)[number]) => boolean) =>
       ofBrand.filter((row) => row.mediaType === "video" && row.corpusIncluded && predicate(row)).length;
     const plan = planTeardown(rows, teardowns, scope);
     const teardownByAd = new Map(teardowns.map((row) => [row.competitorAdId, row]));
     const [mined, playbook] = brand
-      ? await Promise.all([latestBrandReport(brand.domain).catch(() => null), latestBrandPlaybook(brand.domain).catch(() => null)])
+      ? await Promise.all([latestBrandReport(brand.domain, undefined, mode).catch(() => null), latestBrandPlaybook(brand.domain, undefined, mode).catch(() => null)])
       : [null, null];
     const transcriptFailures = ofBrand.filter(row => row.corpusIncluded && row.transcriptStatus === "failed" && row.transcriptRunId);
     const failedRuns = transcriptFailures.length ? await supabase.from("CorpusTranscriptRun").select("id, errorSummary").in("id", transcriptFailures.map(row => row.transcriptRunId!)) : null;
@@ -59,6 +62,7 @@ export default async function MinerRunPage({ searchParams }: { searchParams: Pro
     const transcriptErrors = new Map((failedRuns?.data ?? []).map(row => [row.id, row.errorSummary]));
 
     snapshot = {
+      researchMode: mode, researchEnabled: brandSearchResearchEnabled(),
       brand,
       brands,
       competitorsUnavailable: competitors === null,

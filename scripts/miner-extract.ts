@@ -16,8 +16,8 @@ import { loadAdMedia } from "../src/lib/cellumove/corpus/media.server";
 import { latestCompleteTranscriptRun } from "../src/lib/cellumove/corpus/transcribe.server";
 import { fail, parseMinerArgs, printSummary, runLanes, selectAdsForStage, usageCost, usd } from "./lib/miner-cli";
 
-export async function assertGate1(taxonomyVersion: string, skipGate: boolean): Promise<void> {
-  const gate = await latestGate1(taxonomyVersion);
+export async function assertGate1(taxonomyVersion: string, skipGate: boolean, mode: "speech_only" | "full_video" = "full_video"): Promise<void> {
+  const gate = await latestGate1(taxonomyVersion, mode);
   if (gate?.passed) {
     console.log(`Gate 1 passed on ${gate.createdAt} (layer ${gate.layerAgreement}, code ${gate.codeAgreement}) for ${taxonomyVersion} · ${CORPUS_EXTRACT_PROMPT_VERSION} · ${EXTRACT_MODEL}.`);
     return;
@@ -32,7 +32,7 @@ export async function assertGate1(taxonomyVersion: string, skipGate: boolean): P
 async function main() {
   const args = parseMinerArgs();
   const taxonomyVersion = args.taxonomy ?? CORPUS_TAXONOMY_VERSION;
-  await assertGate1(taxonomyVersion, args.skipGate);
+  await assertGate1(taxonomyVersion, args.skipGate, args.mode);
   const ads = await selectAdsForStage("extract", args);
   if (!ads.length) {
     console.log("Nothing to extract — every transcribed ad already has beats (use --force to redo, --retry-review for quarantined ads).");
@@ -42,7 +42,7 @@ async function main() {
   let cost = 0;
   let quarantined = 0;
   const summary = await runLanes(ads, args.concurrency ?? 2, (ad) => `${ad.brandName} · ${ad.id}`, async (ad) => {
-    const transcriptRun = await latestCompleteTranscriptRun(ad.id);
+    const transcriptRun = await latestCompleteTranscriptRun(ad.id, args.mode);
     if (!transcriptRun) throw new Error("No complete transcript — run miner:transcribe first.");
     const media = args.withVideo ? await loadAdMedia(ad.id) : null;
     const result = await extractAdBeats(ad, transcriptRun, { force: args.force, retryReview: args.retryReview, withVideo: args.withVideo, media, taxonomyVersion });

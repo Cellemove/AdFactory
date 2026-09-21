@@ -39,17 +39,17 @@ export type BrandSummary = {
   state: BrandState;
 };
 
-function summaryFor(domain: string, name: string, tracked: boolean, rows: CorpusAdStateRow[], teardownByAd: Map<string, AdTeardownRow>): BrandSummary {
+function summaryFor(domain: string, name: string, tracked: boolean, rows: CorpusAdStateRow[], teardownByAd: Map<string, AdTeardownRow>, mode: "speech_only" | "full_video"): BrandSummary {
   const videos = rows.filter((row) => row.mediaType === "video" && row.corpusIncluded);
   const count = (predicate: (row: CorpusAdStateRow) => boolean) => videos.filter(predicate).length;
   const inCorpus = videos.length;
-  const downloaded = count((row) => row.mediaStatus === "downloaded");
+  const downloaded = count((row) => mode === "speech_only" ? row.transcriptStatus === "complete" : row.mediaStatus === "downloaded");
   const transcribed = count((row) => row.transcriptStatus === "complete");
   const extracted = count((row) => row.extractStatus === "complete" || row.extractStatus === "reviewed");
   const needsReview = count((row) => row.extractStatus === "needs_human_review");
-  const failed = count((row) => row.extractStatus === "failed" || row.transcriptStatus === "failed" || MEDIA_FAILED.has(row.mediaStatus ?? ""));
+  const failed = count((row) => row.extractStatus === "failed" || row.transcriptStatus === "failed" || (mode === "full_video" && MEDIA_FAILED.has(row.mediaStatus ?? "")));
   const ranked = count((row) => row.winnerScore != null);
-  const reachable = inCorpus - count((row) => MEDIA_FAILED.has(row.mediaStatus ?? ""));
+  const reachable = inCorpus - count((row) => mode === "full_video" && MEDIA_FAILED.has(row.mediaStatus ?? ""));
 
   const picks = videos.map((row) => readWinnerPick(row.winnerPick)?.pickedAt).filter((value): value is string => Boolean(value)).sort();
   const expiries = videos
@@ -93,6 +93,7 @@ export function brandSummaries(
   rows: CorpusAdStateRow[],
   competitors: TrackedCompetitor[],
   teardowns: AdTeardownRow[],
+  mode: "speech_only" | "full_video" = "full_video",
 ): BrandSummary[] {
   const byBrand = new Map<string, CorpusAdStateRow[]>();
   for (const row of rows) {
@@ -102,12 +103,12 @@ export function brandSummaries(
   const teardownByAd = new Map(teardowns.map((row) => [row.competitorAdId, row]));
 
   const out = competitors.map((competitor) =>
-    summaryFor(competitor.domain, competitor.name, true, byBrand.get(competitor.domain.toLowerCase()) ?? [], teardownByAd));
+    summaryFor(competitor.domain, competitor.name, true, byBrand.get(competitor.domain.toLowerCase()) ?? [], teardownByAd, mode));
 
   const tracked = new Set(competitors.map((competitor) => competitor.domain.toLowerCase()));
   for (const [key, brandRows] of byBrand) {
     if (tracked.has(key)) continue;
-    const summary = summaryFor(brandRows[0]!.brandName, brandRows[0]!.brandName, false, brandRows, teardownByAd);
+    const summary = summaryFor(brandRows[0]!.brandName, brandRows[0]!.brandName, false, brandRows, teardownByAd, mode);
     if (summary.inCorpus > 0) out.push(summary);
   }
 

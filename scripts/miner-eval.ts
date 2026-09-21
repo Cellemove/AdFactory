@@ -16,6 +16,7 @@ const pct = (value: number | null) => (value == null ? "—" : value.toFixed(2))
 async function main() {
   const args = parseMinerArgs();
   const result = await runGate1Eval({
+    mode: args.mode,
     baselineVersion: args.baseline ?? undefined,
     taxonomyVersion: args.taxonomy ?? undefined,
     limit: args.limit ?? undefined,

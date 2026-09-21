@@ -1,3 +1,5 @@
+import { brandSearchResearchEnabled, defaultResearchMode } from "@/lib/brandsearch-research.server";
+import { ResearchModeSchema } from "@/lib/brandsearch-research";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser } from "@/lib/authorization";
@@ -77,25 +79,26 @@ function ReviewQueue({ items }: { items: ReviewQueueItem[] }) {
   );
 }
 
-export default async function MinerPage({ searchParams }: { searchParams: Promise<{ cohort?: string }> }) {
+export default async function MinerPage({ searchParams }: { searchParams: Promise<{ cohort?: string; mode?: string }> }) {
   await requireUser();
   const query = await searchParams;
+  const mode = ResearchModeSchema.catch(defaultResearchMode()).parse(query.mode);
 
   let state: CorpusState;
   try {
-    state = await loadCorpusState();
+    state = await loadCorpusState(mode);
   } catch (error) {
     return (
       <div className="space-y-6">
         <header><h1 className="text-2xl font-semibold tracking-tight">Corpus Miner</h1><p className="mt-1 text-sm text-ink-500">Competitor ads → two-channel transcripts → coded beats → mined patterns.</p></header>
-        <div className="card border-amber-300 bg-amber-50"><h2 className="font-semibold text-amber-900">Database setup required</h2><p className="mt-2 text-sm text-amber-800">Apply <code>migrations/017_corpus_miner.sql</code> through <code>023_corpus_visuals_and_playbook.sql</code>, then reload this page.</p><p className="mt-2 text-xs text-amber-700">{error instanceof Error ? error.message : String(error)}</p></div>
+        <div className="card border-amber-300 bg-amber-50"><h2 className="font-semibold text-amber-900">Database setup required</h2><p className="mt-2 text-sm text-amber-800">Apply <code>migrations/017_corpus_miner.sql</code> through <code>026_brandsearch_research.sql</code>, then reload this page.</p><p className="mt-2 text-xs text-amber-700">{error instanceof Error ? error.message : String(error)}</p></div>
       </div>
     );
   }
   const [queue, reports, gate, teardowns] = await Promise.all([
     loadReviewQueue(),
-    latestReports(),
-    latestGate1(),
+    latestReports(undefined, mode),
+    latestGate1(undefined, mode),
     // Fail-soft: the page predates migration 018.
     loadAdTeardowns().catch((error: unknown) => {
       console.error("[miner] AdTeardown unavailable:", error);
@@ -114,6 +117,7 @@ export default async function MinerPage({ searchParams }: { searchParams: Promis
   return (
     <div className="space-y-8">
       <MinerTabs active="results" />
+      {brandSearchResearchEnabled() && <nav className="flex gap-3 text-sm" aria-label="Coverage"><a href="?mode=speech_only">Speech-only</a><a href="?mode=full_video">Full video</a><span>Viewing: {mode === "speech_only" ? "speech only; visuals unassessed" : "full video"}</span></nav>}
       <header>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <h1 className="text-2xl font-semibold tracking-tight">Results</h1>

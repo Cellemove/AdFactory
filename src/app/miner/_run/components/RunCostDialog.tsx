@@ -39,7 +39,7 @@ export function RunCostDialog({ brand, snapshot, onConfirm, onCancel }: {
   }, [onCancel]);
 
   const ads = includeCollect ? target : brand.inCorpus;
-  const estimate = estimateRun({ ads, includeCollect });
+  const estimate = estimateRun({ ads, includeCollect, speechOnly: snapshot.researchMode === "speech_only" });
   const blocked = !acknowledged || ads === 0;
 
   return (
@@ -84,13 +84,14 @@ export function RunCostDialog({ brand, snapshot, onConfirm, onCancel }: {
             <dd className="tabular-nums text-ink-900">{estimate.credits > 0 ? `about ${estimate.credits} credits` : "none"}</dd>
           </div>
           <div className="flex justify-between gap-3">
-            <dt className="text-ink-500">AI (watching and labelling)</dt>
+            <dt className="text-ink-500">{snapshot.researchMode === "speech_only" ? "AI (labelling spoken copy)" : "AI (watching and labelling)"}</dt>
             <dd className="tabular-nums text-ink-900">about {formatUsdRange(estimate.usdLow, estimate.usdHigh)}</dd>
           </div>
           <div className="flex justify-between gap-3">
             <dt className="text-ink-500">Time</dt>
             <dd className="tabular-nums text-ink-900">about {formatMinutes(estimate.minutesLow, estimate.minutesHigh)}</dd>
           </div>
+          {snapshot.researchMode === "speech_only" && <p className="text-xs">Missing transcripts: up to 10 regular API credits per UTC day shared across the app. Generation may take six minutes; remaining ads are deferred.</p>}
           <p className="pt-1 text-xs text-ink-400">Estimates, not quotes. Deep-dives are not included — they stay a separate button.</p>
         </dl>
 

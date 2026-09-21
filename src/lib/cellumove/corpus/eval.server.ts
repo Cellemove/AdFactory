@@ -1,3 +1,4 @@
+import { modeVersion, type ResearchMode } from "@/lib/brandsearch-research";
 import "server-only";
 
 import { SCORER_BASELINE_VERSION } from "@/lib/cellumove/script-scorer";
@@ -12,6 +13,7 @@ import { loadTaxonomy } from "./taxonomy.server";
 import { renderTranscript } from "./transcribe";
 
 export type Gate1Input = {
+  mode?: ResearchMode;
   baselineVersion?: string;
   taxonomyVersion?: string;
   limit?: number;
@@ -25,6 +27,8 @@ export type Gate1Result =
 
 /** Run the production extractor blind over the gold set and log the agreement. */
 export async function runGate1Eval(input: Gate1Input = {}): Promise<Gate1Result> {
+  const speechOnly = input.mode === "speech_only";
+  const promptVersion = modeVersion(CORPUS_EXTRACT_PROMPT_VERSION, input.mode ?? "full_video");
   const baselineVersion = input.baselineVersion ?? SCORER_BASELINE_VERSION;
   const taxonomyVersion = input.taxonomyVersion ?? CORPUS_TAXONOMY_VERSION;
   let query = supabase.from("GoldAd").select("*").eq("baselineVersion", baselineVersion).eq("taxonomyVersion", taxonomyVersion).order("externalId");
@@ -53,14 +57,14 @@ export async function runGate1Eval(input: Gate1Input = {}): Promise<Gate1Result>
       try {
         const response = await generateStructured({
           model: EXTRACT_MODEL,
-          parts: [{ text: buildExtractPrompt({ taxonomyVersion, taxonomy: taxonomy.entries, transcriptText, durationSec: pseudo.durationSec, language: null, previousError }) }],
+          parts: [{ text: buildExtractPrompt({ taxonomyVersion, taxonomy: taxonomy.entries, transcriptText, durationSec: pseudo.durationSec, language: null, previousError, speechOnly }) }],
           thinkingBudget: 2048,
           responseJsonSchema: extractResponseJsonSchema(taxonomy.entries),
           feature: USAGE_FEATURES.eval,
           metadata: { goldAdId: goldAd.id, externalId: goldAd.externalId, promptVersion: CORPUS_EXTRACT_PROMPT_VERSION, taxonomyVersion, attempt: attempts, retryReason: previousError?.slice(0, 300) },
         });
         usage = addUsage(usage, response.usage);
-        const validated = validateExtractedBeats({ raw: parseJsonObject(response.text), allowedCodes: taxonomy.allowedCodes, segments: pseudo.segments, transcriptEnd: pseudo.durationSec });
+        const validated = validateExtractedBeats({ raw: parseJsonObject(response.text), allowedCodes: taxonomy.allowedCodes, segments: pseudo.segments, transcriptEnd: pseudo.durationSec, speechOnly });
         comparison = compareBeats(
           goldBeats.filter((beat) => beat.goldAdId === goldAd.id).map((beat) => ({ orderIndex: beat.orderIndex, layer: beat.layer, code: beat.code })),
           validated.beats.map((beat) => ({ orderIndex: beat.orderIndex, layer: beat.layer, code: beat.code })),
@@ -87,7 +91,7 @@ export async function runGate1Eval(input: Gate1Input = {}): Promise<Gate1Result>
     id: newId(),
     baselineVersion,
     taxonomyVersion,
-    extractorPromptVersion: CORPUS_EXTRACT_PROMPT_VERSION,
+    extractorPromptVersion: promptVersion,
     engineVersion: CORPUS_ENGINE_VERSION,
     model: EXTRACT_MODEL,
     goldAdCount: results.length,
@@ -103,9 +107,9 @@ export async function runGate1Eval(input: Gate1Input = {}): Promise<Gate1Result>
 }
 
 /** The newest Gate-1 result for the current (taxonomy, prompt, model) tuple, if any. */
-export async function latestGate1(taxonomyVersion: string = CORPUS_TAXONOMY_VERSION): Promise<CorpusEvalRunRow | null> {
+export async function latestGate1(taxonomyVersion: string = CORPUS_TAXONOMY_VERSION, mode: ResearchMode = "full_video"): Promise<CorpusEvalRunRow | null> {
   const result = await supabase.from("CorpusEvalRun").select("*")
-    .eq("taxonomyVersion", taxonomyVersion).eq("extractorPromptVersion", CORPUS_EXTRACT_PROMPT_VERSION).eq("model", EXTRACT_MODEL)
+    .eq("taxonomyVersion", taxonomyVersion).eq("extractorPromptVersion", modeVersion(CORPUS_EXTRACT_PROMPT_VERSION, mode)).eq("model", EXTRACT_MODEL)
     .order("createdAt", { ascending: false }).limit(1).maybeSingle();
   if (result.error) throw new Error(result.error.message);
   return (result.data as CorpusEvalRunRow | null) ?? null;

@@ -129,6 +129,7 @@ export function buildExtractPrompt(input: {
   language: string | null;
   previousError?: string;
   withVideo?: boolean;
+  speechOnly?: boolean;
 }): string {
   const formats = CORPUS_FORMAT_TAGS.join(" | ");
   const concepts = CORPUS_CONCEPT_TAGS.join(" | ");
@@ -138,7 +139,7 @@ export function buildExtractPrompt(input: {
     input.withVideo ? "The video itself is attached as well; use it to see demos, before/after shots and visual proof, but every evidence_quote must still come from the transcript." : "",
     "",
     "Rules:",
-    "- A beat is a contiguous stretch of the ad doing ONE job. Cover the whole ad in order; beats must not overlap; do not skip content that carries meaning.",
+    input.speechOnly ? "- Only speech was assessed. Label the supplied spoken content in order; allow silent gaps. Do not infer unseen scenes, on-screen text, or production format. Set format to Other. Never treat missing channels as absent content." : "- A beat is a contiguous stretch of the ad doing ONE job. Cover the whole ad in order; beats must not overlap; do not skip content that carries meaning.",
     "- layer must be one of H, Q, P, B, M, PR, O, OTHER. code must be one of the taxonomy codes below and must belong to that layer. Never invent codes.",
     "- Use an OTHER code only when nothing fits, and then other_explanation is mandatory (one sentence: what the beat does).",
     "- evidence_quote must be an EXACT, contiguous substring copied from ONE transcript segment (or two adjacent segments of the same channel). Same characters, same casing, same language. Do not paraphrase, translate, or fix typos. Keep it to the decisive words (3-25 words).",
@@ -185,11 +186,15 @@ export function validateExtractedBeats(input: {
   segments: Array<TranscriptSegment & { id: string }>;
   transcriptEnd: number;
   threshold?: number;
+  speechOnly?: boolean;
 }): ValidatedExtraction {
   const parsed = ExtractResponseSchema.safeParse(input.raw);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     throw new ExtractValidationError(`Response shape is invalid at ${issue?.path.join(".") || "root"}: ${issue?.message ?? "unknown"}.`, "SCHEMA");
+  }
+  if (input.speechOnly && parsed.data.beats.some((beat) => beat.channel !== "vo")) {
+    throw new ExtractValidationError("Speech-only extraction may only quote vo segments.", "EVIDENCE_GATE");
   }
   // Numbering is bookkeeping and the timecodes already say the order, so beats are
   // ordered by time and renumbered here instead of paying for a second model call.
@@ -233,7 +238,7 @@ export function validateExtractedBeats(input: {
 
   const byIndex = new Map(gate.perBeat.map((item) => [item.orderIndex, item]));
   return {
-    format: normalizeFormat(parsed.data.format),
+    format: input.speechOnly ? null : normalizeFormat(parsed.data.format),
     concept: normalizeConcept(parsed.data.concept),
     gate,
     beats: beats.map((beat) => {

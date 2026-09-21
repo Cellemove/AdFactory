@@ -32,7 +32,7 @@ export function RunClient({ snapshot, canRun }: { snapshot: RunSnapshot; canRun:
   const [options, setOptions] = useState(defaultOptions);
 
   const refresh = useCallback(() => router.refresh(), [router]);
-  const engine = useRunEngine(refresh);
+  const engine = useRunEngine(refresh, snapshot.researchMode);
   const { marker, save, clear } = useRunMarker(brand?.domain ?? null);
   const active = engine.run?.phase === "running";
 
@@ -106,6 +106,7 @@ export function RunClient({ snapshot, canRun }: { snapshot: RunSnapshot; canRun:
   return (
     <div className="space-y-6">
       <Header />
+      {snapshot.researchEnabled && <div className="card flex flex-wrap items-center gap-3 text-sm"><label>Research coverage <select className="input ml-2" disabled={active} value={snapshot.researchMode ?? "speech_only"} onChange={(e) => router.push(`/miner?brand=${encodeURIComponent(brand?.domain ?? "")}&mode=${e.target.value}`)}><option value="speech_only">BrandSearch speech only</option><option value="full_video">Full video analysis</option></select></label><p>Speech mode imports cached research; missing transcripts share a 10-credit daily cap. Video download is skipped. Beat extraction still uses the text model.</p></div>}
       <BrandRail brands={snapshot.brands} selected={brand.domain} />
 
       {interrupted && (
@@ -187,7 +188,7 @@ function Header() {
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-ink-900">Learn a competitor&apos;s playbook</h1>
         <p className="mt-2 text-[15px] leading-relaxed text-ink-500">
-          Pick a competitor and press one button. It finds their winning ads, watches every one, works out how they are built and how they are written, and hands you a playbook you can write from.
+          Pick a competitor, choose research coverage, and run the pipeline to build an evidence-linked copy playbook.
         </p>
       </div>
     </div>

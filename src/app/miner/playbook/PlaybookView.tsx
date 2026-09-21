@@ -108,7 +108,7 @@ export function PlaybookView({ playbook, generatedAt }: { playbook: BrandPlayboo
       </header>
 
       <section className="card space-y-4">
-        <SectionTitle index={1} title="The spine" hint="The sequence this brand's winning ads follow most often, with the typical window for each beat." />
+        <SectionTitle index={1} title="The spine" hint={playbook.researchMode === "speech_only" ? "The observed spoken-copy sequence, with speech timing. Unseen content may add other beats." : "The sequence this brand's winning ads follow most often, with the typical window for each beat."} />
         {playbook.spine ? (
           <>
             <ol className="flex flex-wrap items-stretch gap-1.5">
@@ -139,7 +139,7 @@ export function PlaybookView({ playbook, generatedAt }: { playbook: BrandPlayboo
       </section>
 
       <section className="card space-y-4">
-        <SectionTitle index={2} title="Hooks" hint="How the first seconds open, with the real lines, on-screen text and shots." />
+        <SectionTitle index={2} title="Hooks" hint={playbook.researchMode === "speech_only" ? "Opening spoken lines. Visual hooks have not been assessed." : "How the first seconds open, with the real lines, on-screen text and shots."} />
         {playbook.hooks.length ? <div className="space-y-3">{playbook.hooks.map((beat) => <BeatCard key={beat.code} beat={beat} />)}</div> : <p className="text-sm text-ink-500">No hook used by enough ads yet.</p>}
       </section>
 

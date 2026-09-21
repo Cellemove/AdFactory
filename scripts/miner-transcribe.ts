@@ -7,7 +7,7 @@
 //   npm run miner:transcribe -- --ad cad_… --force
 
 import { loadAdMedia } from "../src/lib/cellumove/corpus/media.server";
-import { transcribeAd } from "../src/lib/cellumove/corpus/transcribe.server";
+import { importResearchTranscript, transcribeAd } from "../src/lib/cellumove/corpus/transcribe.server";
 import { fail, parseMinerArgs, printSummary, runLanes, selectAdsForStage, usageCost, usd } from "./lib/miner-cli";
 
 async function main() {
@@ -20,6 +20,11 @@ async function main() {
   console.log(`Transcribing ${ads.length} ad(s) on ${args.concurrency ?? 2} lanes…`);
   let cost = 0;
   const summary = await runLanes(ads, args.concurrency ?? 2, (ad) => `${ad.brandName} · ${ad.id}`, async (ad) => {
+    if (args.mode === "speech_only") {
+      const imported = await importResearchTranscript(ad);
+      if (!imported) throw new Error("Research deferred; no usable speech yet. Run again after provider recovery or the daily allowance resets.");
+      return imported.reused ? "skip" : `${imported.segments.length} speech segments; visuals unassessed`;
+    }
     const media = await loadAdMedia(ad.id);
     if (!media) throw new Error("No AdMedia row — run miner:media first.");
     const result = await transcribeAd(ad, media, { force: args.force });

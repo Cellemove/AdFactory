@@ -61,6 +61,7 @@ export type PlaybookShare = { name: string; ads: number; share: number };
 export type PlaybookLaw = { law: string; share: number; ads: number };
 
 export type BrandPlaybook = {
+  researchMode?: "speech_only" | "full_video";
   engineVersion: string;
   taxonomyVersion: string;
   brand: string;

@@ -1,3 +1,7 @@
+export type AdResearchSnapshotRow = { id: string; competitorAdId: string; schemaVersion: string; sourceHash: string; snapshot: Json; rawTranscript: Json | null; rawAnalysis: Json | null; createdAt: string };
+export type AdResearchJobRow = { competitorAdId: string; status: string; claimToken: string | null; leaseUntil: string | null; nextAttemptAt: string | null; snapshotId: string | null; errorSummary: string | null; updatedAt: string };
+export type BrandSearchReservationRow = { scope: string; day: string; competitorAdId: string; createdAt: string };
+export type BrandSearchTranscriptRequestRow = { competitorAdId: string; status: string; requestedAt: string; updatedAt: string };
 // Database types for Supabase JS client. Mirrors the (former) Prisma schema.
 // Table names are PascalCase to match the existing Postgres schema created by Prisma.
 //
@@ -448,6 +452,7 @@ export type ScriptProjectRow = {
   referenceMode: string;
   playbookVersionId: string | null;
   teardownRecordId: string | null;
+  researchSnapshotId?: string | null;
   teardownSnapshot: Json | null;
   document: Json;
   displayName: string;
@@ -640,8 +645,12 @@ export type CorpusTranscriptRunRow = {
   id: string;
   runKey: string;
   competitorAdId: string;
-  mediaId: string;
-  mediaSha256: string;
+  mediaId: string | null;
+  mediaSha256: string | null;
+  source?: "video_model" | "brandsearch";
+  sourceHash?: string | null;
+  coverage?: Json;
+  researchSnapshotId?: string | null;
   model: string;
   promptVersion: string;
   status: string;
@@ -680,6 +689,8 @@ export type CorpusExtractRunRow = {
   engineVersion: string;
   model: string;
   withVideo: boolean;
+  researchMode?: "speech_only" | "full_video";
+  conceptTag?: string | null;
   status: string;
   attempts: number;
   gateReport: Json | null;
@@ -1069,6 +1080,10 @@ export type UsageRow = {
 export type Database = {
   public: {
     Tables: {
+      BrandSearchTranscriptRequest: { Row: BrandSearchTranscriptRequestRow; Insert: Partial<BrandSearchTranscriptRequestRow> & { competitorAdId: string }; Update: Partial<BrandSearchTranscriptRequestRow>; Relationships: [] };
+      BrandSearchReservation: { Row: BrandSearchReservationRow; Insert: Partial<BrandSearchReservationRow> & { competitorAdId: string }; Update: Partial<BrandSearchReservationRow>; Relationships: [] };
+      AdResearchJob: { Row: AdResearchJobRow; Insert: Partial<AdResearchJobRow> & { competitorAdId: string }; Update: Partial<AdResearchJobRow>; Relationships: [] };
+      AdResearchSnapshot: { Row: AdResearchSnapshotRow; Insert: Partial<AdResearchSnapshotRow> & { id: string }; Update: Partial<AdResearchSnapshotRow>; Relationships: [] };
       ReferenceAnalysis: { Row: ReferenceAnalysisRow; Insert: Partial<ReferenceAnalysisRow> & { id: string; createdByUserId: string; source: Json; teardownJobId: string }; Update: Partial<ReferenceAnalysisRow>; Relationships: [] };
       Angle: { Row: AngleRow; Insert: Partial<AngleRow> & { slug: string; name: string; requiredKeyword: string; mechanism: string; bannedMechanism: string; silhouette: string; colorway: string }; Update: Partial<AngleRow>; Relationships: [] };
       SubAvatar: { Row: SubAvatarRow; Insert: Partial<SubAvatarRow> & { angleId: string; slug: string; name: string }; Update: Partial<SubAvatarRow>; Relationships: [{ foreignKeyName: "SubAvatar_angleId_fkey"; columns: ["angleId"]; isOneToOne: false; referencedRelation: "Angle"; referencedColumns: ["id"] }] };
@@ -1123,7 +1138,7 @@ export type Database = {
       ScriptScoreModule: { Row: ScriptScoreModuleRow; Insert: Partial<ScriptScoreModuleRow> & { runId: string; module: string; status: string; label: string; summary: string; metrics: Json }; Update: Partial<ScriptScoreModuleRow>; Relationships: [] };
       ScriptScoreFinding: { Row: ScriptScoreFindingRow; Insert: Partial<ScriptScoreFindingRow> & { id: string; runId: string; module: string; severity: string; message: string; metadata: Json }; Update: Partial<ScriptScoreFindingRow>; Relationships: [] };
       AdMedia: { Row: AdMediaRow; Insert: Partial<AdMediaRow> & { id: string; competitorAdId: string; status: string }; Update: Partial<AdMediaRow>; Relationships: [] };
-      CorpusTranscriptRun: { Row: CorpusTranscriptRunRow; Insert: Partial<CorpusTranscriptRunRow> & { id: string; runKey: string; competitorAdId: string; mediaId: string; mediaSha256: string; model: string; promptVersion: string }; Update: Partial<CorpusTranscriptRunRow>; Relationships: [] };
+      CorpusTranscriptRun: { Row: CorpusTranscriptRunRow; Insert: Partial<CorpusTranscriptRunRow> & { id: string; runKey: string; competitorAdId: string; model: string; promptVersion: string }; Update: Partial<CorpusTranscriptRunRow>; Relationships: [] };
       CorpusTranscriptSegment: { Row: CorpusTranscriptSegmentRow; Insert: Partial<CorpusTranscriptSegmentRow> & { id: string; runId: string; competitorAdId: string; channel: string; orderIndex: number; tStart: number; tEnd: number; text: string }; Update: Partial<CorpusTranscriptSegmentRow>; Relationships: [] };
       CorpusExtractRun: { Row: CorpusExtractRunRow; Insert: Partial<CorpusExtractRunRow> & { id: string; runKey: string; competitorAdId: string; transcriptRunId: string; taxonomyVersion: string; extractorPromptVersion: string; engineVersion: string; model: string }; Update: Partial<CorpusExtractRunRow>; Relationships: [] };
       AdBeat: { Row: AdBeatRow; Insert: Partial<AdBeatRow> & { id: string; runId: string; competitorAdId: string; taxonomyVersion: string; orderIndex: number; layer: string; code: string; evidenceQuote: string; channel: string; extractorPromptVersion: string; model: string }; Update: Partial<AdBeatRow>; Relationships: [] };
@@ -1136,6 +1151,8 @@ export type Database = {
       CorpusAdState: { Row: CorpusAdStateRow; Relationships: [] };
     };
     Functions: {
+      claim_ad_research: { Args: { ad_id: string; token: string; refresh?: boolean }; Returns: boolean };
+      reserve_brandsearch_budget: { Args: { ad_id: string; budget_scope: string; cap?: number }; Returns: boolean };
       save_reference_framework: {
         Args: { analysis_id: string; actor_id: string; draft: Json };
         Returns: Json;

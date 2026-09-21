@@ -38,6 +38,8 @@ type Props = {
   strategists: Option[];
   editors: Option[];
   teardowns: Option[];
+  researchSnapshots?: Option[];
+  initialResearchId?: string;
   formats: string[];
   markets: Array<{ code: string; name: string }>;
   offers: Array<{ id: string; productId: string; marketCode: string | null; statement: string; validFrom: string | null; validUntil: string | null }>;
@@ -78,7 +80,7 @@ export function ScriptProjectForm(props: Props) {
     title: props.initialValues?.title ?? "", idea: props.initialValues?.idea ?? "", conceptLabel: props.initialValues?.title ?? "", hookDirection: "", adNumber: "", creativeName: props.initialValues?.creativeName ?? "", productId: props.initialValues?.productId ?? props.products[0]?.id ?? "",
     subAvatarId: initialAvatars[0]?.id ?? props.avatars[0]?.id ?? "", referenceFormatId: props.frameworks[0]?.id ?? "",
     strategistUserId: props.strategists.some((item) => item.id === props.currentUserId) ? props.currentUserId : props.strategists[0]?.id ?? "",
-    editorUserId: "", format: props.formats[0] ?? "UGC", targetDurationSec: "60", teardownRecordId: "", pipelineRunId: "",
+    editorUserId: "", format: props.formats[0] ?? "UGC", targetDurationSec: "60", teardownRecordId: "", researchSnapshotId: props.initialResearchId ?? "", pipelineRunId: "",
     marketCode: props.markets[0]?.code ?? "US", heatLevel: 3, funnelStage: "MOFU", voicePlan: "Standard UGC", offerId: "", referenceMode: "structure_beats", playbookVersionId: props.playbook?.id ?? "",
     spySweepId: props.initialValues?.sweepId ?? "", spyAdIndex: props.initialValues?.adIndex ?? -1,
   });
@@ -196,6 +198,7 @@ export function ScriptProjectForm(props: Props) {
           referenceFormatId: form.referenceFormatId || null,
           editorUserId: form.editorUserId || null,
           teardownRecordId: form.teardownRecordId || null,
+          researchSnapshotId: form.researchSnapshotId || null,
           pipelineRunId: form.pipelineRunId || null,
           spySweepId: form.spySweepId || null,
           spyAdIndex: form.spyAdIndex >= 0 ? form.spyAdIndex : null,
@@ -499,7 +502,8 @@ export function ScriptProjectForm(props: Props) {
           )}
           <div className="sm:col-span-2"><label className="label">Compare drafts</label><div className="flex flex-wrap gap-2"><button type="button" className={`btn ${compareMode === "none" ? "btn-primary" : ""}`} onClick={() => setCompareMode("none")}>Single draft</button><button type="button" className={`btn ${compareMode === "frameworks" ? "btn-primary" : ""}`} onClick={() => setCompareMode("frameworks")}>Compare frameworks</button><button type="button" className={`btn ${compareMode === "heat" ? "btn-primary" : ""}`} onClick={() => setCompareMode("heat")}>Compare Heat</button></div></div>
           <div><label className="label">Target duration (seconds)</label><input className="input" type="number" min={5} max={600} step={1} value={form.targetDurationSec} onChange={handleTargetDurationChange} /><p className="mt-1 text-xs text-ink-500">Filled from the framework when it has a set length.</p></div>
-          <div><label className="label">Teardown2 source <span className="font-normal normal-case text-ink-400">(optional)</span></label><select className="input" disabled={!props.teardownConfigured || props.teardowns.length === 0} value={form.teardownRecordId} onChange={(event) => setForm({ ...form, teardownRecordId: event.target.value })}><option value="">No teardown source</option>{props.teardowns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">{!props.teardownConfigured ? "Set TEARDOWN_API_BASE_URL to enable imports." : props.teardownWarning ? `Unavailable: ${props.teardownWarning}` : `${props.teardowns.length} completed records available.`}</p></div>
+          {!!props.researchSnapshots?.length && <div><label className="label">BrandSearch research reference (optional)</label><select className="input" value={form.researchSnapshotId} onChange={(event) => setForm({ ...form, researchSnapshotId: event.target.value, teardownRecordId: "" })}><option value="">No BrandSearch reference</option>{props.researchSnapshots.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">Use competitor structure and strategy. Product claims still come from your approved evidence.</p></div>}
+          <div><label className="label">Teardown2 source <span className="font-normal normal-case text-ink-400">(optional)</span></label><select className="input" disabled={!props.teardownConfigured || props.teardowns.length === 0} value={form.teardownRecordId} onChange={(event) => setForm({ ...form, teardownRecordId: event.target.value, researchSnapshotId: "" })}><option value="">No teardown source</option>{props.teardowns.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</select><p className="mt-1 text-xs text-ink-500">{!props.teardownConfigured ? "Set TEARDOWN_API_BASE_URL to enable imports." : props.teardownWarning ? `Unavailable: ${props.teardownWarning}` : `${props.teardowns.length} completed records available.`}</p></div>
         </div>
       </FormSection>}
 

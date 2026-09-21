@@ -1,7 +1,8 @@
+import { ResearchModeSchema } from "@/lib/brandsearch-research";
 import { z } from "zod";
 import { getSessionUser } from "@/lib/auth";
 import { AD_STAGES } from "@/lib/cellumove/corpus/queue";
-import { deconstructAd, runAdStep, runMine, runPlaybook, runScore, runWinners, stageQueue, syncTeardowns } from "@/lib/cellumove/corpus/runner.server";
+import { deconstructAd, researchAd, runAdStep, runMine, runPlaybook, runScore, runWinners, stageQueue, syncTeardowns } from "@/lib/cellumove/corpus/runner.server";
 
 export const dynamic = "force-dynamic";
 // One ad per call keeps each request far below this; collecting winners is the long one.
@@ -11,11 +12,13 @@ const adId = z.string().regex(/^[a-zA-Z0-9_-]+$/).max(80);
 /** Spectre competitor domain. The app always works one brand at a time. */
 const brand = z.string().trim().min(1).max(120);
 
+const mode = ResearchModeSchema.optional();
 const RunRequestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("deconstruct"), adId }).strict(),
+  z.object({ action: z.literal("research"), adId }).strict(),
   z.object({
     action: z.literal("queue"),
-    stage: z.enum(AD_STAGES),
+    stage: z.enum(AD_STAGES), mode,
     brand: brand.nullable().optional(),
     limit: z.number().int().positive().max(1000).nullable().optional(),
     force: z.boolean().optional(),
@@ -23,7 +26,7 @@ const RunRequestSchema = z.discriminatedUnion("action", [
   }).strict(),
   z.object({
     action: z.literal("step"),
-    stage: z.enum(AD_STAGES),
+    stage: z.enum(AD_STAGES), mode,
     adId,
     force: z.boolean().optional(),
     retryReview: z.boolean().optional(),
@@ -32,8 +35,8 @@ const RunRequestSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("sync-teardowns"), adIds: z.array(adId).min(1).max(200) }).strict(),
   z.object({ action: z.literal("winners"), brand, target: z.number().int().min(10).max(500) }).strict(),
   z.object({ action: z.literal("score"), brand: brand.nullable().optional() }).strict(),
-  z.object({ action: z.literal("mine"), brand: brand.nullable().optional() }).strict(),
-  z.object({ action: z.literal("playbook"), brand }).strict(),
+  z.object({ action: z.literal("mine"), mode, brand: brand.nullable().optional() }).strict(),
+  z.object({ action: z.literal("playbook"), mode, brand }).strict(),
 ]);
 
 export async function POST(request: Request): Promise<Response> {
@@ -52,10 +55,12 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     switch (input.action) {
+      case "research":
+        return Response.json(await researchAd(input.adId));
       case "deconstruct":
         return Response.json(await deconstructAd(input.adId));
       case "queue":
-        return Response.json({ items: await stageQueue(input.stage, { brand: input.brand, limit: input.limit, force: input.force, retryReview: input.retryReview }) });
+        return Response.json({ items: await stageQueue(input.stage, { mode: input.mode, brand: input.brand, limit: input.limit, force: input.force, retryReview: input.retryReview }) });
       case "step":
         return Response.json(await runAdStep(input.stage, input.adId, input));
       case "sync-teardowns":
@@ -65,15 +70,15 @@ export async function POST(request: Request): Promise<Response> {
       case "score":
         return Response.json(await runScore({ brand: input.brand }));
       case "mine":
-        return Response.json(await runMine({ brand: input.brand }));
+        return Response.json(await runMine({ brand: input.brand, mode: input.mode }));
       case "playbook":
-        return Response.json(await runPlaybook({ brand: input.brand }));
+        return Response.json(await runPlaybook({ brand: input.brand, mode: input.mode }));
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const setupRequired = /schema cache|relation .* does not exist|Could not find the table|bucket not found/i.test(message);
     return Response.json(
-      { error: setupRequired ? `Database setup is incomplete (${message}). Apply migrations 017–023.` : message },
+      { error: setupRequired ? `Database setup is incomplete (${message}). Apply migrations 017–026.` : message },
       { status: setupRequired ? 503 : 500 },
     );
   }

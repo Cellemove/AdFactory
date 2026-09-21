@@ -1,4 +1,5 @@
 import "server-only";
+import { researchReferenceContext, type ResearchSnapshot } from "@/lib/brandsearch-research";
 import { ReferenceStrategySchema, REFERENCE_ANALYSIS_VERSION } from "./reference-analysis";
 
 import {
@@ -365,11 +366,13 @@ export async function generateResourceGroundedScript(input: {
   avatar: SubAvatarRow | null;
   framework: ReferenceFormatRow | null;
   teardown: TeardownRecord | null;
+  research?: ResearchSnapshot | null;
   pipelineRunId?: string | null;
   onProgress?: ScriptGenerationProgressSink;
   preserveLocked?: boolean;
 }): Promise<ResourceGroundedScriptResult> {
   let scaffold = ensureScriptDurationPlan(input.scaffold);
+  scaffold.competitorResearch = input.research ?? null;
   if (scaffold.modules.length > input.scaffold.modules.length) {
     await reportScriptGenerationProgress(input.onProgress, {
       stage: "setup",
@@ -590,6 +593,7 @@ export async function generateResourceGroundedScript(input: {
   }
 
   const resources = {
+    competitorReference: input.research ? researchReferenceContext(input.research) : null,
     product: {
       id: input.product.id,
       name: input.product.name,
@@ -669,6 +673,9 @@ export async function generateResourceGroundedScript(input: {
     url: shopify?.onlineStoreUrl ?? null,
     snapshot: { product: resources.product, angle: resources.angle, framework: resources.framework, idea: input.idea },
   }];
+  if (input.research) sources.push({ sourceType: "research", sourceId: input.research.id,
+    title: `BrandSearch reference · ${input.research.brand} · speech only`, url: input.research.sourceUrl,
+    snapshot: { kind: "brandsearch_reference", research: input.research } });
   if (avatarResearch && input.avatar) {
     sources.push({
       sourceType: "research",

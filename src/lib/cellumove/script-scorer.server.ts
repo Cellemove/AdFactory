@@ -134,7 +134,9 @@ async function loadGoldAds(angleSlug: string): Promise<GoldAdInput[]> {
  */
 async function loadCorpusReferenceAds(): Promise<GoldAdInput[]> {
   try {
-    const ads = await loadMinedAds(SCORER_TAXONOMY_VERSION);
+    // Pinned: references match by production format, which speech-only runs never carry.
+    // Following the feature flag here would empty the Structure cohort overnight.
+    const ads = await loadMinedAds(SCORER_TAXONOMY_VERSION, "full_video");
     return ads.map((ad) => ({
       id: ad.id,
       angleSlug: "",

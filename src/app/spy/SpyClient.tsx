@@ -41,7 +41,7 @@ export function SpyClient({
   competitors,
   teardownStatus,
   costPerAd,
-  recentTeardowns,
+  recentTeardowns, researchEnabled = false, researchIds = {},
 }: {
   /** Newest cached BrandSearch Spectre feed, or null if none has been fetched yet. */
   cached: CachedFeed | null;
@@ -55,7 +55,11 @@ export function SpyClient({
   teardownStatus: Record<string, TeardownStatus>;
   costPerAd: number;
   recentTeardowns: RecentTeardown[];
+  researchEnabled?: boolean;
+  researchIds?: Record<string, string>;
 }) {
+  const [research, setResearch] = useState(researchIds);
+  const [researchResults, setResearchResults] = useState<Record<string, StepResult>>({});
   const [ads, setAds] = useState<SpyAd[] | null>(cached?.ads ?? null);
   const [sweepId, setSweepId] = useState<string | null>(cached?.id ?? null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(cached?.createdAt ?? null);
@@ -143,6 +147,25 @@ export function SpyClient({
     return () => { cancelled = true; controller.abort(); };
   }, [ads, canRefresh]);
 
+  const importSelected = async () => {
+    if (batchRunning.current || !selected.size) return;
+    batchRunning.current = true; setSubmitting(true); setError(null);
+    const ids = [...selected].slice(0, MAX_BATCH); let cursor = 0;
+    try {
+      await Promise.all(Array.from({ length: Math.min(3, ids.length) }, async () => {
+        while (!stopped.current && cursor < ids.length) {
+          const adId = ids[cursor++]!;
+          try {
+            const result = await minerRequest<StepResult>({ action: "research", adId });
+            setResearchResults((prev) => ({ ...prev, [adId]: result }));
+            if (result.researchSnapshotId) setResearch((prev) => ({ ...prev, [adId]: result.researchSnapshotId! }));
+          } catch (error) { setError(String(error)); }
+          setSelected((prev) => { const next = new Set(prev); next.delete(adId); return next; });
+        }
+      }));
+    } finally { batchRunning.current = false; setSubmitting(false); }
+  };
+
   const deconstructSelected = async () => {
     if (batchRunning.current || !selected.size) return;
     const ids = [...selected].filter((id) => !pending(teardowns[id]) && teardowns[id] !== "completed").slice(0, MAX_BATCH);
@@ -180,9 +203,12 @@ export function SpyClient({
     if (!id || ad.mediaType !== "video") return null;
     const state = teardowns[id];
     return <div className="space-y-2 px-2.5 pb-2.5 text-xs">
+      {researchEnabled && canRefresh && <label className="flex items-center gap-2"><input type="checkbox" checked={selected.has(id)} disabled={submitting || (!selected.has(id) && selected.size >= MAX_BATCH)} onChange={() => toggleSelection(id)} />Select video</label>}
+      {research[id] && <a className="font-medium text-violet-700" href={`/spy/research/${research[id]}`}>Review imported research →</a>}
+      {researchResults[id] && <p role="status">{researchResults[id].detail} · {researchResults[id].creditsUsed ?? 0} transcript credits</p>}
       {state === "completed" ? <a className="font-medium text-emerald-700" href={`/miner/${id}`}>✓ deconstructed →</a>
         : pending(state) ? <span className="text-sky-700">deconstructing…</span>
-        : canRefresh ? <label className="flex cursor-pointer items-center gap-2">
+        : canRefresh && !researchEnabled ? <label className="flex cursor-pointer items-center gap-2">
           <input type="checkbox" checked={selected.has(id)} disabled={submitting || (!selected.has(id) && selected.size >= MAX_BATCH)} onChange={() => toggleSelection(id)} aria-label={`Select ${ad.brand} video for deconstruction`} />
           {state === "failed" ? "failed — retry" : "Select to deconstruct"}
         </label> : state === "failed" ? <span className="text-red-700">deconstruction failed</span> : null}
@@ -372,8 +398,9 @@ export function SpyClient({
         </li>)}</ul>
       </section>}
       {(selected.size > 0 || submitting) && <div className="fixed inset-x-4 bottom-4 z-20 mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-3 rounded-lg border border-ink-200 bg-white p-4 shadow-lg">
-        <p className="text-sm">{selected.size} selected · est. ${(selected.size * costPerAd).toFixed(2)} · 2–4 min each · max {MAX_BATCH}</p>
-        <button type="button" className="btn btn-primary" disabled={submitting} onClick={() => void deconstructSelected()}>{submitting ? "Submitting…" : `Deconstruct ${selected.size} selected`}</button>
+        <p className="text-sm">{researchEnabled ? "Research: cached data free; missing transcripts up to 10 credits/day. Full deconstruction: " : ""}{selected.size} selected · est. ${(selected.size * costPerAd).toFixed(2)} · 2–4 min each · max {MAX_BATCH}</p>
+        {researchEnabled && <button type="button" className="btn btn-primary" disabled={submitting} onClick={() => void importSelected()}>Import research ({selected.size})</button>}
+        <button type="button" className="btn btn-secondary" disabled={submitting} onClick={() => void deconstructSelected()}>{submitting ? "Submitting…" : `Full deconstruction (${selected.size})`}</button>
       </div>}
     </div>
   );

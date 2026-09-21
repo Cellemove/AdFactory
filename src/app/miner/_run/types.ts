@@ -19,6 +19,8 @@ export type StageStats = {
 };
 
 export type RunSnapshot = {
+  researchMode?: "speech_only" | "full_video";
+  researchEnabled?: boolean;
   /** The brand being worked on, or null on the "pick a brand" screen. */
   brand: BrandSummary | null;
   brands: BrandSummary[];

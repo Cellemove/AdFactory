@@ -12,6 +12,7 @@ export const AD_STAGES = ["media", "transcribe", "extract", "teardown"] as const
 export type AdStage = (typeof AD_STAGES)[number];
 
 export type QueueOptions = {
+  mode?: "speech_only" | "full_video";
   force?: boolean;
   /** extract: include ads the evidence gate quarantined. */
   retryReview?: boolean;
@@ -28,10 +29,10 @@ function inScope(rows: CorpusAdStateRow[], options: QueueOptions): CorpusAdState
 
 export function isReadyFor(stage: Exclude<AdStage, "teardown">, row: CorpusAdStateRow, options: QueueOptions = {}): boolean {
   if (stage === "media") return row.mediaStatus !== "downloaded";
-  if (stage === "transcribe") return row.mediaStatus === "downloaded" && row.transcriptStatus !== "complete";
+  if (stage === "transcribe") return (options.mode === "speech_only" || row.mediaStatus === "downloaded") && row.transcriptStatus !== "complete";
   const done = row.extractStatus === "complete" || row.extractStatus === "reviewed";
   const quarantined = row.extractStatus === "needs_human_review";
-  return row.transcriptStatus === "complete" && !done && (!quarantined || Boolean(options.retryReview));
+  return row.transcriptStatus === "complete" && (options.mode !== "speech_only" || row.segmentCount !== 0) && !done && (!quarantined || Boolean(options.retryReview));
 }
 
 /** media / transcribe / extract, in CorpusAdState order (best winnerScore first). */

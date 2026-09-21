@@ -1,3 +1,4 @@
+import { defaultResearchMode } from "../../src/lib/brandsearch-research.server";
 // Shared plumbing for the miner:* runners: flag parsing, the concurrency-lane
 // loop (per-item try/catch, counters, exit code), and stage selection over the
 // CorpusAdState view. Every runner is a plain tsx script — no agent, no queue.
@@ -7,6 +8,7 @@ import { selectStageRows } from "../../src/lib/cellumove/corpus/queue";
 import { loadCompetitorAds, loadCorpusState } from "../../src/lib/cellumove/corpus/state.server";
 
 export type MinerArgs = {
+  mode: "speech_only" | "full_video";
   force: boolean;
   dryRun: boolean;
   withVideo: boolean;
@@ -68,6 +70,7 @@ export function parseMinerArgs(argv: string[] = process.argv.slice(2)): MinerArg
   const status = str("status");
   if (status && status !== "active" && status !== "all") throw new Error('--status must be "active" or "all".');
   return {
+    mode: bool("full-video") || bool("with-video") ? "full_video" : defaultResearchMode(),
     force: bool("force"),
     dryRun: bool("dry-run"),
     withVideo: bool("with-video"),
@@ -157,8 +160,8 @@ export type StageName = "media" | "transcribe" | "extract";
 
 /** The ads a stage should process — the same rule the /miner run page uses (corpus/queue.ts). */
 export async function selectAdsForStage(stage: StageName, args: MinerArgs): Promise<CompetitorAdRow[]> {
-  const state = await loadCorpusState();
-  const selected = selectStageRows(stage, state.rows, { force: args.force, retryReview: args.retryReview, ids: args.ads, brand: args.brand, limit: args.limit });
+  const state = await loadCorpusState(args.mode);
+  const selected = selectStageRows(stage, state.rows, { mode: args.mode, force: args.force, retryReview: args.retryReview, ids: args.ads, brand: args.brand, limit: args.limit });
   if (!selected.length) return [];
   const ads = await loadCompetitorAds({ ids: selected.map((row) => row.id) });
   const order = new Map(selected.map((row, index) => [row.id, index]));
