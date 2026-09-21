@@ -26,6 +26,7 @@
     "test:scorer-evidence": "tsx --test src/lib/cellumove/scorer-evidence.test.ts src/lib/cellumove/evidence-library.test.ts src/lib/cellumove/milanote-script-extraction.test.ts src/lib/cellumove/milanote-api.test.ts",
     "test:brandsearch": "tsx --test src/lib/brandsearch.test.ts",
     "test:zip": "tsx --test src/lib/zip.test.ts",
+    "test:dump-usable": "tsx --test src/lib/cellumove/corpus/dump-usable.test.ts",
     "test:llm": "tsx --test src/lib/llm.test.ts",
     "test:corpus": "tsx --test src/lib/cellumove/corpus/*.test.ts",
     "test:image-ads": "tsx --test src/lib/cellumove/image-ad-references.test.ts src/lib/cellumove/image-ad-concepts.test.ts src/lib/image-probe.test.ts src/lib/image-compress.test.ts",
