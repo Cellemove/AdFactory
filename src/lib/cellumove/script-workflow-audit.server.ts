@@ -172,6 +172,7 @@ function nestedStrings(value: unknown): string[] {
 }
 
 function referenceFragments(source: ScriptSourceRow): string[] {
+  if (source.sourceType === "research" && source.snapshot && typeof source.snapshot === "object" && !Array.isArray(source.snapshot) && source.snapshot.kind === "brandsearch_reference") return nestedStrings(source.snapshot.research);
   if (source.sourceType === "teardown") return nestedStrings(source.snapshot);
   if (source.sourceType !== "manual" || !source.snapshot || typeof source.snapshot !== "object" || Array.isArray(source.snapshot)) return [];
   const framework = (source.snapshot as Record<string, unknown>).framework;
@@ -184,7 +185,7 @@ async function originalityFindings(projectId: string, document: ScriptDocument):
   if (!current.length) return [];
   const [recent, referenceResult] = await Promise.all([
     supabase.from("ScriptLineFingerprint").select("*").neq("projectId", projectId).order("createdAt", { ascending: false }).limit(500),
-    supabase.from("ScriptSource").select("*").eq("projectId", projectId).in("sourceType", ["teardown", "manual"]),
+    supabase.from("ScriptSource").select("*").eq("projectId", projectId).in("sourceType", ["teardown", "manual", "research"]),
   ]);
   const historical = (recent.data ?? []) as ScriptLineFingerprintRow[];
   const references = ((referenceResult.data ?? []) as ScriptSourceRow[]).flatMap((source) => referenceFragments(source).map((text) => ({ source, text })));

@@ -1,4 +1,6 @@
 import "server-only";
+import { brandSearchResearchEnabled, defaultResearchMode, importAdResearch } from "@/lib/brandsearch-research.server";
+import type { ResearchMode } from "@/lib/brandsearch-research";
 
 import { supabase } from "@/lib/db";
 import { BRANDSEARCH_MEDIA_TTL_MS, type NormalizedBrandSearchAd } from "@/lib/brandsearch";
@@ -21,7 +23,7 @@ import { planTeardown, selectStageRows, type AdStage, type QueueOptions } from "
 import { loadCompetitorAds, loadCorpusState } from "./state.server";
 import { teardownCostUsd, teardownSourceFor } from "./teardown";
 import { loadAdTeardown, loadAdTeardowns, submitAdTeardown, syncAdTeardown } from "./teardown.server";
-import { latestCompleteTranscriptRun, transcribeAd } from "./transcribe.server";
+import { importResearchTranscript, latestCompleteTranscriptRun, transcribeAd } from "./transcribe.server";
 import { refreshWinnerScores } from "./winner-score.server";
 import { collectWinners, fetchWinnerPool } from "./winners.server";
 
@@ -29,9 +31,9 @@ export type QueueItem = { id: string; brandName: string; winnerScore: number | n
 
 export type StepOutcome = "done" | "skipped" | "failed" | "quarantined" | "queued" | "processing";
 
-export type StepResult = { adId: string; outcome: StepOutcome; detail: string; costUsd: number | null };
+export type StepResult = { adId: string; outcome: StepOutcome; detail: string; costUsd: number | null; creditsUsed?: number; researchSnapshotId?: string };
 
-export type StepOptions = { force?: boolean; retryReview?: boolean; skipGate?: boolean };
+export type StepOptions = { mode?: ResearchMode; force?: boolean; retryReview?: boolean; skipGate?: boolean };
 
 const mb = (bytes: number | null | undefined) => `${((bytes ?? 0) / 1024 / 1024).toFixed(1)} MB`;
 
@@ -48,7 +50,8 @@ export async function stageQueue(stage: AdStage, options: QueueOptions = {}): Pr
   // to the brand: concept-reuse fingerprints are already keyed per brand, so a
   // brand-scoped rescore gives the same numbers as a full-table one.
   if (stage === "teardown") await refreshWinnerScores({ brand: options.brand ?? undefined });
-  const state = await loadCorpusState();
+  options = { ...options, mode: options.mode ?? defaultResearchMode() };
+  const state = await loadCorpusState(options.mode);
   const rows = stage === "teardown"
     ? planTeardown(state.rows, await loadAdTeardowns(), options).todo
     : selectStageRows(stage, state.rows, options);
@@ -56,8 +59,8 @@ export async function stageQueue(stage: AdStage, options: QueueOptions = {}): Pr
 }
 
 /** Refuses extraction until Gate 1 has passed, unless the caller opts into test mode. */
-export async function assertExtractAllowed(skipGate: boolean): Promise<void> {
-  const gate = await latestGate1(CORPUS_TAXONOMY_VERSION);
+export async function assertExtractAllowed(skipGate: boolean, mode: ResearchMode = defaultResearchMode()): Promise<void> {
+  const gate = await latestGate1(CORPUS_TAXONOMY_VERSION, mode);
   if (gate?.passed || skipGate) return;
   throw new Error("The extractor has not passed its accuracy check (Gate 1). Turn on test mode to extract anyway.");
 }
@@ -71,6 +74,7 @@ async function loadAd(adId: string) {
 /** One stage for one ad. Per-ad problems come back as outcomes; only misuse throws. */
 export async function runAdStep(stage: AdStage, adId: string, options: StepOptions = {}): Promise<StepResult> {
   const ad = await loadAd(adId);
+  const mode = options.mode ?? defaultResearchMode();
   const result = (outcome: StepOutcome, detail: string, costUsd: number | null = null): StepResult => ({ adId, outcome, detail, costUsd });
   try {
     if (stage === "media") {
@@ -80,6 +84,11 @@ export async function runAdStep(stage: AdStage, adId: string, options: StepOptio
         : result("failed", `${media.status}${media.statusReason ? ` — ${media.statusReason}` : ""}`);
     }
 
+    if (stage === "transcribe" && mode === "speech_only") {
+      const imported = await importAdResearch(ad);
+      const run = imported.snapshot ? await importResearchTranscript(ad, imported.snapshot) : null;
+      return { ...result(run?.run.status === "complete" ? "done" : "queued", run ? `${run.segments.length} spoken segments · visuals unassessed` : "Research deferred; retry after the allowance resets or provider recovery."), creditsUsed: imported.creditsUsed, researchSnapshotId: imported.snapshot?.id };
+    }
     if (stage === "transcribe") {
       const media = await loadAdMedia(ad.id);
       if (media?.status !== "downloaded") return result("failed", "Video not downloaded yet.");
@@ -91,9 +100,10 @@ export async function runAdStep(stage: AdStage, adId: string, options: StepOptio
     }
 
     if (stage === "extract") {
-      await assertExtractAllowed(Boolean(options.skipGate));
-      const transcript = await latestCompleteTranscriptRun(ad.id);
+      await assertExtractAllowed(Boolean(options.skipGate), mode);
+      const transcript = await latestCompleteTranscriptRun(ad.id, mode);
       if (!transcript) return result("failed", "No transcript yet.");
+      if (transcript.segmentCount === 0) return result("skipped", "Provider reports no speech; no copy beats to extract.");
       const run = await extractAdBeats(ad, transcript, { force: options.force, retryReview: options.retryReview });
       if (run.reused) return result("skipped", run.run.status === "needs_human_review" ? "Waiting for human review." : "Already broken into beats.");
       const cost = usageCostUsd(run.run.usage);
@@ -153,8 +163,8 @@ export async function runScore(input: { brand?: string | null } = {}): Promise<B
   return { title: `${result.scored} ads ranked${input.brand ? ` for ${input.brand}` : ""}`, lines: [`${result.updated} rank(s) changed.`] };
 }
 
-export async function runMine(input: { brand?: string | null } = {}): Promise<BatchResult> {
-  const result = await mineAndSaveReports({ brand: input.brand });
+export async function runMine(input: { brand?: string | null; mode?: ResearchMode } = {}): Promise<BatchResult> {
+  const result = await mineAndSaveReports({ brand: input.brand, mode: input.mode });
   const report = input.brand ? result.brand : result.all;
   if (!report) {
     return {
@@ -175,8 +185,8 @@ export async function runMine(input: { brand?: string | null } = {}): Promise<Ba
   };
 }
 
-export async function runPlaybook(input: { brand: string }): Promise<BatchResult> {
-  const result = await buildAndSavePlaybook(input.brand);
+export async function runPlaybook(input: { brand: string; mode?: ResearchMode }): Promise<BatchResult> {
+  const result = await buildAndSavePlaybook(input.brand, { mode: input.mode });
   if (!result.playbook) {
     return { title: "No playbook yet", incomplete: true, lines: [`Break some of ${input.brand}'s ads into beats first.`] };
   }
@@ -233,24 +243,37 @@ export async function runRecentWinners(input: { cap?: number; dryRun?: boolean; 
   if (!Number.isFinite(budgetMs) || budgetMs < 0) throw new Error("budgetMs must be a non-negative number.");
   const synced = await syncTeardowns(await pendingTeardownIds());
   const midnight = new Date(started).toISOString().slice(0, 10) + "T00:00:00.000Z";
-  const count = await supabase.from("AdTeardown").select("id", { count: "exact", head: true }).gte("submittedAt", midnight);
+  const research = brandSearchResearchEnabled();
+  const count = research
+    ? await supabase.from("BrandSearchReservation").select("competitorAdId", { count: "exact", head: true }).eq("scope", "daily_research").eq("day", midnight.slice(0, 10))
+    : await supabase.from("AdTeardown").select("id", { count: "exact", head: true }).gte("submittedAt", midnight);
   if (count.error) throw new Error(count.error.message);
   const remaining = Math.max(0, cap - (count.count ?? 0));
   const summary = {
     cap, submittedToday: count.count ?? 0, remaining, dryRun: Boolean(input.dryRun),
-    reason: "", creditsUsed: 0, dailyRemaining: null as number | null, monthlyRemaining: null as number | null,
+    reason: "", creditsUsed: 0, transcriptCreditsUsed: 0, dailyRemaining: null as number | null, monthlyRemaining: null as number | null,
     synced: synced.length, results: [] as StepResult[],
     skipped: {} as Record<string, number>, spendTodayUsd: 0, spendWarning: null as string | null,
     candidates: [] as Array<{ adId: string; brand: string; startedAt: string | null }>,
   };
   const finish = async (reason: string) => {
     summary.reason = reason;
+    summary.transcriptCreditsUsed = summary.results.reduce((sum, result) => sum + (result.creditsUsed ?? 0), 0);
     summary.spendTodayUsd = Math.round((await todaySpendUsd()) * 100) / 100;
     summary.spendWarning = spendWarning(summary.spendTodayUsd);
     console.log("[recent-winners]", JSON.stringify(summary));
     if (summary.spendWarning) console.warn("[recent-winners]", summary.spendWarning);
     return summary;
   };
+  // Reconcile durable unfinished imports before selecting new daily candidates.
+  if (research && cap > 0 && !input.dryRun) {
+    const due = await supabase.from("AdResearchJob").select("competitorAdId").neq("status", "ready").or(`nextAttemptAt.is.null,nextAttemptAt.lte.${new Date().toISOString()}`).order("updatedAt").limit(10);
+    if (due.error) throw new Error(due.error.message);
+    for (const job of due.data ?? []) {
+      if (Date.now() - started > budgetMs - 380_000) break;
+      summary.results.push(await researchAd(job.competitorAdId));
+    }
+  }
   if (!remaining) return finish(cap === 0 ? "Disabled (sync complete)" : "Day cap reached");
   if (Date.now() - started >= budgetMs) return finish("Time budget reached");
   // ponytail: pool = 4×cap; raise the factor if days return 0 new while brands still qualify.
@@ -269,13 +292,15 @@ export async function runRecentWinners(input: { cap?: number; dryRun?: boolean; 
     }));
   }
   const ids = [...pool.picked.values()].flat().map(idOf);
-  const done = new Set((await loadAdTeardowns({ ids })).map((row) => row.competitorAdId));
+  const existingResearch = research && ids.length ? await supabase.from("AdResearchJob").select("competitorAdId").in("competitorAdId", ids) : null;
+  if (existingResearch?.error) throw new Error(existingResearch.error.message);
+  const done = new Set(research ? (existingResearch?.data ?? []).map((row) => row.competitorAdId) : (await loadAdTeardowns({ ids })).map((row) => row.competitorAdId));
   const todo = pickNew(pool.picked, done, remaining, idOf, (ad) => typeof ad.metrics.euTotalSpend === "number" ? ad.metrics.euTotalSpend : 0);
   summary.candidates = todo.map((ad) => ({ adId: idOf(ad), brand: ad.brandDomain || ad.brandName, startedAt: ad.startedAt }));
   if (input.dryRun) return finish("Dry run — no ads submitted");
   let cursor = 0;
   await Promise.all(Array.from({ length: Math.min(3, todo.length) }, async () => {
-    while (cursor < todo.length && Date.now() - started < budgetMs) {
+    while (cursor < todo.length && Date.now() - started < budgetMs - (research ? 380_000 : 0)) {
       const ad = todo[cursor++]!;
       const now = new Date();
       try {
@@ -283,11 +308,27 @@ export async function runRecentWinners(input: { cap?: number; dryRun?: boolean; 
         const row = toCompetitorAdRow(ad, now.toISOString(), new Date(now.getTime() + BRANDSEARCH_MEDIA_TTL_MS).toISOString());
         const write = await supabase.from("CompetitorAd").upsert(row, { onConflict: "provider,platform,externalId", ignoreDuplicates: false });
         if (write.error) throw new Error(write.error.message);
-        summary.results.push(await deconstructAd(row.id));
+        if (research) {
+          const reservation = await supabase.rpc("reserve_brandsearch_budget", { ad_id: row.id, budget_scope: "daily_research", cap });
+          if (reservation.error) throw new Error(reservation.error.message);
+          if (reservation.data) summary.results.push(await researchAd(row.id));
+        } else summary.results.push(await deconstructAd(row.id));
       } catch (error) {
         summary.results.push({ adId: idOf(ad), outcome: "failed", detail: error instanceof Error ? error.message : String(error), costUsd: null });
       }
     }
   }));
   return finish(cursor < todo.length ? "Time budget reached" : "Complete");
+}
+
+/** Research outcomes deliberately never mutate AdTeardown status. */
+export async function researchAd(adId: string): Promise<StepResult> {
+  try {
+    const ad = await loadAd(adId);
+    const result = await importAdResearch(ad);
+    if (ad.corpusIncluded && result.snapshot) await importResearchTranscript(ad, result.snapshot);
+    return { adId, outcome: result.status === "ready" ? "done" : result.status === "processing" ? "processing" : "queued",
+      detail: result.snapshot ? `Speech: ${result.snapshot.transcript.status} · AI context: ${result.snapshot.analysis.status} · visuals unassessed${result.status === "deferred" ? " · deferred retry" : ""}` : "Research in progress",
+      costUsd: 0, creditsUsed: result.creditsUsed, researchSnapshotId: result.snapshot?.id };
+  } catch (error) { return { adId, outcome: "failed", detail: String(error), costUsd: 0 }; }
 }

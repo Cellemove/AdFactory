@@ -1,3 +1,4 @@
+import type { ResearchMode } from "@/lib/brandsearch-research";
 import type { BatchResult, QueueItem, StepResult } from "@/lib/cellumove/corpus/runner.server";
 import type { AdStageKey, StageKey } from "./types";
 
@@ -13,13 +14,13 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
 }
 
 /** The ads a stage would process next for this brand. */
-export async function fetchQueue(input: { stage: AdStageKey; brand: string; limit?: number | null; force?: boolean; retryReview?: boolean }): Promise<QueueItem[]> {
+export async function fetchQueue(input: { mode?: ResearchMode; stage: AdStageKey; brand: string; limit?: number | null; force?: boolean; retryReview?: boolean }): Promise<QueueItem[]> {
   const { items } = await call<{ items: QueueItem[] }>({ action: "queue", ...input });
   return items;
 }
 
 /** One stage for one ad. Per-ad problems come back as outcomes, not throws. */
-export async function runStep(input: { stage: AdStageKey; adId: string; force?: boolean; retryReview?: boolean; skipGate?: boolean }): Promise<StepResult> {
+export async function runStep(input: { mode?: ResearchMode; stage: AdStageKey; adId: string; force?: boolean; retryReview?: boolean; skipGate?: boolean }): Promise<StepResult> {
   return call<StepResult>({ action: "step", ...input });
 }
 
@@ -31,12 +32,12 @@ export async function rankAds(brand: string): Promise<BatchResult> {
   return call<BatchResult>({ action: "score", brand });
 }
 
-export async function minePatterns(brand: string): Promise<BatchResult> {
-  return call<BatchResult>({ action: "mine", brand });
+export async function minePatterns(brand: string, mode?: ResearchMode): Promise<BatchResult> {
+  return call<BatchResult>({ action: "mine", brand, mode });
 }
 
-export async function writePlaybook(brand: string): Promise<BatchResult> {
-  return call<BatchResult>({ action: "playbook", brand });
+export async function writePlaybook(brand: string, mode?: ResearchMode): Promise<BatchResult> {
+  return call<BatchResult>({ action: "playbook", brand, mode });
 }
 
 export async function syncTeardowns(adIds: string[]): Promise<StepResult[]> {
@@ -51,9 +52,9 @@ export function isBatchStage(stage: StageKey): stage is BatchStageKey {
   return stage === "ingest" || stage === "score" || stage === "mine" || stage === "playbook";
 }
 
-export function runBatchStage(stage: BatchStageKey, input: { brand: string; target: number }): Promise<BatchResult> {
-  if (stage === "ingest") return collectWinners(input);
+export function runBatchStage(stage: BatchStageKey, input: { brand: string; target: number; mode?: ResearchMode }): Promise<BatchResult> {
+  if (stage === "ingest") return collectWinners({ brand: input.brand, target: input.target });
   if (stage === "score") return rankAds(input.brand);
-  if (stage === "mine") return minePatterns(input.brand);
-  return writePlaybook(input.brand);
+  if (stage === "mine") return minePatterns(input.brand, input.mode);
+  return writePlaybook(input.brand, input.mode);
 }

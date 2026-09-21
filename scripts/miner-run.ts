@@ -15,7 +15,7 @@ import { downloadAdMedia, loadAdMedia } from "../src/lib/cellumove/corpus/media.
 import { mineAndSaveReports } from "../src/lib/cellumove/corpus/mine.server";
 import { buildAndSavePlaybook } from "../src/lib/cellumove/corpus/playbook.server";
 import { renderReportText } from "../src/lib/cellumove/corpus/report";
-import { latestCompleteTranscriptRun, transcribeAd } from "../src/lib/cellumove/corpus/transcribe.server";
+import { importResearchTranscript, latestCompleteTranscriptRun, transcribeAd } from "../src/lib/cellumove/corpus/transcribe.server";
 import { refreshWinnerScores } from "../src/lib/cellumove/corpus/winner-score.server";
 import { fail, parseMinerArgs, printSummary, runLanes, selectAdsForStage } from "./lib/miner-cli";
 import { assertGate1 } from "./miner-extract";
@@ -43,15 +43,22 @@ async function main() {
   }
   if (stopAfter < 1 || args.dryRun) return;
 
+  if (args.mode === "full_video") {
   console.log("\n▶ media");
   printSummary("media", await runLanes(await selectAdsForStage("media", args), args.concurrency ?? 3, label, async (ad) => {
     const media = await downloadAdMedia(ad, { force: args.force });
     return media.status === "downloaded" ? "ok" : `${media.status}: ${media.statusReason ?? ""}`;
   }));
+  }
   if (stopAfter < 2) return;
 
   console.log("\n▶ transcribe");
   printSummary("transcribe", await runLanes(await selectAdsForStage("transcribe", args), args.concurrency ?? 2, label, async (ad) => {
+    if (args.mode === "speech_only") {
+      const imported = await importResearchTranscript(ad);
+      if (!imported) throw new Error("Research deferred; no usable speech yet. Run again after provider recovery or the daily allowance resets.");
+      return imported.reused ? "skip" : `${imported.segments.length} speech segments; visuals unassessed`;
+    }
     const media = await loadAdMedia(ad.id);
     if (!media) throw new Error("No AdMedia row.");
     const result = await transcribeAd(ad, media, { force: args.force });
@@ -61,9 +68,9 @@ async function main() {
 
   console.log("\n▶ extract");
   const taxonomyVersion = args.taxonomy ?? CORPUS_TAXONOMY_VERSION;
-  await assertGate1(taxonomyVersion, args.skipGate);
+  await assertGate1(taxonomyVersion, args.skipGate, args.mode);
   printSummary("extract", await runLanes(await selectAdsForStage("extract", args), args.concurrency ?? 2, label, async (ad) => {
-    const transcriptRun = await latestCompleteTranscriptRun(ad.id);
+    const transcriptRun = await latestCompleteTranscriptRun(ad.id, args.mode);
     if (!transcriptRun) throw new Error("No complete transcript.");
     const media = args.withVideo ? await loadAdMedia(ad.id) : null;
     const result = await extractAdBeats(ad, transcriptRun, { force: args.force, retryReview: args.retryReview, withVideo: args.withVideo, media, taxonomyVersion });
@@ -78,14 +85,14 @@ async function main() {
   if (stopAfter < 5) return;
 
   console.log("\n▶ mine");
-  const mined = await mineAndSaveReports({ brand: args.brand, taxonomyVersion, minSupport: args.minSupport ?? undefined });
+  const mined = await mineAndSaveReports({ mode: args.mode, brand: args.brand, taxonomyVersion, minSupport: args.minSupport ?? undefined });
   if (mined.all) console.log(renderReportText(mined.all));
   console.log(`${mined.written} snapshot(s) written · ${mined.unchanged} unchanged.`);
 
   if (stopAfter < 6) return;
   if (args.brand) {
     console.log(`\n> playbook`);
-    const built = await buildAndSavePlaybook(args.brand);
+    const built = await buildAndSavePlaybook(args.brand, { mode: args.mode });
     console.log(built.playbook
       ? `${args.brand}: ${built.playbook.copy.rules.length} copy rules, ${built.playbook.hooks.length} hook types, ${built.playbook.beats.length} beats (${built.written ? "new snapshot" : "unchanged"})`
       : `No extracted ads for ${args.brand} yet.`);

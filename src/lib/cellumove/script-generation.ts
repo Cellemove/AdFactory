@@ -219,6 +219,7 @@ export function buildScriptCorrectionContext(input: {
     ? moduleEvidence.packs.filter((pack) => isRecord(pack) && input.plan.moduleIds.includes(String(pack.moduleId)))
     : [];
   const targetedResources = {
+    competitorReference: resourceRecord.competitorReference,
     product: resourceRecord.product,
     angle: resourceRecord.angle,
     avatar: resourceRecord.avatar,

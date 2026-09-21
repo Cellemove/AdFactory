@@ -1,3 +1,4 @@
+import { brandSearchResearchEnabled, listResearchSnapshots } from "@/lib/brandsearch-research.server";
 import { supabase } from "@/lib/db";
 import type { SpyAd } from "../actions/spy";
 import { bankedSourceUrls } from "../actions/bank";
@@ -54,10 +55,13 @@ export default async function SpyPage() {
   if (brands?.error) throw new Error(brands.error.message);
   const brandNames = new Map((brands?.data ?? []).map((ad) => [ad.id, ad.brandName]));
 
+  const research = await listResearchSnapshots();
   return (
     <SpyClient
       cached={row ? { id: row.id, ads, createdAt: row.createdAt } : null}
       teardownStatus={Object.fromEntries([...recentRows, ...teardowns].map((item) => [item.competitorAdId, item.status]))}
+      researchEnabled={brandSearchResearchEnabled()}
+      researchIds={Object.fromEntries(research.map((r) => [r.competitorAdId, r.id]))}
       costPerAd={TEARDOWN_TYPICAL_COST_USD}
       recentTeardowns={recentRows.map((item) => ({ adId: item.competitorAdId, brand: brandNames.get(item.competitorAdId) ?? "Unknown brand", submittedAt: item.submittedAt }))}
       bankedUrls={banked}

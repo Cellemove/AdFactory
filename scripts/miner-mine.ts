@@ -13,7 +13,7 @@ import { fail, parseMinerArgs } from "./lib/miner-cli";
 
 async function main() {
   const args = parseMinerArgs();
-  const result = await mineAndSaveReports({ brand: args.brand, taxonomyVersion: args.taxonomy ?? undefined, minSupport: args.minSupport ?? undefined });
+  const result = await mineAndSaveReports({ mode: args.mode, brand: args.brand, taxonomyVersion: args.taxonomy ?? undefined, minSupport: args.minSupport ?? undefined });
   const report = args.brand ? result.brand : result.all;
   if (!report) {
     console.log("No ads with a complete extraction yet — run miner:extract first.");

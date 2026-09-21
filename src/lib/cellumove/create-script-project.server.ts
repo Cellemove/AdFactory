@@ -1,4 +1,5 @@
 import "server-only";
+import { brandSearchResearchEnabled, getResearchSnapshot } from "@/lib/brandsearch-research.server";
 
 import { revalidatePath } from "next/cache";
 import { after } from "next/server";
@@ -66,10 +67,11 @@ export const CreateScriptProjectSchema = z.object({
   format: z.string().trim().min(1).max(80),
   targetDurationSec: z.number().int().min(5).max(600),
   teardownRecordId: z.string().nullable().optional(),
+  researchSnapshotId: z.string().nullable().optional(),
   pipelineRunId: z.string().nullable().optional(),
   spySweepId: z.string().nullable().optional(),
   spyAdIndex: z.number().int().nonnegative().nullable().optional(),
-}).refine((value) => Boolean(value.subAvatarId || value.angleId), {
+}).refine((value) => !(value.teardownRecordId && value.researchSnapshotId), { message: "Select one competitor reference source.", path: ["researchSnapshotId"] }).refine((value) => Boolean(value.subAvatarId || value.angleId), {
   message: "Choose an avatar, or name the angle directly.",
   path: ["subAvatarId"],
 });
@@ -168,6 +170,8 @@ export async function createScriptProjectCore(
     detail: [product.name, angle.name, avatar?.name, framework?.name, pipelineRun ? `pipeline ${pipelineRun.id}` : null].filter(Boolean).join(" · "),
   });
 
+  if (parsed.researchSnapshotId && !brandSearchResearchEnabled()) throw new Error("BrandSearch research is not enabled.");
+  const research = parsed.researchSnapshotId ? await getResearchSnapshot(parsed.researchSnapshotId) : null;
   const teardown = parsed.teardownRecordId
     ? await getTeardownDeconstruction(parsed.teardownRecordId)
     : null;
@@ -229,7 +233,7 @@ export async function createScriptProjectCore(
     angle,
     avatar,
     framework,
-    teardown,
+    teardown, research,
     pipelineRunId: pipelineRun?.id ?? null,
     onProgress: progress,
   });
@@ -282,6 +286,7 @@ export async function createScriptProjectCore(
       referenceMode: parsed.referenceMode,
       playbookVersionId: playbook.id,
       teardownRecordId: teardown?.id ?? null,
+      researchSnapshotId: research?.id ?? null,
       teardownSnapshot: teardown ? asJson(teardown) : null,
       document: asJson(document),
       displayName,
@@ -321,6 +326,7 @@ export async function createScriptProjectCore(
       payload: asJson({
         editorUserId: editor?.id ?? null,
         teardownRecordId: teardown?.id ?? null,
+      researchSnapshotId: research?.id ?? null,
         pipelineRunId: pipelineRun?.id ?? null,
         spySweepId: spySweep?.id ?? null,
         spyAdIndex: parsed.spyAdIndex ?? null,

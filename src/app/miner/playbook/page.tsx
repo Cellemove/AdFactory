@@ -1,3 +1,5 @@
+import { brandSearchResearchEnabled, defaultResearchMode } from "@/lib/brandsearch-research.server";
+import { ResearchModeSchema } from "@/lib/brandsearch-research";
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser } from "@/lib/authorization";
@@ -8,21 +10,23 @@ import { PlaybookView } from "./PlaybookView";
 export const metadata: Metadata = { title: "Playbook · Corpus Miner · AdFactory" };
 export const dynamic = "force-dynamic";
 
-export default async function PlaybookPage({ searchParams }: { searchParams: Promise<{ brand?: string }> }) {
+export default async function PlaybookPage({ searchParams }: { searchParams: Promise<{ brand?: string; mode?: string }> }) {
   await requireUser();
-  const { brand } = await searchParams;
-  const brands = await listPlaybookBrands().catch(() => []);
+  const { brand, mode: requestedMode } = await searchParams;
+  const mode = ResearchModeSchema.catch(defaultResearchMode()).parse(requestedMode);
+  const brands = await listPlaybookBrands(undefined, mode).catch(() => []);
   const selected = brand ?? brands[0]?.brand ?? null;
-  const latest = selected ? await latestBrandPlaybook(selected).catch(() => null) : null;
+  const latest = selected ? await latestBrandPlaybook(selected, undefined, mode).catch(() => null) : null;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <MinerTabs active="playbook" />
+        {brandSearchResearchEnabled() && <nav className="flex gap-3 text-sm" aria-label="Coverage"><Link href={`?brand=${encodeURIComponent(selected ?? "")}&mode=speech_only`}>Speech-only</Link><Link href={`?brand=${encodeURIComponent(selected ?? "")}&mode=full_video`}>Full video</Link><span>Viewing: {mode === "speech_only" ? "speech only; visuals unassessed" : "full video"}</span></nav>}
         {brands.length > 0 && (
           <nav aria-label="Brands with a playbook" className="flex flex-wrap gap-1.5 text-xs">
             {brands.map((item) => (
-              <Link key={item.brand} href={`/miner/playbook?brand=${encodeURIComponent(item.brand)}`} className={item.brand === selected ? "tag tag-ok" : "tag"}>
+              <Link key={item.brand} href={`/miner/playbook?brand=${encodeURIComponent(item.brand)}&mode=${mode}`} className={item.brand === selected ? "tag tag-ok" : "tag"}>
                 {item.brand} · {item.adCount}
               </Link>
             ))}

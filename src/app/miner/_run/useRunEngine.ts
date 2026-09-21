@@ -28,7 +28,7 @@ export type RunEngine = {
   dismiss(): void;
 };
 
-export function useRunEngine(onCorpusChanged: () => void): RunEngine {
+export function useRunEngine(onCorpusChanged: () => void, mode: "speech_only" | "full_video" = "full_video"): RunEngine {
   const [run, setRun] = useState<PipelineRun | null>(null);
   const [stopping, setStopping] = useState(false);
   const stopRef = useRef(false);
@@ -67,7 +67,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
   /** Runs one per-ad stage over its queue on the stage's lanes. */
   const runAdStage = useCallback(async (stage: AdStageKey, brand: string, options: { limit?: number | null; force?: boolean; retryReview?: boolean; skipGate?: boolean }) => {
     const def = stageDef(stage);
-    const items = await fetchQueue({ stage, brand, limit: options.limit ?? null, force: options.force, retryReview: options.retryReview });
+    const items = await fetchQueue({ mode, stage, brand, limit: options.limit ?? null, force: options.force, retryReview: options.retryReview });
     if (!items.length) {
       // Nothing waiting is success, not failure — this is what makes Run a resume.
       patchStage(stage, { status: "skipped", note: "Nothing to do", finishedAt: Date.now() });
@@ -86,9 +86,9 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
         const item = items[cursor++]!;
         patchRow(item.id, { status: "running" });
         try {
-          const result = await runStep({ stage, adId: item.id, force: options.force, retryReview: options.retryReview, skipGate: options.skipGate });
+          const result = await runStep({ mode, stage, adId: item.id, force: options.force, retryReview: options.retryReview, skipGate: options.skipGate });
           costUsd += result.costUsd ?? 0;
-          if (result.outcome === "failed") failed += 1;
+          if ((result.outcome === "failed" || (stage === "transcribe" && ["queued", "processing"].includes(result.outcome)))) failed += 1;
           if (result.outcome === "quarantined") review += 1;
           patchRow(item.id, { status: result.outcome, detail: result.detail, costUsd: result.costUsd });
           setRun((current) => {
@@ -96,12 +96,13 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
             const progress = current.stages[stage] ?? blankProgress(stage);
             return {
               ...current,
+              creditsUsed: current.creditsUsed + (result.creditsUsed ?? 0),
               stages: {
                 ...current.stages,
                 [stage]: {
                   ...progress,
                   settled: progress.settled + 1,
-                  failed: progress.failed + (result.outcome === "failed" ? 1 : 0),
+                  failed: progress.failed + ((result.outcome === "failed" || (stage === "transcribe" && ["queued", "processing"].includes(result.outcome))) ? 1 : 0),
                   review: progress.review + (result.outcome === "quarantined" ? 1 : 0),
                   costUsd: progress.costUsd + (result.costUsd ?? 0),
                 },
@@ -124,7 +125,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
     await Promise.all(Array.from({ length: Math.min(def.lanes ?? 2, items.length) }, lane));
     patchStage(stage, { status: stopRef.current ? "stopped" : failed || review ? "failed" : "done", finishedAt: Date.now() });
     return { items, costUsd };
-  }, [patchRow, patchStage]);
+  }, [patchRow, patchStage, mode]);
 
   /** Poll Teardown until every submitted ad is finished, or Stop is pressed. */
   const watchTeardowns = useCallback(async (adIds: string[]) => {
@@ -150,7 +151,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
     runningRef.current = true;
     stopRef.current = false;
     setStopping(false);
-    const order: StageKey[] = options.includeCollect ? [...PIPELINE_PLAN] : PIPELINE_PLAN.filter((key) => key !== "ingest");
+    const order: StageKey[] = PIPELINE_PLAN.filter((key) => (options.includeCollect || key !== "ingest") && (mode !== "speech_only" || key !== "media"));
     setRun({
       brand: options.brand,
       collected: options.includeCollect,
@@ -171,7 +172,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
 
         if (isBatchStage(stage)) {
           patchStage(stage, { status: "running", startedAt: Date.now() });
-          const batch = await runBatchStage(stage, { brand: options.brand, target: options.target });
+          const batch = await runBatchStage(stage, { mode, brand: options.brand, target: options.target });
           patchStage(stage, { status: batch.incomplete ? "failed" : "done", note: batch.title, finishedAt: Date.now() });
           setRun((current) => current && ({ ...current, notes: [...current.notes, `${batch.title}`, ...batch.lines] }));
           // The corpus and the brand rail change the moment ads are collected.
@@ -200,7 +201,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
       setStopping(false);
       onCorpusChanged();
     }
-  }, [onCorpusChanged, patchStage, runAdStage]);
+  }, [onCorpusChanged, patchStage, runAdStage, mode]);
 
   /** Advanced mode: run exactly one stage, the way the page did before. */
   const runSingleStage = useCallback(async (stage: StageKey, brand: string, options: StageOptions) => {
@@ -223,7 +224,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
     try {
       if (isBatchStage(stage)) {
         patchStage(stage, { status: "running", startedAt: Date.now() });
-        const batch = await runBatchStage(stage, { brand, target: options.target });
+        const batch = await runBatchStage(stage, { mode, brand, target: options.target });
         patchStage(stage, { status: batch.incomplete ? "failed" : "done", note: batch.title, finishedAt: Date.now() });
         setRun((current) => current && ({ ...current, notes: [batch.title, ...batch.lines] }));
       } else {
@@ -240,7 +241,7 @@ export function useRunEngine(onCorpusChanged: () => void): RunEngine {
       setStopping(false);
       onCorpusChanged();
     }
-  }, [onCorpusChanged, patchStage, runAdStage, watchTeardowns]);
+  }, [onCorpusChanged, patchStage, runAdStage, watchTeardowns, mode]);
 
   /** Teardowns submitted earlier are still running: pick them back up on load. */
   const watchPendingTeardowns = useCallback(async (brand: string, items: QueueItem[]) => {

@@ -67,7 +67,8 @@ export function StageStepper({ snapshot, brand, run, canRun, busy, advanced, opt
       </div>
 
       <ol className="divide-y divide-ink-100">
-        {PIPELINE_STAGES.map((def, index) => {
+        {PIPELINE_STAGES.filter((def) => snapshot.researchMode !== "speech_only" || def.key !== "media").map((original, index) => {
+          const def = snapshot.researchMode === "speech_only" && original.key === "transcribe" ? { ...original, title: "Import spoken copy", blurb: "Reuse BrandSearch transcripts and cached analysis. Visuals and on-screen text remain unassessed.", cost: "Cached data free; new transcripts share a 10-credit daily cap" } : original;
           const state = stageState(def.key, snapshot, brand, run);
           const stats = snapshot.stages[def.key];
           const opts = options[def.key];

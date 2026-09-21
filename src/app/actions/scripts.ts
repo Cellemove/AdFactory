@@ -1,5 +1,6 @@
 "use server";
 
+import { getResearchSnapshot } from "@/lib/brandsearch-research.server";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireEditor, requireStrategist } from "@/lib/authorization";
@@ -102,6 +103,7 @@ export async function generateScriptProjectDraft(input: {
     avatar,
     framework,
     teardown,
+    research: project.researchSnapshotId ? await getResearchSnapshot(project.researchSnapshotId) : null,
     pipelineRunId: pipelineSource?.sourceId ?? null,
     preserveLocked: true,
   });

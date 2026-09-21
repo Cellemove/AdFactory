@@ -10,7 +10,7 @@ import { fail, parseMinerArgs } from "./lib/miner-cli";
 async function main() {
   const args = parseMinerArgs();
   if (!args.brand) throw new Error("Usage: npm run miner:playbook -- --brand <competitor domain>");
-  const result = await buildAndSavePlaybook(args.brand);
+  const result = await buildAndSavePlaybook(args.brand, { mode: args.mode });
   if (!result.playbook) {
     console.log(`No extracted ads for ${args.brand} yet - run the pipeline first.`);
     return;

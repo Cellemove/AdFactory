@@ -1,3 +1,4 @@
+import { ResearchSnapshotSchema } from "@/lib/brandsearch-research";
 import { z } from "zod";
 import type { ReferenceFormatBeat } from "@/lib/cellumove/reference-formats";
 import { TeardownBriefSchema, type TeardownBrief, type TeardownInsight } from "@/lib/cellumove/teardown-brief";
@@ -65,6 +66,7 @@ const ScriptDocumentFields = {
   fiveD: ScriptFiveDSchema.optional(),
   sourceRefs: z.array(z.object({ type: z.string(), id: z.string().nullable(), title: z.string(), url: z.string().nullable() })),
   teardownBrief: TeardownBriefSchema.nullable().optional(),
+  competitorResearch: ResearchSnapshotSchema.nullable().optional(),
   // text = the spoken VO. Directed hooks (v5+) also carry the 0-5s visual
   // blocking and the overlay; optional so pre-existing documents still parse.
   hookAlternatives: z.array(z.object({

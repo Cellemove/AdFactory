@@ -1,4 +1,5 @@
 import "server-only";
+import { modeVersion } from "@/lib/brandsearch-research";
 
 import { DEFAULT_MODEL } from "@/lib/llm";
 import type { AdBeatRow, AdMediaRow, CompetitorAdRow, CorpusExtractRunRow, CorpusTranscriptRunRow, Json } from "@/lib/database.types";
@@ -58,8 +59,11 @@ export async function extractAdBeats(
 ): Promise<ExtractResult> {
   if (transcriptRun.status !== "complete") throw new Error(`Transcript run ${transcriptRun.id} is ${transcriptRun.status}, not complete.`);
   const taxonomyVersion = options.taxonomyVersion ?? CORPUS_TAXONOMY_VERSION;
-  const withVideo = Boolean(options.withVideo);
-  const baseKey = runKey([ad.id, transcriptRun.id, taxonomyVersion, CORPUS_EXTRACT_PROMPT_VERSION, CORPUS_ENGINE_VERSION, EXTRACT_MODEL, withVideo ? "with-video" : "text-only"]);
+  const speechOnly = transcriptRun.source === "brandsearch";
+  const researchMode = speechOnly ? "speech_only" : "full_video";
+  const promptVersion = modeVersion(CORPUS_EXTRACT_PROMPT_VERSION, researchMode);
+  const withVideo = !speechOnly && Boolean(options.withVideo);
+  const baseKey = runKey([ad.id, transcriptRun.id, taxonomyVersion, promptVersion, CORPUS_ENGINE_VERSION, EXTRACT_MODEL, withVideo ? "with-video" : "text-only"]);
 
   if (!options.force) {
     const existing = await supabase.from("CorpusExtractRun").select("*").eq("runKey", baseKey).maybeSingle();
@@ -93,10 +97,10 @@ export async function extractAdBeats(
     competitorAdId: ad.id,
     transcriptRunId: transcriptRun.id,
     taxonomyVersion,
-    extractorPromptVersion: CORPUS_EXTRACT_PROMPT_VERSION,
+    extractorPromptVersion: promptVersion,
     engineVersion: CORPUS_ENGINE_VERSION,
     model: EXTRACT_MODEL,
-    withVideo,
+    withVideo, researchMode,
     status: "running",
     attempts: 0,
     gateReport: null,
@@ -136,7 +140,7 @@ export async function extractAdBeats(
         durationSec: transcriptEnd,
         language: transcriptRun.language,
         previousError,
-        withVideo,
+        withVideo, speechOnly,
       });
       const response = await generateStructured({
         model: EXTRACT_MODEL,
@@ -149,7 +153,7 @@ export async function extractAdBeats(
       usage = addUsage(usage, response.usage);
       try {
         lastRaw = parseJsonObject(response.text);
-        validated = validateExtractedBeats({ raw: lastRaw, allowedCodes: taxonomy.allowedCodes, segments, transcriptEnd });
+        validated = validateExtractedBeats({ raw: lastRaw, allowedCodes: taxonomy.allowedCodes, segments, transcriptEnd, speechOnly });
       } catch (error) {
         if (error instanceof ExtractValidationError) {
           lastValidation = error;
@@ -192,7 +196,7 @@ export async function extractAdBeats(
       channel: beat.channel,
       matchScore: beat.matchScore,
       matchedSegmentId: beat.matchedSegmentId,
-      extractorPromptVersion: CORPUS_EXTRACT_PROMPT_VERSION,
+      extractorPromptVersion: promptVersion,
       model: EXTRACT_MODEL,
       createdAt: startedAt,
     }));
@@ -201,6 +205,7 @@ export async function extractAdBeats(
 
     const completed = await supabase.from("CorpusExtractRun").update({
       status: "complete",
+      conceptTag: validated.concept,
       attempts,
       gateReport: asJson(validated.gate),
       rawResponse: asJson(lastRaw),
@@ -213,7 +218,7 @@ export async function extractAdBeats(
 
     // Format and concept tags feed the format/angle cohorts in MINE. A manual
     // tag always wins over the model's.
-    if ((validated.format || validated.concept) && (!ad.tagSource || ad.tagSource === "llm")) {
+    if (!speechOnly && (validated.format || validated.concept) && (!ad.tagSource || ad.tagSource === "llm")) {
       await supabase.from("CompetitorAd").update({
         ...(validated.format ? { formatTag: validated.format } : {}),
         ...(validated.concept ? { angleTag: validated.concept } : {}),

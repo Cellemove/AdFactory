@@ -1,3 +1,4 @@
+import { listResearchSnapshots } from "@/lib/brandsearch-research.server";
 import type { Metadata } from "next";
 import { requireStrategist } from "@/lib/authorization";
 import { SCRIPT_FORMATS } from "@/lib/cellumove/script-studio";
@@ -18,7 +19,7 @@ export const dynamic = "force-dynamic";
 // video means downloading it and having Pro watch the whole thing.
 export const maxDuration = 300;
 
-export default async function NewScriptPage({ searchParams }: { searchParams: Promise<{ spySweepId?: string; spyAdIndex?: string }> }) {
+export default async function NewScriptPage({ searchParams }: { searchParams: Promise<{ spySweepId?: string; spyAdIndex?: string; researchSnapshotId?: string }> }) {
   const query = await searchParams;
   const currentUser = await requireStrategist();
   const [products, angles, avatars, frameworks, users, pipelineRunsRaw, marketsResult, offersResult, playbookResult] = await Promise.all([
@@ -73,6 +74,7 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
     }
   });
 
+  const researchSnapshots = await listResearchSnapshots();
   let teardowns: Awaited<ReturnType<typeof listTeardownDeconstructions>> = [];
   const teardownConfigured = isTeardownConfigured();
   let teardownWarning: string | null = getTeardownConfigurationIssue();
@@ -132,6 +134,8 @@ export default async function NewScriptPage({ searchParams }: { searchParams: Pr
           id: item.id,
           name: `${item.ad_name || item.original_filename} · ${item.platform || item.ad_kind} · ${item.field_count} insights`,
         }))}
+        researchSnapshots={researchSnapshots.map((r) => ({ id: r.id, name: `${r.brand} · speech ${r.transcript.status} · visuals unassessed` }))}
+        initialResearchId={researchSnapshots.some((r) => r.id === query.researchSnapshotId) ? query.researchSnapshotId : undefined}
         formats={[...SCRIPT_FORMATS]}
         markets={markets}
         offers={offers}

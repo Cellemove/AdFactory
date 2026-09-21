@@ -20,12 +20,12 @@ async function main() {
     for (const row of result.data ?? []) {
       if (!latest.has(row.competitorAdId)) latest.set(row.competitorAdId, {
         status: row.status,
-        reason: "errorSummary" in row ? row.errorSummary : "statusReason" in row ? row.statusReason : null,
+        reason: "errorSummary" in row && typeof row.errorSummary === "string" ? row.errorSummary : "statusReason" in row && typeof row.statusReason === "string" ? row.statusReason : null,
       });
     }
     console.log(JSON.stringify({ table, statuses: counts([...latest.values()].map(row => row.status)), errors: counts([...latest.values()].filter(row => row.reason).map(row => row.reason)) }, null, 2));
     if (table !== "AdMedia") {
-      const failed = result.data?.find(row => "errorSummary" in row && row.errorSummary?.includes("duplicate key"));
+      const failed = result.data?.find(row => "errorSummary" in row && typeof row.errorSummary === "string" && row.errorSummary.includes("duplicate key"));
       if (failed) {
         const child = table === "CorpusTranscriptRun" ? "CorpusTranscriptSegment" : "AdBeat";
         const saved = await supabase.from(child).select("*").eq("runId", failed.id);

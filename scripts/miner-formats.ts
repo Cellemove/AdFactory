@@ -25,7 +25,9 @@ async function pages<T>(fetchPage: (from: number, to: number) => PromiseLike<{ d
 
 async function main() {
   const write = process.argv.includes("--write");
-  const runs = await pages<CorpusExtractRunRow>((from, to) => supabase.from("CorpusExtractRun").select("*").eq("taxonomyVersion", CORPUS_TAXONOMY_VERSION).eq("status", "complete").order("createdAt", { ascending: false }).range(from, to));
+  const runs = await pages<CorpusExtractRunRow>((from, to) => supabase.from("CorpusExtractRun").select("*").eq("taxonomyVersion", CORPUS_TAXONOMY_VERSION).eq("researchMode", "full_video").eq("status", "complete").order("createdAt", { ascending: false }).range(from, to));
+  // ponytail: full-video runs only, so a newer speech-only run never replaces an ad's
+  // full breakdown here. Derive a separate speech set when that corpus reaches cohort size.
   const latest = new Map<string, string>();
   for (const run of runs) if (!latest.has(run.competitorAdId)) latest.set(run.competitorAdId, run.id);
   const runIds = new Set(latest.values());

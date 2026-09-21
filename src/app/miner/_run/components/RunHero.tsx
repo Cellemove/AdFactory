@@ -31,8 +31,8 @@ export function RunHero({ brand, snapshot, run, canRun, busy, stopping, tabHidde
   onDismiss: () => void;
 }) {
   const active = run && run.phase === "running";
-  const estimate = estimateRun({ ads: brand.inCorpus || snapshot.defaultTarget, includeCollect: brand.inCorpus === 0 });
-  const undownloaded = brand.inCorpus - brand.downloaded;
+  const estimate = estimateRun({ ads: brand.inCorpus || snapshot.defaultTarget, includeCollect: brand.inCorpus === 0, speechOnly: snapshot.researchMode === "speech_only" });
+  const undownloaded = snapshot.researchMode === "speech_only" ? 0 : brand.inCorpus - brand.downloaded;
 
   return (
     <section className="card overflow-hidden p-0">

@@ -29,14 +29,13 @@ export type RunEstimate = {
   minutesHigh: number;
 };
 
-export function estimateRun(input: { ads: number; includeCollect: boolean }): RunEstimate {
+export function estimateRun(input: { ads: number; includeCollect: boolean; speechOnly?: boolean }): RunEstimate {
   const ads = Math.max(0, Math.round(input.ads));
   const usdPerAd = {
-    low: TRANSCRIBE_USD_PER_AD.low + EXTRACT_USD_PER_AD.low,
-    high: TRANSCRIBE_USD_PER_AD.high + EXTRACT_USD_PER_AD.high,
+    low: (input.speechOnly ? 0 : TRANSCRIBE_USD_PER_AD.low) + EXTRACT_USD_PER_AD.low,
+    high: (input.speechOnly ? 0 : TRANSCRIBE_USD_PER_AD.high) + EXTRACT_USD_PER_AD.high,
   };
-  const secondsPerAd = SECONDS_PER_AD.media / LANES.media
-    + SECONDS_PER_AD.transcribe / LANES.transcribe
+  const secondsPerAd = (input.speechOnly ? 0 : SECONDS_PER_AD.media / LANES.media + SECONDS_PER_AD.transcribe / LANES.transcribe)
     + SECONDS_PER_AD.extract / LANES.extract;
   const minutes = (ads * secondsPerAd) / 60;
   return {

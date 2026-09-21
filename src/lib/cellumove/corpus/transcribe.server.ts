@@ -1,4 +1,6 @@
 import "server-only";
+import { importAdResearch } from "@/lib/brandsearch-research.server";
+import type { ResearchSnapshot } from "@/lib/brandsearch-research";
 
 import { DEFAULT_MODEL } from "@/lib/llm";
 import type { AdMediaRow, CompetitorAdRow, CorpusTranscriptRunRow, CorpusTranscriptSegmentRow, Json } from "@/lib/database.types";
@@ -42,9 +44,9 @@ export async function loadTranscriptSegments(runId: string): Promise<CorpusTrans
 }
 
 /** Newest complete transcript run for an ad, if any. */
-export async function latestCompleteTranscriptRun(competitorAdId: string): Promise<CorpusTranscriptRunRow | null> {
+export async function latestCompleteTranscriptRun(competitorAdId: string, mode: "speech_only" | "full_video" = "full_video"): Promise<CorpusTranscriptRunRow | null> {
   const result = await supabase.from("CorpusTranscriptRun").select("*")
-    .eq("competitorAdId", competitorAdId).eq("status", "complete")
+    .eq("competitorAdId", competitorAdId).eq("status", "complete").eq("source", mode === "speech_only" ? "brandsearch" : "video_model")
     .order("createdAt", { ascending: false }).limit(1).maybeSingle();
   if (result.error) throw new Error(result.error.message);
   return (result.data as CorpusTranscriptRunRow | null) ?? null;
@@ -86,6 +88,7 @@ export async function transcribeAd(ad: CompetitorAdRow, media: AdMediaRow, optio
     competitorAdId: ad.id,
     mediaId: media.id,
     mediaSha256: media.sha256!,
+    source: "video_model", sourceHash: media.sha256!, coverage: { speech: "assessed", onScreenText: "assessed", visuals: "assessed" },
     model: TRANSCRIBE_MODEL,
     promptVersion: CORPUS_TRANSCRIBE_PROMPT_VERSION,
     status: "running",
@@ -170,6 +173,37 @@ export async function transcribeAd(ad: CompetitorAdRow, media: AdMediaRow, optio
       errorSummary: (error instanceof Error ? error.message : String(error)).slice(0, 2000),
       completedAt: new Date().toISOString(),
     }).eq("id", runId).eq("status", "running").eq("startedAt", startedAt);
+    throw error;
+  }
+}
+
+/** Provider imports share the segment/evidence pipeline, without a fabricated media hash. */
+export async function importResearchTranscript(ad: CompetitorAdRow, snapshot?: ResearchSnapshot): Promise<TranscribeResult | null> {
+  const research = snapshot ?? (await importAdResearch(ad)).snapshot;
+  if (!research || !["available", "empty"].includes(research.transcript.status)) return null;
+  const sourceHash = runKey([JSON.stringify(research.transcript)]);
+  const key = runKey([ad.id, "brandsearch-speech-v1", sourceHash]);
+  const id = transcriptRunId(key);
+  const current = await loadTranscriptRun(id);
+  if (current?.status === "complete") return { run: current, segments: await loadTranscriptSegments(id), reused: true };
+  const startedAt = new Date().toISOString();
+  const claimed = await claimModelRun("CorpusTranscriptRun", id, startedAt, () => supabase.from("CorpusTranscriptRun").insert({
+    id, runKey: key, competitorAdId: ad.id, mediaId: null, mediaSha256: null, source: "brandsearch", sourceHash,
+    researchSnapshotId: research.id, coverage: asJson(research.coverage), model: "brandsearch", promptVersion: "brandsearch-speech-v1",
+    status: "running", segmentCount: 0, startedAt,
+  }));
+  if (!claimed) return { run: (await loadTranscriptRun(id))!, segments: await loadTranscriptSegments(id), reused: true };
+  try {
+    const rows = research.transcript.segments.map((s, i) => ({ id: segmentId(id, "vo", i), runId: id, competitorAdId: ad.id,
+      channel: "vo", orderIndex: i, tStart: s.start, tEnd: s.end, text: s.text, confidence: s.confidence, createdAt: startedAt }));
+    if (rows.length) { const write = await supabase.from("CorpusTranscriptSegment").upsert(rows, { onConflict: "id" }); if (write.error) throw new Error(write.error.message); }
+    const write = await supabase.from("CorpusTranscriptRun").update({ status: "complete", segmentCount: rows.length,
+      language: research.transcript.language, durationSec: research.transcript.duration, completedAt: new Date().toISOString(), errorSummary: null,
+    }).eq("id", id).select("*").single();
+    if (write.error) throw new Error(write.error.message);
+    return { run: write.data as CorpusTranscriptRunRow, segments: rows, reused: false };
+  } catch (error) {
+    await supabase.from("CorpusTranscriptRun").update({ status: "failed", errorSummary: String(error), completedAt: new Date().toISOString() }).eq("id", id).eq("startedAt", startedAt);
     throw error;
   }
 }
