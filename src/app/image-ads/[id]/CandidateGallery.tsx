@@ -4,6 +4,8 @@ import { useRef, useState } from "react";
 import { brandImageAdCandidate, generateImageAdCandidate, planImageAdConcepts } from "@/app/actions/image-ads";
 import {
   candidateCounts,
+  canApplyImageAdLogo,
+  IMAGE_AD_LOGO_LAYOUT_VERSION,
   duplicateHeadlineSlots,
   type ImageAdCandidate,
 } from "@/lib/cellumove/image-ad-concepts";
@@ -56,7 +58,8 @@ export function CandidateGallery({
   const flagged = candidates.filter((c) => c.claimStatus === "flagged").length;
   const todoSlots = candidates.filter((c) => c.status !== "ready").map((c) => c.slot);
   const failedSlots = candidates.filter((c) => c.status === "failed").map((c) => c.slot);
-  const unbrandedSlots = candidates.filter((c) => c.status === "ready" && c.imageUrl && !c.logoAppliedAt).map((c) => c.slot);
+  const unbrandedSlots = candidates.filter(canApplyImageAdLogo).map((c) => c.slot);
+  const needsLogoRegeneration = candidates.some((c) => c.status === "ready" && c.imageUrl && c.logoAppliedAt && c.logoLayoutVersion !== IMAGE_AD_LOGO_LAYOUT_VERSION && !c.unbrandedImageUrl);
   const busy = planning || running || branding;
   const open = openSlot === null ? null : candidates.find((c) => c.slot === openSlot) ?? null;
 
@@ -247,7 +250,7 @@ export function CandidateGallery({
         <div className="flex flex-wrap items-center gap-2">
           {(unbrandedSlots.length > 0 || branding) && (
             <button type="button" className="btn text-xs" onClick={addLogos} disabled={busy}>
-              {branding ? "Adding logos..." : "Add logo to existing images"}
+              {branding ? "Updating logos..." : "Add or fix logos"}
             </button>
           )}
           {counts.ready === 0 && !running && (
@@ -277,6 +280,13 @@ export function CandidateGallery({
       {!running && !allReady && (
         <p className="mt-2 text-right text-[11px] text-ink-400">
           ≈ ${(todoSlots.length * costPerImage).toFixed(2)} · about {formatDuration(todoSlots.length * secondsPerImage)} · keep this tab open while it runs
+        </p>
+      )}
+
+      {needsLogoRegeneration && (
+        <p className="mt-2 text-xs text-ink-500">
+          Some older images have a logo embedded over the artwork and no saved clean original.
+          If text is covered, open the image and regenerate it to use the separate logo header. Generation charges apply.
         </p>
       )}
 

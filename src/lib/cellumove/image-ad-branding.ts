@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import sharp, { type OverlayOptions } from "sharp";
+import sharp from "sharp";
 import type { FinalizedImage } from "../image-compress";
 
 type BrandLogos = { dark: Buffer; white: Buffer };
@@ -27,17 +27,12 @@ export function loadCellumoveLogos(): Promise<BrandLogos> {
 }
 
 export function imageAdBrandingPrompt(format: string): string {
-  const top = format === "9:16" ? 14 : 4;
-  return `BRAND LOGO SPACE: Keep the top-right area from 68% to 98% of image width and ${top - 2}% to ${top + 6}% of image height clear of text, faces, and product details, with a quiet background. The exact Cellumove logo will be added there after generation. Do not draw a logo or write the brand name yourself.`;
+  return `BRANDING: Compose the complete ${format} ad with all headlines, CTA, faces and product details inside the artwork. Do not reserve an empty logo area. The exact Cellumove logo will be added in a separate header outside this artwork after generation. Do not draw a logo or write the brand name yourself.`;
 }
 
-function luminance(value: number): number {
-  const channel = value / 255;
-  return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
-}
-
-// This is local compositing, not an AI edit: keep the original lettering intact.
-// Fit first so the final crop cannot cut into the logo. Never upscale the ad.
+// A prompt cannot guarantee empty space. Put the complete artwork and the logo
+// in disjoint rectangles instead: no OCR guess, crop, or overlay over ad pixels.
+// Keep export dimensions and artwork proportions; never upscale the artwork.
 export async function applyCellumoveLogo(
   source: Buffer,
   format: string,
@@ -47,42 +42,22 @@ export async function applyCellumoveLogo(
   const brandLogos = logos ?? await loadCellumoveLogos();
   const metadata = await sharp(source).metadata();
   if (!metadata.width || !metadata.height) throw new Error("Cannot brand an image without dimensions.");
-  let base = sharp(source);
-  if (target && metadata.width >= target.width && metadata.height >= target.height) {
-    base = base.resize(target.width, target.height, { fit: "cover", position: "centre" });
-  }
-  const fitted = await base.png().toBuffer({ resolveWithObject: true });
-  const { width, height } = fitted.info;
+  const useTarget = target && metadata.width >= target.width && metadata.height >= target.height;
+  const width = useTarget ? target.width : metadata.width;
+  const height = useTarget ? target.height : metadata.height;
+  const headerHeight = Math.ceil(height * (format === "9:16" ? 0.18 : 0.08));
+  const artwork = await sharp(source)
+    .resize(width, height - headerHeight, { fit: "inside", withoutEnlargement: true })
+    .png().toBuffer({ resolveWithObject: true });
   const logoWidth = Math.max(1, Math.round(width * 0.26));
-  const [dark, white] = await Promise.all([brandLogos.dark, brandLogos.white].map((bytes) =>
-    sharp(bytes).resize({ width: logoWidth }).png().toBuffer({ resolveWithObject: true })));
+  const logo = await sharp(brandLogos.dark).resize({ width: logoWidth }).png().toBuffer({ resolveWithObject: true });
   const left = width - Math.round(width * 0.04) - logoWidth;
-  const top = Math.round(height * (format === "9:16" ? 0.14 : 0.04));
-  const region = await sharp(fitted.data)
-    .extract({ left, top, width: logoWidth, height: Math.max(dark!.info.height, white!.info.height) })
-    .flatten({ background: "white" }).removeAlpha().toColourspace("srgb").raw().toBuffer();
-  const lightness: number[] = [];
-  for (let i = 0; i < region.length; i += 3) {
-    lightness.push(0.2126 * luminance(region[i]!) + 0.7152 * luminance(region[i + 1]!) + 0.0722 * luminance(region[i + 2]!));
-  }
-  lightness.sort((a, b) => a - b);
-  // Compare contrast against the extremes, not just the average of a busy photo.
-  const darkContrast = (lightness[Math.floor(lightness.length * 0.1)]! + 0.05) / 0.05;
-  const whiteContrast = 1.05 / (lightness[Math.floor(lightness.length * 0.9)]! + 0.05);
-  const needsBacking = Math.max(darkContrast, whiteContrast) < 3;
-  const logo = needsBacking || darkContrast >= whiteContrast ? dark! : white!;
-  const overlays: OverlayOptions[] = [];
-  if (needsBacking) {
-    const pad = Math.max(1, Math.round(width * 0.012));
-    const plateWidth = logoWidth + pad * 2;
-    const plateHeight = logo.info.height + pad * 2;
-    overlays.push({
-      input: Buffer.from(`<svg width="${plateWidth}" height="${plateHeight}"><rect width="100%" height="100%" rx="${pad}" fill="white" fill-opacity="0.94"/></svg>`),
-      left: left - pad,
-      top: top - pad,
-    });
-  }
-  overlays.push({ input: logo.data, left, top });
-  const bytes = await sharp(fitted.data).composite(overlays).png().toBuffer();
+  const top = format === "9:16" ? Math.round(height * 0.14) : Math.floor((headerHeight - logo.info.height) / 2);
+  if (top < 0 || top + logo.info.height > headerHeight) throw new Error("Image is too small for a separate logo header.");
+  const bytes = await sharp({ create: { width, height, channels: 3, background: "white" } })
+    .composite([
+      { input: artwork.data, left: Math.floor((width - artwork.info.width) / 2), top: headerHeight + Math.floor((height - headerHeight - artwork.info.height) / 2) },
+      { input: logo.data, left, top },
+    ]).png().toBuffer();
   return { bytes, width, height };
 }

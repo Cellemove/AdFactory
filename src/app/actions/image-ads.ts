@@ -27,6 +27,7 @@ import {
 import {
   planDirectionSizes,
   planSourceMix,
+  IMAGE_AD_LOGO_LAYOUT_VERSION,
   type ImageAdCandidate,
   type ImageAdConcept,
 } from "@/lib/cellumove/image-ad-concepts";
@@ -771,6 +772,14 @@ async function generateImageAdCandidateImpl(
     }
     if (!rendered) throw new Error(lastProblem || "The image model returned no image.");
 
+    // Preserve the clean render for future layout repairs without another AI call.
+    const clean = await finalizeAdImage(rendered.bytes, null);
+    const original = await saveImage({
+      prefix: "image-ad-candidates",
+      filename: `${batchId}-${String(slot).padStart(2, "0")}-original-${randomUUID()}.${clean ? "png" : rendered.format === "jpeg" ? "jpg" : rendered.format}`,
+      bytes: clean?.bytes ?? rendered.bytes,
+      contentType: clean ? "image/png" : `image/${rendered.format}`,
+    });
     // Brand the fitted image before compression. Even a compression fallback
     // must keep the real logo in the saved/downloaded pixels.
     const branded = await applyCellumoveLogo(rendered.bytes, doc.format, imageAdExportSize(doc.format), logos);
@@ -793,7 +802,8 @@ async function generateImageAdCandidateImpl(
       error: null,
       generatedAt: new Date().toISOString(),
       logoAppliedAt: new Date().toISOString(),
-      unbrandedImageUrl: undefined,
+      logoLayoutVersion: IMAGE_AD_LOGO_LAYOUT_VERSION,
+      unbrandedImageUrl: original.url,
     }));
     return { candidate };
   } catch (reason) {
@@ -867,8 +877,12 @@ export async function brandImageAdCandidate(
     const doc = await loadBatchDoc(batchId);
     const existing = doc.candidates.find((candidate) => candidate.slot === slot);
     if (!existing?.imageUrl || existing.status !== "ready") throw new Error("Generate this image before adding the logo.");
-    if (existing.logoAppliedAt) return { candidate: existing };
-    const originalUrl = existing.imageUrl;
+    if (existing.logoLayoutVersion === IMAGE_AD_LOGO_LAYOUT_VERSION) return { candidate: existing };
+    if (existing.logoAppliedAt && !existing.unbrandedImageUrl) {
+      throw new Error("This older image has no saved clean original. Regenerate it to restore covered text and use the new logo layout.");
+    }
+    const displayedUrl = existing.imageUrl;
+    const originalUrl = existing.unbrandedImageUrl ?? existing.imageUrl;
     const source = await readStoredImage(originalUrl);
     const branded = await applyCellumoveLogo(source, doc.format, imageAdExportSize(doc.format));
     const output = await finalizeAdImage(branded.bytes, null) ?? branded;
@@ -879,7 +893,7 @@ export async function brandImageAdCandidate(
       contentType: "image/png",
     });
     const candidate = await patchCandidate(batchId, slot, (current) => {
-      if (current.imageUrl !== originalUrl || current.status !== "ready" || current.logoAppliedAt) {
+      if (current.imageUrl !== displayedUrl || current.status !== "ready" || current.logoLayoutVersion === IMAGE_AD_LOGO_LAYOUT_VERSION) {
         throw new Error("This image changed while the logo was being added. Refresh the batch to see the latest version.");
       }
       return {
@@ -889,6 +903,7 @@ export async function brandImageAdCandidate(
         width: output.width,
         height: output.height,
         logoAppliedAt: new Date().toISOString(),
+        logoLayoutVersion: IMAGE_AD_LOGO_LAYOUT_VERSION,
         error: null,
       };
     });
