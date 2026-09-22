@@ -14,7 +14,7 @@ Architecture rule: **structure comes from the data, the model only fills fixed s
 
 | Command | Stage | Notes |
 |---|---|---|
-| `npm run miner:winners` | INGEST (winners) | **The corpus.** ~100 winners spread evenly across every Spectre competitor: videos still running 21+ days after launch, highest EU spend first. Short brands are topped up from brands with more; the pick becomes the corpus (`corpusIncluded`, `winnerPick`) and other ads are kept but excluded. ~1 BrandSearch credit per ad. `--limit N`, `--min-days N`, `--dry-run` (still spends credits), `--no-media`. |
+| `npm run miner:winners` | INGEST (winners) | **The corpus.** ~100 winners spread evenly across every Spectre competitor: videos still running 21+ days after launch, newest launch first (so a re-run brings in new survivors and drops the oldest, keeping the count). Short brands are topped up from brands with more; the pick becomes the corpus (`corpusIncluded`, `winnerPick`) and other ads are kept but excluded. ~1 BrandSearch credit per ad. `--limit N`, `--min-days N`, `--dry-run` (still spends credits), `--no-media`. |
 | `npm run miner:ingest` | INGEST | Spectre competitors, 25 ads/brand, ended ads included. **1 BrandSearch credit per row.** Chains the media download because links die after 3 days. `--dry-run`, `--per-brand N`, `--status active`, `--no-media`. |
 | `npm run miner:media` | MEDIA | Downloads what is not yet on disk. `--limit`, `--ad id`, `--brand name`, `--force`. |
 | `npm run miner:transcribe` | TRANSCRIBE | Gemini reads the video: `vo` + `ost` segments. Idempotent by (ad, media hash, prompt, model). |

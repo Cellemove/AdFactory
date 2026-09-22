@@ -90,19 +90,21 @@ export type BrandWinnersPage = BrandSearchImportResult & { total: number | null 
 
 /**
  * One page of a brand's surviving ads (videos only unless `videoOnly` is false): still running although launched
- * on or before `startedOnOrBefore`, highest EU spend first. Brands switch
+ * on or before `startedOnOrBefore`, highest EU spend first (or newest launch first with `sortBy: "start_date"`). Brands switch
  * losing creatives off within days, so an ad still live weeks later is the
  * closest public signal to BrandSearch's "Winning creative" badge (which the
  * API does not expose). Costs 1 credit per returned row.
  */
-export async function fetchBrandWinners(input: { domain: string; startedOnOrBefore: string; startedOnOrAfter?: string; page: number; pageSize: number; videoOnly?: boolean }): Promise<BrandWinnersPage> {
+export type WinnerSort = "eu_total_spend" | "start_date";
+
+export async function fetchBrandWinners(input: { domain: string; startedOnOrBefore: string; startedOnOrAfter?: string; page: number; pageSize: number; videoOnly?: boolean; sortBy?: WinnerSort }): Promise<BrandWinnersPage> {
   const { payload, headers } = await postJson("/v1/meta-ads/query", {
     brand_ids: [input.domain],
     status: "active",
     ...(input.videoOnly === false ? {} : { is_video: true }),
     ad_started_to: input.startedOnOrBefore,
     ...(input.startedOnOrAfter ? { ad_started_from: input.startedOnOrAfter } : {}),
-    sort_by: "eu_total_spend",
+    sort_by: input.sortBy ?? "eu_total_spend",
     sort_order: "desc",
     fields: META_FIELDS,
     page: input.page,

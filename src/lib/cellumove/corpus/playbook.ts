@@ -208,7 +208,7 @@ export function buildPlaybook(input: { brand: string; ads: PlaybookAd[]; taxonom
     adCount: ads.length,
     coverage: { analyzedAds: ads.length, totalAds },
     generatedAt: (options.now ?? new Date()).toISOString(),
-    selection: "Winning ads: still running 3+ weeks after launch, highest spend first",
+    selection: "Winning ads: still running 3+ weeks after launch, newest launch first",
     medianDurationSec: median(durations) == null ? null : round1(median(durations)!),
     spine: spineFrom(input.report, library, ads.length),
     hooks: library.filter((beat) => beat.layer === "H"),

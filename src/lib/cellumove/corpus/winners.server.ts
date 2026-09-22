@@ -6,7 +6,7 @@ import type { Json } from "@/lib/database.types";
 import { supabase } from "@/lib/db";
 import { toCompetitorAdRow, type CompetitorAdUpsertRow } from "./ingest";
 import {
-  balancedTrim, brandsToExtend, launchedWithin, pageSizeFor, resolveCompetitors, WINNER_DEFAULT_MIN_DAYS, WINNER_DEFAULT_TARGET, WINNER_RULE_VERSION,
+  balancedTrim, brandsToExtend, launchedWithin, launchRank, pageSizeFor, resolveCompetitors, WINNER_DEFAULT_MIN_DAYS, WINNER_DEFAULT_TARGET, WINNER_RULE_VERSION,
   winnerCutoff, winnerRuleLabel, type BrandProgress,
 } from "./winners";
 
@@ -63,10 +63,11 @@ export type WinnerPool = {
  * balance them. Writes nothing — the corpus (collectWinners) and the /spy feed
  * both build on this. `videoOnly: false` also takes image ads.
  */
-export async function fetchWinnerPool(input: { brand?: string | null; target?: number; minDays?: number; maxDays?: number; videoOnly?: boolean } = {}): Promise<WinnerPool> {
+export async function fetchWinnerPool(input: { brand?: string | null; target?: number; minDays?: number; maxDays?: number; videoOnly?: boolean; rank?: "spend" | "newest" } = {}): Promise<WinnerPool> {
   const target = Math.max(1, Math.min(500, input.target ?? WINNER_DEFAULT_TARGET));
   const minDays = Math.max(1, input.minDays ?? WINNER_DEFAULT_MIN_DAYS);
   const videoOnly = input.videoOnly ?? true;
+  const rankOf = input.rank === "newest" ? launchRank : spendOf;
   const tracked = await listSpectreCompetitors();
   if (!tracked.length) throw new Error("No competitors are tracked in BrandSearch Spectre yet.");
   const competitors = resolveCompetitors(tracked, input.brand);
@@ -88,7 +89,7 @@ export async function fetchWinnerPool(input: { brand?: string | null; target?: n
   const fetchNextPage = async (domain: string) => {
     const state = progress.get(domain)!;
     state.page += 1;
-    const page = await fetchBrandWinners({ domain, startedOnOrBefore: cutoff, page: state.page, pageSize: share, videoOnly,
+    const page = await fetchBrandWinners({ domain, startedOnOrBefore: cutoff, page: state.page, pageSize: share, videoOnly, sortBy: input.rank === "newest" ? "start_date" : "eu_total_spend",
       ...(input.maxDays != null ? { startedOnOrAfter: winnerCutoff(now, input.maxDays) } : {}),
     });
     creditsUsed += page.creditsUsed ?? page.ads.length;
@@ -120,8 +121,8 @@ export async function fetchWinnerPool(input: { brand?: string | null; target?: n
     await runAll(extend);
   }
 
-  for (const ads of pool.values()) ads.sort((a, b) => spendOf(b) - spendOf(a));
-  const trimmed = balancedTrim(pool, target, spendOf);
+  for (const ads of pool.values()) ads.sort((a, b) => rankOf(b) - rankOf(a) || spendOf(b) - spendOf(a));
+  const trimmed = balancedTrim(pool, target, rankOf);
   // Relabel as winners: the survival itself is the evidence.
   const picked = new Map([...trimmed].map(([domain, ads]) => [domain, ads.map((ad): NormalizedBrandSearchAd => {
     const days = typeof ad.metrics.totalActiveTimeSec === "number" ? Math.floor(ad.metrics.totalActiveTimeSec / 86_400) : null;
@@ -146,9 +147,12 @@ export async function fetchWinnerPool(input: { brand?: string | null; target?: n
   };
 }
 
-/** Pick ~100 of a brand's video winners and make them that brand's corpus. */
+/**
+ * Pick ~100 of a brand's newest video winners and make them that brand's corpus.
+ * Newest first, so re-running brings in what launched since and drops the oldest.
+ */
 export async function collectWinners(input: CollectWinnersInput = {}): Promise<CollectWinnersResult> {
-  const pool = await fetchWinnerPool({ brand: input.brand, target: input.target, minDays: input.minDays, videoOnly: true });
+  const pool = await fetchWinnerPool({ brand: input.brand, target: input.target, minDays: input.minDays, videoOnly: true, rank: "newest" });
   const { target, minDays, cutoff } = pool;
 
   const now = new Date();

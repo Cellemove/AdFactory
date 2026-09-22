@@ -19,7 +19,7 @@ export const STAGES: StageDef[] = [
   {
     key: "ingest",
     title: "Collect winning ads",
-    blurb: "Takes this brand's winners: videos still running 3+ weeks after launch, highest spend first. Brands switch losing ads off within days, so the survivors are the winners.",
+    blurb: "Takes this brand's winners: videos still running 3+ weeks after launch, newest first. Brands switch losing ads off within days, so the survivors are the winners; each run swaps the oldest out for what launched since.",
     cost: "1 BrandSearch credit per ad",
     cli: "npm run miner:winners -- --brand <brand>",
     weight: 5,
