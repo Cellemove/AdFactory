@@ -1,5 +1,5 @@
 // WINNERS: build one brand's corpus from ~100 of its winning ads — videos still
-// running 21+ days after launch, highest EU spend first. The pick replaces that
+// running 21+ days after launch, newest launch first. The pick replaces that
 // brand's slice of the corpus; every other brand keeps its own. 1 BrandSearch
 // credit per ad fetched. Then chains the video download, because BrandSearch
 // media links die after three days.

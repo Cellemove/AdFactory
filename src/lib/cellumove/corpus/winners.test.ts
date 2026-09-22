@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { balancedTrim, brandsToExtend, fairShare, launchedWithin, pageSizeFor, pickNew, readWinnerPick, resolveCompetitors, teardownSkipReason, winnerCutoff } from "./winners";
+import { balancedTrim, brandsToExtend, fairShare, launchedWithin, launchRank, pageSizeFor, pickNew, readWinnerPick, resolveCompetitors, teardownSkipReason, winnerCutoff } from "./winners";
 
 test("the cutoff is today minus the minimum run, as a UTC date", () => {
   assert.equal(winnerCutoff(Date.parse("2026-09-11T20:00:00Z"), 21), "2026-08-21");
@@ -103,4 +103,12 @@ test("teardown pre-filter skips only flagged duplicates and out-of-range duratio
   assert.equal(teardownSkipReason(ad({ is_duplicate: true })), "duplicate creative");
   assert.match(teardownSkipReason(ad({ durationSec: 6 })) ?? "", /outside/);
   assert.match(teardownSkipReason(ad({ durationSec: 300 })) ?? "", /outside/);
+});
+
+test("the corpus ranks by launch date, newest first, so a trim drops the oldest", () => {
+  const ads = [{ startedAt: "2026-08-01T07:00:00" }, { startedAt: "2026-08-20T07:00:00" }, { startedAt: null }, { startedAt: "2026-08-10" }];
+  const newestFirst = [...ads].sort((a, b) => launchRank(b) - launchRank(a));
+  assert.deepEqual(newestFirst.map((ad) => ad.startedAt), ["2026-08-20T07:00:00", "2026-08-10", "2026-08-01T07:00:00", null]);
+  const trimmed = balancedTrim(new Map([["ionix", newestFirst]]), 2, launchRank);
+  assert.deepEqual(trimmed.get("ionix")!.map((ad) => ad.startedAt), ["2026-08-20T07:00:00", "2026-08-10"]);
 });

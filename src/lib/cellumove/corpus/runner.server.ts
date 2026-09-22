@@ -146,7 +146,7 @@ export async function runWinners(input: { brand?: string | null; target?: number
       : `${result.rows.length} winners from ${spread.length} competitors`,
     lines: [
       result.brand
-        ? `Launched on or before ${result.cutoff} and still running · highest spend first`
+        ? `Launched on or before ${result.cutoff} and still running · newest launch first`
         : `Launched on or before ${result.cutoff} and still running · per brand: ${spread.join(" · ")}`,
       result.empty.length
         ? `No qualifying winners yet: ${result.empty.join(", ")}`

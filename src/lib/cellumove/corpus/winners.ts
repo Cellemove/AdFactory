@@ -3,11 +3,12 @@
 // formats and frameworks, where ~5 would only produce anecdotes. BrandSearch's
 // "Winning creative" badge is not in its API, so the rule rebuilds the signal
 // behind it: brands switch losing creatives off within days, so a video still
-// running weeks after launch — highest spend first — is a winner.
+// running weeks after launch is a winner. The corpus takes the newest of those
+// first, so every pull rotates the oldest ads out and keeps the count steady.
 //
 // Pure: the fetching lives in winners.server.ts.
 
-export const WINNER_RULE_VERSION = "winners-v1";
+export const WINNER_RULE_VERSION = "winners-v2";
 export const WINNER_DEFAULT_TARGET = 100;
 export const WINNER_DEFAULT_MIN_DAYS = 21;
 export const RECENT_MIN_DAYS = 7;
@@ -60,8 +61,15 @@ export const WINNER_MAX_PAGE_SIZE = 100;
 
 export function winnerRuleLabel(minDays: number, brand?: string | null): string {
   return brand
-    ? `${brand} videos still running ${minDays}+ days after launch, highest EU spend first`
-    : `Video still running ${minDays}+ days after launch, highest EU spend first, spread evenly across competitors`;
+    ? `${brand} videos still running ${minDays}+ days after launch, newest launch first`
+    : `Video still running ${minDays}+ days after launch, newest launch first, spread evenly across competitors`;
+}
+
+/** Newest launch ranks highest; unknown dates rank last. Spend is not a factor. */
+export function launchRank(ad: { startedAt: string | null }): number {
+  const raw = ad.startedAt;
+  const parsed = raw ? Date.parse(/T/.test(raw) && !/(Z|[+-]\d{2}:?\d{2})$/i.test(raw) ? `${raw}Z` : raw) : Number.NaN;
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 /** Latest launch date that still counts: today minus minDays, as YYYY-MM-DD (UTC). */
